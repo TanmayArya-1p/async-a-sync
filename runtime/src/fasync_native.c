@@ -188,3 +188,174 @@ PAS_API long filc_native_zsys_io_uring_enter(filc_thread* my_thread,
  * touch every page involved and is not bounded in the way a queue submission is.
  */
 /* ------------------------------------------------------------------ */
+/* The compiler-facing resolution hook                                 */
+/* ------------------------------------------------------------------ */
+
+/*
+ * This is where the patched FilPizlonator's emitted call lands, and it has to be
+ * native. See fasync_shared.h for why: a `pizlonated_*` entry point is an 8-byte
+ * descriptor stub, so a direct call to one returns a function object rather than
+ * running the body, and reaching the body requires the closure protocol. Every
+ * other function the pass emits calls to -- filc_check_function_call_fail and
+ * friends -- is native for the same reason.
+ *
+ * Nothing here owns state: `fasync_published` points at the memory-safe half's
+ * request table and completion ring, published once at ring setup. What lives
+ * here is the resolution *policy*, because this is the only place the compiler
+ * can reach.
+ */
+#include "fasync_shared.h"
+
+static struct fasync_shared* volatile fasync_published;
+
+/* How long to poll the completion ring before agreeing to sleep in the kernel.
+ * Polling is a plain read of shared memory and therefore cheap; parking is the
+ * expensive operation the design exists to avoid. Must match the budget in
+ * fasync.c. */
+#define FASYNC_NATIVE_SPIN_LIMIT 20000
+
+/*
+ * Publish the shared state. Called once, from the memory-safe half at ring setup,
+ * through the generator-bridged wrapper (the fasync_publish_state addSig entry).
+ *
+ * The address is retained, not copied, which is why the memory it points into has
+ * to be stable: the ring is GC memory and the request table is a static array.
+ * tests/stage2c_gc_pin_probe.c is the check that the GC does not relocate the
+ * former.
+ */
+PAS_API void filc_native_fasync_publish_state(filc_thread* my_thread,
+                                              filc_ptr state) {
+  PAS_UNUSED_PARAM(my_thread);
+  fasync_published = (struct fasync_shared*)filc_ptr_ptr(state);
+}
+
+/*
+ * Reap whatever completions have landed. A pure userspace read of the shared
+ * completion ring: no syscall, no mode switch, no kernel entry.
+ */
+static void fasync_native_drain(struct fasync_shared* sh) {
+  if (!sh || !sh->cqes)
+    return;
+
+  (*sh->userspace_cq_polls)++;
+
+  unsigned int mask = *sh->cq_mask;
+  unsigned int head = *sh->local_cq_head;
+  unsigned int tail = __atomic_load_n(sh->cq_tail, __ATOMIC_ACQUIRE);
+  unsigned int count = 0;
+
+  while (head != tail) {
+    struct fasync_cqe cqe = sh->cqes[head & mask];
+    head++;
+
+    unsigned int index = (unsigned int)(cqe.user_data & 0xFFFFFFFFUL);
+    if (index < sh->n_reqs) {
+      struct fasync_req_shared* r = &sh->reqs[index];
+      if (r->state == FASYNC_REQ_PENDING && r->id == cqe.user_data) {
+        r->result = cqe.res;
+        r->state = cqe.res < 0 ? FASYNC_REQ_FAILED : FASYNC_REQ_DONE;
+        /* Retire only after the final state is visible, so a racing resolver
+         * either sees the request pending (and looks again) or sees it
+         * retired. */
+        __atomic_sub_fetch(sh->inflight, 1, __ATOMIC_RELEASE);
+      }
+    }
+    count++;
+  }
+
+  *sh->local_cq_head = head;
+  __atomic_store_n(sh->cq_head, head, __ATOMIC_RELEASE);
+  *sh->completions_reaped += count;
+}
+
+/*
+ * The pending request covering [ptr, ptr+size), or NULL.
+ *
+ * A completed request is excluded, which is the self-healing step: once a request
+ * resolves, its range stops being reported as pending, so later accesses fall
+ * straight through to the fast path.
+ */
+static struct fasync_req_shared* fasync_native_find(struct fasync_shared* sh,
+                                                    const void* ptr,
+                                                    size_t size) {
+  const char* p = (const char*)ptr;
+  for (unsigned long i = 0; i < sh->n_reqs; i++) {
+    struct fasync_req_shared* r = &sh->reqs[i];
+    if (r->state != FASYNC_REQ_PENDING || !r->buf)
+      continue;
+    const char* start = (const char*)r->buf;
+    const char* end = start + r->len;
+    if (p < start)
+      continue;
+    if (p + size > end)
+      continue;
+    return r;
+  }
+  return 0;
+}
+
+/*
+ * filc_resolve_pending -- what the compiler emits calls to.
+ *
+ * THIS IS THE HOT PATH: it runs on every instrumented access, so its cost when
+ * nothing is pending is the design's most important number. One acquire load of a
+ * cache-resident counter and a predictable branch.
+ *
+ * Spins against the completion ring first and parks only second, because the
+ * common case is that the completion has already landed and finding that out
+ * should cost a load rather than a context switch.
+ */
+PAS_API void* filc_resolve_pending(void* ptr, size_t size) {
+  if (!ptr)
+    return ptr;
+
+  struct fasync_shared* sh = fasync_published;
+  if (!sh)
+    return ptr;
+
+  if (__atomic_load_n(sh->inflight, __ATOMIC_ACQUIRE) == 0) {
+    (*sh->fast_path_hits)++;
+    return ptr;
+  }
+
+  (*sh->resolve_calls)++;
+
+  struct fasync_req_shared* r = fasync_native_find(sh, ptr, size);
+  if (!r)
+    return ptr;
+
+  for (unsigned int spin = 0; spin < FASYNC_NATIVE_SPIN_LIMIT; spin++) {
+    if (r->state != FASYNC_REQ_PENDING)
+      return ptr;
+    (*sh->spin_rounds)++;
+    fasync_native_drain(sh);
+    if (r->state != FASYNC_REQ_PENDING)
+      return ptr;
+#ifdef __x86_64__
+    __builtin_ia32_pause();
+#endif
+  }
+
+  /*
+   * A full spin budget without a completion means there is nothing to be gained
+   * by spinning further, so sleep until the kernel has something and look again.
+   * This is the one call here that can block indefinitely, so it is the one that
+   * takes the GC safepoint: otherwise a collector handshake could wait forever on
+   * a thread parked in the kernel.
+   */
+  while (r->state == FASYNC_REQ_PENDING) {
+    (*sh->parks)++;
+    (*sh->kernel_wait_entries)++;
+    filc_thread* my_thread = filc_get_my_thread();
+    if (my_thread)
+      filc_exit(my_thread);
+    fasync_syscall6(FASYNC_SYS_io_uring_enter, (long)sh->ring_fd, 0L, 1L, 0L, 0L,
+                    0L);
+    if (my_thread)
+      filc_enter(my_thread);
+    fasync_native_drain(sh);
+  }
+
+  return ptr;
+}
+
