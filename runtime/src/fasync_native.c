@@ -359,3 +359,42 @@ PAS_API void* filc_resolve_pending(void* ptr, size_t size) {
   return ptr;
 }
 
+/* Non-blocking: reap whatever has landed, so a readiness check is a userspace
+ * ring read rather than a syscall. */
+PAS_API void filc_native_fasync_poll(filc_thread* my_thread) {
+  PAS_UNUSED_PARAM(my_thread);
+  fasync_native_drain(fasync_published);
+}
+
+/*
+ * Block until at least one completion is available, for operations that produce
+ * a scalar (an fd, an error code) rather than filling a buffer and therefore have
+ * no range for the resolver to look up. Takes the GC safepoint, since it can
+ * sleep indefinitely.
+ */
+PAS_API void filc_native_fasync_block(filc_thread* my_thread) {
+  struct fasync_shared* sh = fasync_published;
+  if (!sh)
+    return;
+  (*sh->parks)++;
+  (*sh->kernel_wait_entries)++;
+  if (my_thread)
+    filc_exit(my_thread);
+  fasync_syscall6(FASYNC_SYS_io_uring_enter, (long)sh->ring_fd, 0L, 1L, 0L, 0L,
+                  0L);
+  if (my_thread)
+    filc_enter(my_thread);
+  fasync_native_drain(sh);
+}
+
+PAS_API long filc_native_zsys_io_uring_register(filc_thread* my_thread,
+                                                int ring_fd, unsigned opcode,
+                                                filc_ptr arg,
+                                                size_t nr_args) {
+  filc_exit(my_thread);
+  long ret = fasync_syscall4(FASYNC_SYS_io_uring_register, (long)ring_fd,
+                             (long)opcode, (long)filc_ptr_ptr(arg),
+                             (long)nr_args);
+  filc_enter(my_thread);
+  return fasync_finish(ret);
+}
