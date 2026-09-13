@@ -377,3 +377,114 @@ static struct fasync_req_shared* fasync_find_covering(const void* ptr, size_t si
   return 0;
 }
 
+/* ------------------------------------------------------------------ */
+/* Submission                                                          */
+/* ------------------------------------------------------------------ */
+
+static struct fasync_sqe* fasync_get_sqe(void) {
+  if (g_ring.queued >= FASYNC_RING_ENTRIES) {
+    /* The SQ ring is full. Publish what we have so the kernel can start work,
+     * which is also the only correct way to make room. */
+    if (fasync_submit() < 0)
+      return 0;
+  }
+  unsigned int index = g_ring.sqe_tail & *g_ring.sq_mask;
+  return &g_ring.sqes[index];
+}
+
+/*
+ * Hand a queued SQE to the kernel and return the freshly allocated request.
+ *
+ * Note what does NOT happen here: no waiting, and no syscall. The SQE is
+ * written into shared memory and the ring tail is bumped in fasync_submit().
+ * The caller gets a handle back immediately -- this is mechanism 1 of
+ * idea.md section 1, "zero-context-switch submission".
+ *
+ * `addr`/`len` are the raw SQE operands and do not always describe a buffer:
+ * for openat, `addr` is the path and `len` is the mode. `result_buf` separately
+ * names the range whose *contents* the caller will later have to wait for, or 0
+ * for operations that produce a scalar (an fd, an error code) rather than
+ * filling a buffer. Keeping those two concepts apart matters because only
+ * result ranges participate in resolution and provenance tracking.
+ */
+static fasync_id fasync_push_sqe(unsigned char op, int fd, unsigned long addr,
+                                 unsigned int len, unsigned long offset,
+                                 void* result_buf, size_t result_len,
+                                 unsigned char sqe_flags) {
+  if (fasync_ensure_ring() < 0)
+    return 0;
+
+  struct fasync_req_shared* r = fasync_req_alloc();
+  if (!r) {
+    g_last_error = "request table full";
+    return 0;
+  }
+
+  struct fasync_sqe* sqe = fasync_get_sqe();
+  if (!sqe) {
+    r->state = FASYNC_REQ_FREE;
+    return 0;
+  }
+
+  memset(sqe, 0, sizeof(*sqe));
+  sqe->opcode = op;
+  sqe->flags = sqe_flags;
+  sqe->fd = fd;
+  sqe->addr = addr;
+  sqe->len = len;
+  sqe->off = offset;
+  sqe->user_data = r->id;
+
+  g_ring.sqe_tail++;
+  g_ring.queued++;
+  g_stats.sqes_queued++;
+
+  r->buf = result_buf;
+  r->len = result_len;
+  r->offset = offset;
+  r->fd = fd;
+  r->op = op;
+  r->linked = (sqe_flags & FASYNC_SQE_IO_LINK) ? 1 : 0;
+
+  /* Publish the pending state before the count becomes visible, so a resolver
+   * that observes a non-zero in-flight count is guaranteed to see this
+   * request. */
+  __atomic_add_fetch(&g_inflight, 1, __ATOMIC_RELEASE);
+  return r->id;
+}
+
+/* Convenience wrapper for the common case: an operation whose SQE operands are
+ * exactly the buffer it fills. */
+static fasync_id fasync_push_buf(unsigned char op, int fd, void* buf, size_t len,
+                                 unsigned long offset, unsigned char sqe_flags) {
+  return fasync_push_sqe(op, fd, (unsigned long)(size_t)buf, (unsigned int)len,
+                         offset, buf, len, sqe_flags);
+}
+
+int fasync_submit(void) {
+  if (!g_ring.ready || !g_ring.queued)
+    return 0;
+
+  unsigned int mask = *g_ring.sq_mask;
+  for (unsigned int i = g_ring.sqe_head; i != g_ring.sqe_tail; i++)
+    g_ring.sq_array[i & mask] = i & mask;
+
+  /* Publish the tail. This is the store that makes the SQEs visible to the
+   * kernel; with SQPOLL the kernel picks them up with no syscall at all. */
+  __atomic_store_n(g_ring.sq_tail, g_ring.sqe_tail, __ATOMIC_RELEASE);
+  g_ring.sqe_head = g_ring.sqe_tail;
+
+  unsigned int n = g_ring.queued;
+  g_ring.queued = 0;
+
+  /* min_complete = 0: submit and return. Still a syscall, but it neither
+   * blocks nor waits, and it batches every SQE queued so far. */
+  g_stats.kernel_submit_entries++;
+  long ret = zsys_io_uring_enter(g_ring.fd, n, 0, 0);
+  if (ret < 0) {
+    g_last_error = "io_uring_enter(submit) failed";
+    return -1;
+  }
+  return (int)n;
+}
+
