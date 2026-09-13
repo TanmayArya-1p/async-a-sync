@@ -488,3 +488,54 @@ int fasync_submit(void) {
   return (int)n;
 }
 
+/* ------------------------------------------------------------------ */
+/* Completion                                                          */
+/* ------------------------------------------------------------------ */
+
+/*
+ * Resolution for the explicit-access path.
+ *
+ * The compiler-inserted hook (filc_resolve_pending, native) is the hot path and
+ * keeps the tight spin against the completion ring. This is the other path --
+ * code that calls fasync_resolve_pending() directly -- and it uses the same
+ * policy expressed with the two scalar bridged calls: drain the completion ring
+ * from userspace (no syscall), and only sleep once the spin budget is gone.
+ *
+ * This lives on the safe side on purpose. An earlier revision bridged the whole
+ * policy out to a native function taking a filc_ptr, and that crashed
+ * intermittently in the generated marshalling; see the note in
+ * generate_pizlonated_forwarders.rb. The bridged surface is now scalars and void
+ * returns only.
+ */
+/* (the spin budget is defined once, above) */
+
+void* fasync_resolve_pending(void* ptr, size_t size) {
+  if (!ptr)
+    return ptr;
+
+  if (__atomic_load_n(&g_inflight, __ATOMIC_ACQUIRE) == 0) {
+    g_stats.fast_path_hits++;
+    return ptr;
+  }
+
+  g_stats.resolve_calls++;
+
+  struct fasync_req_shared* r = fasync_find_covering(ptr, size);
+  if (!r)
+    return ptr;
+
+  for (unsigned int spin = 0; spin < FASYNC_SPIN_LIMIT; spin++) {
+    if (r->state != FASYNC_REQ_PENDING)
+      return ptr;
+    g_stats.spin_rounds++;
+    fasync_poll();
+  }
+
+  while (r->state == FASYNC_REQ_PENDING) {
+    g_stats.parks++;
+    fasync_block();
+    fasync_poll();
+  }
+  return ptr;
+}
+
