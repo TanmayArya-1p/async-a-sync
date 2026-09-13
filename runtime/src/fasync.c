@@ -199,3 +199,123 @@ void fasync_get_stats(struct fasync_stats* out) {
 
 const char* fasync_last_error(void) { return g_last_error; }
 
+/* ------------------------------------------------------------------ */
+/* Ring setup                                                          */
+/* ------------------------------------------------------------------ */
+
+/*
+ * Ring memory is ours, not the kernel's.
+ *
+ * The obvious approach -- let the kernel create the rings and mmap them -- does
+ * not work on Fil-C, and the reason is structural rather than a bug in either
+ * side. Fil-C's mmap wrapper (filc_native_zsys_mmap) must guarantee that the
+ * address a mapping lands at is the address it hands back a capability for. To
+ * do that it pre-allocates the address out of the GC heap and passes MAP_FIXED.
+ * But the kernel rejects MAP_FIXED for io_uring ring mappings:
+ *
+ *     mmap(NULL,  640, PROT_READ|PROT_WRITE, MAP_SHARED|MAP_POPULATE, fd, 0) -> OK
+ *     mmap(addr,  640, PROT_READ|PROT_WRITE, MAP_SHARED|MAP_POPULATE|MAP_FIXED, fd, 0) -> EINVAL
+ *
+ * So a ring mapping can never carry a Fil-C capability, and the memory-safe half
+ * could never read the completion queue out of it.
+ *
+ * IORING_SETUP_NO_MMAP (kernel 6.5+) inverts the arrangement: the *caller*
+ * supplies the ring memory and the kernel uses it in place. The memory is
+ * therefore ordinary Fil-C GC memory, which means:
+ *
+ *   - the completion queue is directly readable from memory-safe code, so the
+ *     poll stays a plain load with no syscall and no copy, and
+ *   - the "no escape hatch" property is preserved: nothing here needs an
+ *     uncapabilitied pointer.
+ *
+ * The one hazard is that GC memory must not move, since the kernel caches the
+ * address. stage2c_gc_pin_probe.c checks that directly (allocates, forces
+ * collection cycles, verifies address and contents are unchanged); large
+ * page-aligned allocations from zgc_aligned_alloc are stable and are not
+ * relocated by the scavenger.
+ */
+static int fasync_ring_init(void) {
+  struct fasync_params p;
+  memset(&p, 0, sizeof(p));
+
+  /* The rings have to be one contiguous region shared by SQ and CQ; the exact
+   * size is only reported by the kernel after setup, so this is a generous
+   * upper bound (the kernel touches only what it needs). The SQEs are a
+   * separate region. */
+  size_t rings_bytes = FASYNC_RINGS_BYTES;
+  size_t sqes_bytes = (size_t)FASYNC_RING_ENTRIES * sizeof(struct fasync_sqe);
+  if (sqes_bytes < 4096)
+    sqes_bytes = 4096;
+
+  void* rings = zgc_aligned_alloc(4096, rings_bytes);
+  void* sqes = zgc_aligned_alloc(4096, sqes_bytes);
+  if (!rings || !sqes) {
+    g_last_error = "out of memory allocating ring memory";
+    return -1;
+  }
+
+  p.flags = FASYNC_SETUP_NO_MMAP;
+  p.cq_off.user_addr = (unsigned long)(size_t)rings;
+  p.sq_off.user_addr = (unsigned long)(size_t)sqes;
+
+  long fd = zsys_io_uring_setup(FASYNC_RING_ENTRIES, (void*)&p);
+  if (fd < 0) {
+    g_last_error = "io_uring_setup failed";
+    return -1;
+  }
+  g_ring.fd = (int)fd;
+
+  /* Ring fields live at kernel-reported offsets inside the caller-provided
+   * region; the kernel filled these in during setup. */
+  g_ring.sqes = (struct fasync_sqe*)sqes;
+  g_ring.sq_head = (unsigned int*)((char*)rings + p.sq_off.head);
+  g_ring.sq_tail = (unsigned int*)((char*)rings + p.sq_off.tail);
+  g_ring.sq_mask = (unsigned int*)((char*)rings + p.sq_off.ring_mask);
+  g_ring.sq_array = (unsigned int*)((char*)rings + p.sq_off.array);
+
+  g_ring.cqes = (struct fasync_cqe*)((char*)rings + p.cq_off.cqes);
+  g_ring.cq_head = (unsigned int*)((char*)rings + p.cq_off.head);
+  g_ring.cq_tail = (unsigned int*)((char*)rings + p.cq_off.tail);
+  g_ring.cq_mask = (unsigned int*)((char*)rings + p.cq_off.ring_mask);
+
+  g_ring.sqe_tail = 0;
+  g_ring.sqe_head = 0;
+  g_ring.queued = 0;
+  g_ring.local_cq_head = 0;
+  g_ring.ready = 1;
+
+  memset(req_slots, 0, sizeof(req_slots));
+
+  /*
+   * Publish what the native resolver needs. It retains these addresses rather
+   * than copying them, so they must stay valid and stable for the process's
+   * lifetime: the ring is GC memory (stable, see stage2c_gc_pin_probe) and the
+   * request table is a static array.
+   */
+  g_shared.inflight = &g_inflight;
+  g_shared.reqs = req_slots;
+  g_shared.n_reqs = FASYNC_MAX_INFLIGHT;
+  g_shared.ring_fd = g_ring.fd;
+  g_shared.cqes = g_ring.cqes;
+  g_shared.cq_head = g_ring.cq_head;
+  g_shared.cq_tail = g_ring.cq_tail;
+  g_shared.cq_mask = g_ring.cq_mask;
+  g_shared.local_cq_head = &g_ring.local_cq_head;
+  g_shared.userspace_cq_polls = &g_stats.userspace_cq_polls;
+  g_shared.resolve_calls = &g_stats.resolve_calls;
+  g_shared.fast_path_hits = &g_stats.fast_path_hits;
+  g_shared.spin_rounds = &g_stats.spin_rounds;
+  g_shared.parks = &g_stats.parks;
+  g_shared.kernel_wait_entries = &g_stats.kernel_wait_entries;
+  g_shared.completions_reaped = &g_stats.completions_reaped;
+
+  fasync_publish_state(&g_shared);
+  return 0;
+}
+
+static int fasync_ensure_ring(void) {
+  if (g_ring.ready)
+    return 0;
+  return fasync_ring_init();
+}
+
