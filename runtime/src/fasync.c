@@ -146,3 +146,56 @@ static int fasync_pending_fd_new(fasync_id id) {
   return -1;
 }
 
+/* ------------------------------------------------------------------ */
+/* Ring state                                                          */
+/* ------------------------------------------------------------------ */
+
+struct fasync_ring {
+  int fd;
+  int ready;
+
+  struct fasync_sqe* sqes;
+  unsigned int* sq_head;
+  unsigned int* sq_tail;
+  unsigned int* sq_mask;
+  unsigned int* sq_array;
+
+  struct fasync_cqe* cqes;
+  unsigned int* cq_head;
+  unsigned int* cq_tail;
+  unsigned int* cq_mask;
+
+  unsigned int sqe_tail;       /* next slot to write                      */
+  unsigned int sqe_head;       /* next slot to publish                    */
+  unsigned int queued;         /* SQEs written but not yet published      */
+  unsigned int local_cq_head;  /* our view of the completion queue head   */
+};
+
+static struct fasync_ring g_ring;
+
+static struct fasync_stats g_stats;
+
+/* Everything the native resolver needs, published once at ring setup. Lives
+ * here (not natively) because the ring and the request table are owned by this
+ * half; the native side holds raw pointers into them. */
+static struct fasync_shared g_shared;
+
+/* Most recent failure, as a static string. The runtime deliberately does not
+ * use stdio: reporting through return values keeps this library free of a
+ * dependency on which archive member resolves first. */
+static const char* g_last_error = "";
+
+/* ------------------------------------------------------------------ */
+/* Stats helpers                                                       */
+/* ------------------------------------------------------------------ */
+
+void fasync_reset_stats(void) { memset(&g_stats, 0, sizeof(g_stats)); }
+
+void fasync_get_stats(struct fasync_stats* out) {
+  if (!out)
+    return;
+  *out = g_stats;
+}
+
+const char* fasync_last_error(void) { return g_last_error; }
+
