@@ -319,3 +319,61 @@ static int fasync_ensure_ring(void) {
   return fasync_ring_init();
 }
 
+/* ------------------------------------------------------------------ */
+/* Request table                                                       */
+/* ------------------------------------------------------------------ */
+
+static struct fasync_req_shared* fasync_req_alloc(void) {
+  for (unsigned int i = 0; i < FASYNC_MAX_INFLIGHT; i++) {
+    struct fasync_req_shared* r = &req_slots[i];
+    if (r->state != FASYNC_REQ_FREE)
+      continue;
+    r->gen = req_next_gen++;
+    /* The id packs a slot index in the low 32 bits and a generation above it,
+     * so that a handle held across a slot recycle is detected rather than
+     * silently resolving to an unrelated request. */
+    r->id = ((fasync_id)r->gen << 32) | (fasync_id)i;
+    r->state = FASYNC_REQ_PENDING;
+    r->result = 0;
+    r->linked = 0;
+    return r;
+  }
+  return 0;
+}
+
+static struct fasync_req_shared* fasync_req_lookup(fasync_id id) {
+  unsigned int index = (unsigned int)(id & 0xFFFFFFFFUL);
+  unsigned long gen = (unsigned long)(id >> 32);
+  if (index >= FASYNC_MAX_INFLIGHT)
+    return 0;
+  struct fasync_req_shared* r = &req_slots[index];
+  if (r->gen != gen || r->state == FASYNC_REQ_FREE)
+    return 0;
+  return r;
+}
+
+/*
+ * Find the pending request (if any) whose result buffer covers [ptr, ptr+size).
+ *
+ * Only pending requests are considered: a completed request is no longer a
+ * hazard, and excluding it is the "self-healing" step -- once resolved, the
+ * range stops being reported as pending, so subsequent accesses fall straight
+ * through to the fast path.
+ */
+static struct fasync_req_shared* fasync_find_covering(const void* ptr, size_t size) {
+  const char* p = (const char*)ptr;
+  for (unsigned int i = 0; i < FASYNC_MAX_INFLIGHT; i++) {
+    struct fasync_req_shared* r = &req_slots[i];
+    if (r->state != FASYNC_REQ_PENDING || !r->buf)
+      continue;
+    const char* start = (const char*)r->buf;
+    const char* end = start + r->len;
+    if (p < start)
+      continue;
+    if (p + size > end)
+      continue;
+    return r;
+  }
+  return 0;
+}
+
