@@ -96,3 +96,53 @@ static unsigned int req_next_gen = 1;
  */
 static volatile unsigned long g_inflight = 0;
 
+/* ------------------------------------------------------------------ */
+/* Pending descriptors                                                 */
+/* ------------------------------------------------------------------ */
+
+/*
+ * Provenance for file descriptors.
+ *
+ * A buffer's provenance is a range: the request that fills it. A descriptor's
+ * provenance is a *slot*: the request that will produce it. Until the open
+ * completes there is no fd to hand out, so fasync_open_pending returns a negative
+ * handle instead, and every operation that takes an fd resolves it first. Passing
+ * a pending descriptor to a read is therefore what creates the dependency, with
+ * nothing declared and nothing to remember.
+ *
+ * Handles are negative because a real descriptor never is, so resolution costs
+ * one comparison in the common case. They start at -2: -1 is reserved for
+ * failure, and letting slot 0 alias it was a real bug.
+ *
+ * What this does NOT buy is overlap: the read cannot be submitted until the open
+ * has actually produced an fd, so the open and the read do not run concurrently.
+ * Doing better needs the kernel to chain them (IOSQE_IO_LINK with the read naming
+ * a not-yet-populated direct descriptor), which needs the open to target an
+ * explicit slot. On this machine the kernel ignores an explicit slot and
+ * allocates its own, so the read has nothing to name in advance --
+ * tests/stage6b_fd_chain_probe.c is the evidence. See docs/ARCHITECTURE.md.
+ */
+#define FASYNC_MAX_PENDING_FDS 64
+
+struct fasync_pending_fd {
+  int used;
+  fasync_id id; /* the request that will produce the fd */
+  long fd;      /* resolved value, or -1 while still pending */
+};
+
+static struct fasync_pending_fd g_pending_fds[FASYNC_MAX_PENDING_FDS];
+
+static int fasync_pending_fd_new(fasync_id id) {
+  for (int i = 0; i < FASYNC_MAX_PENDING_FDS; i++) {
+    if (g_pending_fds[i].used)
+      continue;
+    g_pending_fds[i].used = 1;
+    g_pending_fds[i].id = id;
+    g_pending_fds[i].fd = -1;
+    /* Encoded as -(index + 2) so that -1 remains an unambiguous failure and
+     * slot 0 does not alias it. */
+    return -(i + 2);
+  }
+  return -1;
+}
+
