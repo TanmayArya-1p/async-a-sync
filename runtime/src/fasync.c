@@ -727,3 +727,29 @@ long fasync_fd_resolve(int fd) {
   return p->fd;
 }
 
+/* ------------------------------------------------------------------ */
+/* Provenance -- mechanism 2 of idea.md section 1                      */
+/* ------------------------------------------------------------------ */
+
+int fasync_provenance(const void* ptr, size_t size, struct fasync_prov* out) {
+  struct fasync_req_shared* r = fasync_find_covering(ptr, size);
+  if (!r || !out)
+    return 0;
+  out->req = r->id;
+  out->offset = (unsigned long)((const char*)ptr - (const char*)r->buf);
+  out->len = (unsigned long)r->len;
+  return 1;
+}
+
+void* fasync_derive(void* base, unsigned long offset, size_t len,
+                    struct fasync_prov* out) {
+  char* derived = (char*)base + offset;
+  if (out) {
+    if (!fasync_provenance(derived, len, out)) {
+      out->req = 0;
+      out->offset = offset;
+      out->len = (unsigned long)len;
+    }
+  }
+  return derived;
+}
