@@ -169,3 +169,64 @@ int fasync_ops_conflict(const struct fasync_op* a, const struct fasync_op* b,
   return strongest != 0;
 }
 
+/* ------------------------------------------------------------------ */
+/* DAG construction                                                    */
+/* ------------------------------------------------------------------ */
+
+unsigned fasync_build_dag(const struct fasync_op* ops, unsigned n_ops,
+                          unsigned* edges, unsigned max_edges,
+                          struct fasync_dag_stats* stats) {
+  struct fasync_dag_stats local;
+  memset(&local, 0, sizeof(local));
+  local.ops = n_ops;
+
+  unsigned n_edges = 0;
+
+  /* O(n^2) over operations: fine for a syscall batch, and it makes the
+   * dependency structure explicit rather than hidden behind an index. */
+  for (unsigned i = 0; i < n_ops; i++) {
+    for (unsigned j = i + 1; j < n_ops; j++) {
+      int auto_disjoint = 0;
+      int conflict = fasync_ops_conflict(&ops[i], &ops[j], &auto_disjoint);
+
+      /* Count the saving BEFORE bailing out: a dissolved conflict produces no
+       * edge, so it would otherwise never be recorded. */
+      if (auto_disjoint)
+        local.auto_disjoint_pairs++;
+
+      if (!conflict)
+        continue;
+
+      if (n_edges >= max_edges) {
+        if (stats)
+          *stats = local;
+        return 0;
+      }
+
+      edges[n_edges++] = i * n_ops + j;
+      local.edges++;
+      local.declared_edges++;
+
+      /* Classify the dominant edge kind for reporting. */
+      int kind = 0;
+      for (unsigned x = 0; x < ops[i].n_accesses && !kind; x++) {
+        for (unsigned y = 0; y < ops[j].n_accesses && !kind; y++) {
+          int dissolved = 0;
+          kind = fasync_access_conflict(&ops[i].accesses[x],
+                                        &ops[j].accesses[y], &dissolved);
+        }
+      }
+      if (kind == 1)
+        local.read_write_edges++;
+      else if (kind == 2)
+        local.write_read_edges++;
+      else if (kind == 3)
+        local.write_write_edges++;
+    }
+  }
+
+  if (stats)
+    *stats = local;
+  return n_edges;
+}
+
