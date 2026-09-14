@@ -649,3 +649,81 @@ fasync_id fasync_openat(int dirfd, const char* path, int flags, int mode) {
  * with the pipelining work, where it is actually exercised.
  */
 
+/* ------------------------------------------------------------------ */
+/* Results                                                             */
+/* ------------------------------------------------------------------ */
+
+int fasync_ready(fasync_id id) {
+  struct fasync_req_shared* r = fasync_req_lookup(id);
+  if (!r)
+    return 0;
+  if (r->state == FASYNC_REQ_PENDING)
+    fasync_poll();
+  return r->state != FASYNC_REQ_PENDING;
+}
+
+long fasync_result(fasync_id id) {
+  struct fasync_req_shared* r = fasync_req_lookup(id);
+  if (!r)
+    return -EINVAL;
+
+  /*
+   * Publish anything still queued before waiting.
+   *
+   * Without this, waiting on a request whose SQE has not been handed to the
+   * kernel yet waits forever -- and the natural way to hit that is resolving a
+   * pending descriptor without an explicit fasync_submit(), which is exactly the
+   * ergonomic path this is supposed to support. Submitting here is a no-op when
+   * nothing is queued.
+   */
+  if (r->state == FASYNC_REQ_PENDING)
+    fasync_submit();
+
+  while (r->state == FASYNC_REQ_PENDING) {
+    fasync_poll();
+    if (r->state == FASYNC_REQ_PENDING)
+      fasync_block();
+  }
+
+  if (r->state == FASYNC_REQ_PENDING) {
+    /* Still pending even after parking: the kernel has not reported this
+     * request. This is the "pending capability that never resolves" failure
+     * mode flagged in idea.md section 2.6 -- we own it, and surfacing it as an
+     * error is strictly better than hanging or reading garbage. */
+    return -ETIMEDOUT;
+  }
+
+  long result = r->result;
+  r->state = FASYNC_REQ_FREE;
+  return result;
+}
+
+/*
+ * Resolve a descriptor: a real fd passes straight through, a pending handle is
+ * waited on and replaced by the fd it produced. This is the whole of fd
+ * provenance on the consumer side, and it is why an operation can be written
+ * against a descriptor that does not exist yet.
+ */
+long fasync_fd_resolve(int fd) {
+  if (fd >= 0)
+    return fd; /* already a real descriptor */
+
+  if (fd == -1)
+    return -EBADF; /* the reserved failure value, not a handle */
+  int index = -fd - 2;
+  if (index < 0 || index >= FASYNC_MAX_PENDING_FDS)
+    return -EBADF;
+
+  struct fasync_pending_fd* p = &g_pending_fds[index];
+  if (!p->used)
+    return -EBADF;
+
+  if (p->fd < 0) {
+    long result = fasync_result(p->id);
+    if (result < 0)
+      return result;
+    p->fd = result;
+  }
+  return p->fd;
+}
+
