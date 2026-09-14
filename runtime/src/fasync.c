@@ -539,3 +539,113 @@ void* fasync_resolve_pending(void* ptr, size_t size) {
   return ptr;
 }
 
+/* ------------------------------------------------------------------ */
+/* Public async syscalls                                               */
+/* ------------------------------------------------------------------ */
+
+/*
+ * Each of these validates its buffer against the Fil-C capability model before
+ * the kernel is allowed near it. This mirrors exactly what the synchronous
+ * zsys_read / zsys_write paths do, which is what idea.md section 2.6 means by
+ * "syscalls are already a checked boundary": going async does not get to skip
+ * the check, it just moves the waiting somewhere else.
+ */
+
+fasync_id fasync_pread(int fd, void* buf, size_t len, unsigned long offset) {
+  /* If this descriptor is itself an async open that has not completed, this is
+   * where the dependency is honoured: the read cannot be submitted until there
+   * is a descriptor to read from. */
+  long real = fasync_fd_resolve(fd);
+  if (real < 0)
+    return 0;
+  fd = (int)real;
+
+  zcheck(buf, len); /* in bounds and writable */
+  return fasync_push_buf(FASYNC_OP_READ, fd, buf, len, offset, 0);
+}
+
+fasync_id fasync_pwrite(int fd, void* buf, size_t len, unsigned long offset) {
+  long real = fasync_fd_resolve(fd);
+  if (real < 0)
+    return 0;
+  fd = (int)real;
+
+  zcheck_readonly(buf, len); /* in bounds; the kernel only reads it */
+
+  /*
+   * Resolve the source eagerly.
+   *
+   * This is idea.md section 3.1's second case: the dependency is not "code
+   * touches the buffer", it is "the *kernel* needs these bytes as the content of
+   * this SQE". We cannot defer that one, because there is no way to tell the
+   * kernel "write whatever ends up in this buffer" -- it reads the bytes when it
+   * executes the request, and if a prior async read into the same buffer has not
+   * landed yet it would write garbage.
+   *
+   * So a write's source is a genuine synchronisation point and is resolved here,
+   * rather than lazily on a later access. That costs us the overlap between this
+   * write and the read that feeds it, which is precisely the case the design
+   * cannot get for free. The kernel-native fix is to chain the two requests with
+   * IOSQE_IO_LINK so the write only executes after the read completes; see the
+   * pipelining section of docs/ARCHITECTURE.md for where that work stands.
+   */
+  fasync_resolve_pending(buf, len);
+
+  return fasync_push_sqe(FASYNC_OP_WRITE, fd, (unsigned long)(size_t)buf,
+                         (unsigned int)len, offset, 0, 0, 0);
+}
+
+fasync_id fasync_fsync(int fd) {
+  long real = fasync_fd_resolve(fd);
+  if (real < 0)
+    return 0;
+  return fasync_push_sqe(FASYNC_OP_FSYNC, (int)real, 0, 0, 0, 0, 0, 0);
+}
+
+fasync_id fasync_close(int fd) {
+  long real = fasync_fd_resolve(fd);
+  if (real < 0)
+    return 0;
+  return fasync_push_sqe(FASYNC_OP_CLOSE, (int)real, 0, 0, 0, 0, 0, 0);
+}
+
+/*
+ * Open a file, returning a *pending descriptor* rather than a handle: a negative
+ * value that can be handed straight to fasync_pread/pwrite/fsync/close, or
+ * resolved explicitly with fasync_fd_resolve. Nothing about the call site marks
+ * it as asynchronous, which is the point.
+ */
+int fasync_open_pending(int dirfd, const char* path, int flags, int mode) {
+  fasync_id id = fasync_openat(dirfd, path, flags, mode);
+  if (!id)
+    return -1;
+  return fasync_pending_fd_new(id);
+}
+
+fasync_id fasync_openat(int dirfd, const char* path, int flags, int mode) {
+  if (!path) {
+    errno = EFAULT;
+    return 0;
+  }
+  /* The path is a NUL-terminated string with no length argument, so the
+   * capability check is for the single terminator byte; the runtime's own
+   * string handling rejects a path that runs off the end of its allocation. */
+  zcheck_readonly((void*)path, 1);
+
+  /* For IORING_OP_OPENAT the SQE's `len` field carries the file mode, and its
+   * `addr` carries the path. Neither is a result buffer: the operation yields
+   * an fd, so result_buf is 0. */
+  return fasync_push_sqe(FASYNC_OP_OPENAT, dirfd, (unsigned long)(size_t)path,
+                         (unsigned int)mode, (unsigned long)flags, 0, 0, 0);
+}
+
+/*
+ * NOTE: fasync_openat_direct() -- openat that allocates into a direct
+ * descriptor slot, so a dependent read can be submitted against a descriptor
+ * that does not exist yet -- is deliberately absent. The SQE plumbing is
+ * trivial (set sqe->file_index), but it is only meaningful once the ring has a
+ * registered file table, and the exact IORING_FILE_INDEX_ALLOC contract wants
+ * to be verified against the running kernel before it is relied on. It lands
+ * with the pipelining work, where it is actually exercised.
+ */
+
