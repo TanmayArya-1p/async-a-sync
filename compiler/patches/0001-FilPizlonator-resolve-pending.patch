@@ -1,0 +1,69 @@
+diff --git a/llvm/lib/Transforms/Instrumentation/FilPizlonator.cpp b/llvm/lib/Transforms/Instrumentation/FilPizlonator.cpp
+index d8812aa74..997945c2e 100644
+--- a/llvm/lib/Transforms/Instrumentation/FilPizlonator.cpp
++++ b/llvm/lib/Transforms/Instrumentation/FilPizlonator.cpp
+@@ -1541,6 +1541,11 @@ class Pizlonator {
+   FunctionCallee LogAllocate;
+   FunctionCallee OptimizedAlignmentContradiction;
+   FunctionCallee OptimizedAccessCheckFail;
++
++  /* segfault: resolves a pending async syscall result before an access reads or
++     writes it. Implemented in the trusted runtime (libpizlo); see
++     runtime/src/fasync.c. */
++  FunctionCallee ResolvePending;
+   FunctionCallee OptimizedStackAlignmentContradiction;
+   FunctionCallee OptimizedStackAccessCheckFail;
+   FunctionCallee MaskedWriteCheckFail;
+@@ -3533,6 +3538,38 @@ class Pizlonator {
+         
+         return flightPtrWithOffset(FlightPtr, ConstantInt::get(IntPtrTy, Offset), InsertBefore);
+       };
++
++      /* segfault: if this access goes through an escaping pointer, make sure any
++         pending async syscall covering it has resolved before the access
++         happens.
++
++         This is placed here, immediately alongside the capability check that
++         FilPizlonator already emits for every access, rather than as a second
++         separate instrumentation pass (idea.md section 2.6).
++
++         Note what this does NOT do: it does not rebind the pointer. Resolution in
++         this design flips the pending bit in place rather than moving the data,
++         because the kernel was already told where to write, so the pointer's
++         value is unchanged and every existing check and address computation stays
++         valid. The compiler only has to guarantee that resolution has happened
++         first.
++
++         The size argument is 1: a derived pointer into a pending buffer always
++         starts inside it, so containment of its first byte is what detection
++         needs. A pointer that starts outside a pending buffer and straddles into
++         it is not detected -- see the limitations section of
++         docs/ARCHITECTURE.md.
++
++         Written unconditionally for escaping pointers. The runtime makes the
++         common case cheap (one load of an in-flight counter and a predicted
++         branch), but this is the simple form: the capability-widening version
++         described in idea.md would fold the test into the existing bounds compare
++         and avoid the call entirely. */
++      if (PK == PointerKind::Escaping)
++        CallInst::Create(
++          ResolvePending,
++          { flightPtrPtr(FlightPtr, Inst), ConstantInt::get(IntPtrTy, 1) },
++          "", Inst)->setDebugLoc(Inst->getDebugLoc());
+       
+       int64_t Alignment = 0;
+       int64_t AlignmentOffset = 0;
+@@ -16280,6 +16317,13 @@ public:
+       "filc_comdat_link_fail", VoidTy, RawPtrTy, Int64Ty);
+     OptimizedAlignmentContradiction = M.getOrInsertFunction(
+       "filc_optimized_alignment_contradiction", VoidTy, FlightPtrTy, RawPtrTy);
++    /* Native, and deliberately unprefixed: the pass-emitted hook has to land on
++       trusted runtime code. A pizlonated_* entry point is a descriptor stub, so a
++       direct call to one yields a function object instead of running the body;
++       this is why every other compiler-emitted runtime call is native too. See
++       runtime/src/fasync_shared.h. */
++    ResolvePending = M.getOrInsertFunction(
++      "filc_resolve_pending", RawPtrTy, RawPtrTy, IntPtrTy);
+     OptimizedAccessCheckFail = M.getOrInsertFunction(
+       "filc_optimized_access_check_fail", VoidTy, FlightPtrTy, RawPtrTy);
+     OptimizedStackAlignmentContradiction = M.getOrInsertFunction(
