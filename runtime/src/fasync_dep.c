@@ -230,3 +230,35 @@ unsigned fasync_build_dag(const struct fasync_op* ops, unsigned n_ops,
   return n_edges;
 }
 
+/* ------------------------------------------------------------------ */
+/* Serialization tokens (async-a-sync.pdf)                             */
+/* ------------------------------------------------------------------ */
+
+/*
+ * A token is just a named resource that everyone sharing it claims INOUT. That
+ * is the whole implementation, which is the point: async-a-sync.pdf presents the
+ * token as its own mechanism, but it is a special case of a declared effect set
+ * over a non-address resource.
+ */
+static unsigned long fasync_next_resource = 1;
+
+fasync_tracker* fasync_tracker_new(void) {
+  fasync_tracker* t = malloc(sizeof(fasync_tracker));
+  if (!t)
+    return 0;
+  t->resource = fasync_next_resource++;
+  return t;
+}
+
+void fasync_tracker_free(fasync_tracker* tracker) { free(tracker); }
+
+struct fasync_access fasync_tracker_access(const fasync_tracker* tracker,
+                                           unsigned kind) {
+  struct fasync_access a;
+  a.buf = 0;
+  a.len = 0;
+  a.kind = kind;
+  a.resource = tracker ? tracker->resource : 0;
+  return a;
+}
+
