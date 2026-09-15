@@ -262,3 +262,128 @@ struct fasync_access fasync_tracker_access(const fasync_tracker* tracker,
   return a;
 }
 
+/* ------------------------------------------------------------------ */
+/* Execution                                                           */
+/* ------------------------------------------------------------------ */
+
+/*
+ * Run the DAG.
+ *
+ * The scheduler's only job is to notice when an operation becomes ready and
+ * start it immediately, without waiting for anything that is still running.
+ * `max_concurrent` is the measurement that matters: it is how much parallelism
+ * the declarations actually exposed.
+ */
+int fasync_run_dag(const struct fasync_op* ops, unsigned n_ops,
+                   const unsigned* edges, unsigned n_edges,
+                   fasync_submit_fn submit, void* ctx,
+                   struct fasync_dag_run* out) {
+  if (!n_ops)
+    return 0;
+
+  unsigned* in_degree = malloc(n_ops * sizeof(unsigned));
+  fasync_id* handles = malloc(n_ops * sizeof(fasync_id));
+  unsigned char* done = malloc(n_ops);
+  unsigned char* started = malloc(n_ops);
+  if (!in_degree || !handles || !done || !started) {
+    free(in_degree);
+    free(handles);
+    free(done);
+    free(started);
+    return -1;
+  }
+
+  for (unsigned i = 0; i < n_ops; i++) {
+    in_degree[i] = 0;
+    handles[i] = 0;
+    done[i] = 0;
+    started[i] = 0;
+  }
+  for (unsigned e = 0; e < n_edges; e++)
+    in_degree[edges[e] % n_ops]++;
+
+  struct fasync_dag_run run;
+  run.submitted = 0;
+  run.max_concurrent = 0;
+  run.waves = 0;
+
+  unsigned finished = 0;
+  unsigned in_flight = 0;
+
+  while (finished < n_ops) {
+    /* Start everything that is ready. Nothing here waits on the I/O. */
+    int started_any = 0;
+    for (unsigned i = 0; i < n_ops; i++) {
+      if (started[i] || in_degree[i] != 0)
+        continue;
+      fasync_id h = submit(&ops[i], ctx);
+      if (!h)
+        continue;
+      started[i] = 1;
+      handles[i] = h;
+      in_flight++;
+      run.submitted++;
+      started_any = 1;
+      if (in_flight > run.max_concurrent)
+        run.max_concurrent = in_flight;
+    }
+
+    if (started_any) {
+      run.waves++;
+      /*
+       * Publish the wave. This is the only place the kernel is told about the
+       * work, and it is a single non-blocking submission for the whole wave --
+       * the batching that zero-context-switch submission is supposed to buy.
+       * Without it the SQEs sit in shared memory and never execute.
+       */
+      if (fasync_submit() < 0) {
+        free(in_degree);
+        free(handles);
+        free(done);
+        free(started);
+        return -1;
+      }
+    }
+
+    /* Nothing started and nothing in flight means a cycle, or every remaining
+     * operation failed to submit. */
+    if (!in_flight) {
+      if (!started_any)
+        break;
+      continue;
+    }
+
+    /*
+     * Wait for the first operation to finish. Only its completion is waited
+     * for; everything still running stays running.
+     */
+    for (unsigned i = 0; i < n_ops; i++) {
+      if (!started[i] || done[i])
+        continue;
+      if (!fasync_ready(handles[i]))
+        continue;
+      long result = fasync_result(handles[i]);
+      done[i] = 1;
+      in_flight--;
+      finished++;
+      (void)result;
+      for (unsigned e = 0; e < n_edges; e++) {
+        if (edges[e] / n_ops == i) {
+          unsigned to = edges[e] % n_ops;
+          if (in_degree[to])
+            in_degree[to]--;
+        }
+      }
+      break;
+    }
+  }
+
+  free(in_degree);
+  free(handles);
+  free(done);
+  free(started);
+
+  if (out)
+    *out = run;
+  return 0;
+}
