@@ -182,3 +182,118 @@ the hot path got slower.
 
 ---
 
+## 3. Shape of the system
+
+The extension is **additive**: no Fil-C source file is modified for the runtime
+itself. It adds object files to a private copy of the distributed `libpizlo.a`.
+
+```
+                    memory-safe (filcc)          trusted / unsafe (host clang)
+                    ───────────────────          ────────────────────────────
+  demos, tests  ──► fasync.c                      fasync_native.c
+                    · ring allocation (GC mem)     · raw io_uring syscalls
+                    · request table                · GC safepoint bracketing
+                    · capability checks (zcheck)   · capability checks on args
+                    · provenance                   · RESOLUTION POLICY
+                    · SQEs / ops                   · filc_resolve_pending
+                    fasync_dep.c                   (libpas forwarder table,
+                    · effect sets                   regenerated)
+                    · disjointness proof
+                    · DAG + scheduler
+```
+
+Resolution sits on the right-hand side, and §2.5 is why: the compiler emits a
+call to `filc_resolve_pending`, so that function has to be native. The memory-safe
+half still *owns* the state — the ring and the request table are its memory — and
+publishes raw addresses into it through `fasync_shared.h`, so both halves see one
+request table and one ring. Its own explicit-access path calls into the same
+native policy, so there is exactly one implementation of resolution and the two
+paths cannot diverge.
+
+Two halves, because Fil-C forces it. Anything that issues a syscall the runtime
+does not already expose must live in the trusted core, and anything that touches
+program memory must be capability-checked, which only the safe half can do. The
+boundary between them carries only scalars and addresses — never a Fil-C pointer
+that the trusted half would have to dereference.
+
+**How `zsys_io_uring_*` becomes callable.** Fil-C's own mechanism for bridging a
+new syscall is
+`libpas/src/libpas/generate_pizlonated_forwarders.rb`, which holds a
+hand-maintained signature list and generates the `pizlonated_*` wrapper that
+memory-safe code calls into. The extension adds three signatures
+(`runtime/patches/0001-libpas-io_uring-forwarders.patch`), regenerates the
+forwarder table, and implements the `filc_native_*` bodies in `fasync_native.c`.
+That is the sanctioned extension point for this layer, and it is where `idea.md`
+§2.6's "hook in libpizlo where syscalls are already recognized as a checked
+boundary" actually lands.
+
+---
+
+## 4. The three mechanisms
+
+### 4.1 Zero-context-switch submission
+
+`fasync_pread` and friends write an SQE into shared memory and return a handle.
+They do not wait and they do not enter the kernel. Publication happens once per
+batch in `fasync_submit()`, with a single `io_uring_enter(to_submit, min_complete
+= 0)` — which does not block.
+
+Measured, from `demos/demo_async_io.c`: 64 reads across 16 MiB enqueued *and*
+published in **0.049 ms**, with **zero** blocking kernel entries. The blocking
+loop doing the same reads pays 64 separate round trips.
+
+The `min_complete > 0` case is the only one that can sleep, and it is wrapped in
+the GC safepoint protocol (`filc_exit`/`filc_enter`) so a collector handshake can
+never deadlock against a thread parked in the kernel. The non-blocking path
+deliberately does *not* pay that cost, which is the whole point.
+
+### 4.2 Provenance tracking
+
+A request handle identifies the request, not the buffer. Anything derived from a
+pending result inherits the tag, and `fasync_provenance()` recovers it for a
+derived pointer by locating the pending range that contains it. Derived pointers
+therefore resolve correctly whether the access is to the buffer's first byte or
+to a field a thousand bytes in.
+
+### 4.3 Lazy resolution on first genuine access
+
+`filc_resolve_pending(ptr, size)` is the hot path. It lives in the native half
+(§2.5), and it runs on every instrumented access, so its cost when nothing is
+pending is the design's most important number:
+
+```c
+if (__atomic_load_n(&g_inflight, __ATOMIC_ACQUIRE) == 0)
+    return ptr;                 /* one load, one predicted branch */
+```
+
+Only if something is in flight does it look for a covering pending range, and
+only then does it poll the completion ring. Polling is a plain read of shared
+memory: no syscall, no mode switch. If the completion has not landed, it spins
+against the ring and parks only as a last resort.
+
+Measured: submitting and resolving 64 reads produced **281,832 userspace
+completion-ring polls and zero parks**, and resolving 8 reads produced 3,737
+polls with zero parks. In the workloads exercised, the completion was always
+there by the time anyone looked.
+
+**Resolution flips the pending bit in place; it does not move data.** The kernel
+was already told where to write, so the buffer address never changes. This is one
+of the two options `idea.md` §2.6 offers ("swap the capability to point at the
+real buffer, or flip the pending bit in place"), and choosing it has a payoff
+beyond simplicity: because the pointer's value is unchanged, the compiler patch
+in §6 does not have to rebind anything — it only has to guarantee resolution
+happened first, which is a much smaller and safer change.
+
+### 4.4 Ring memory
+
+Because of §2.3, the runtime does not mmap the ring. It sets
+`IORING_SETUP_NO_MMAP` (kernel 6.5+) and hands the kernel memory it allocated
+itself with `zgc_aligned_alloc`. Two consequences:
+
+- The completion queue is ordinary capability-carrying memory, so the poll stays
+  a direct load from the safe half — no copy, no syscall, and no uncapabilitied
+  pointer anywhere in the design.
+- The allocation must be stable, which §2.4 established experimentally.
+
+---
+
