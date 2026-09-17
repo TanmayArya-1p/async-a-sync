@@ -454,3 +454,74 @@ pointers keeps it off stack accesses entirely. But the fuller version described 
 compare instead of a call — by widening the InvisiCap to carry the pending tag.
 That is a better design and it is not what this patch does.
 
+## 7. Known limitations
+
+These are real and are worth stating plainly.
+
+1. **No kernel-native fd chaining.** Descriptor provenance works, but a read on
+   a pending descriptor waits for the open rather than being chained after it,
+   because the kernel here does not honour an explicit direct-descriptor slot (see
+   §5 and `tests/stage6b_fd_chain_probe.c`). Dependent operations are therefore
+   ordered in userspace. This is the remaining piece of `idea.md` §3.1.
+
+2. **Detection uses a size of 1.** A derived pointer into a pending buffer always
+   starts inside it, so containment of its first byte is what detection needs. A
+   pointer that starts *outside* a pending buffer and straddles into it would not
+   be detected. That is an unusual access pattern, but it is a gap.
+
+3. **Aliasing writes are not tracked.** Resolution is driven by the checked access
+   path. A write to a pending buffer through a path that does not go through it —
+   for instance a raw `memcpy` that the pass does not instrument — would race with
+   the kernel. §2.4 of `idea.md` anticipated this class of leak.
+
+4. **One ring, one lock.** The runtime keeps a single global ring guarded by
+   convention rather than a real lock, and multi-threaded use is not tested. The
+   safepoint bracketing on blocking calls is correct for a single thread; a
+   multi-threaded collector handshake under concurrent blocking submits has not
+   been reasoned through.
+
+5. **`fasync_read` is deliberately absent.** A plain `read` has no offset, so the
+   bytes it produces depend on the file cursor at *execution* time, not at
+   submission time. That is unresolvable in this model without serializing, so
+   only `pread` (offset-carrying, and genuinely parallelizable) is supported.
+
+6. **Supported opcodes are a subset**: `pread`, `pwrite`, `openat`, `close`,
+   `fsync`. `read`, `writev`, sockets, and the rest are not wired up.
+
+---
+
+## 8. Measurements, and how to read them
+
+From `demos/demo_async_io.c`, 64 × 256 KiB from a warm page cache:
+
+```
+blocking loop:    6.433 ms   (64 separate round trips)
+async:            6.441 ms   (0.049 ms to enqueue+publish all 64,
+                             then 6.392 ms to resolve)
+blocking kernel entries: 1 async vs 64 blocking
+observed: 1.00x
+```
+
+**The async path is not faster here, and that is the honest reading.** With a warm
+page cache the bytes are already in kernel memory, so both paths are memcpy-bound
+and the async path's machinery — shared rings, bookkeeping per request, one pass
+through the completion queue — is pure overhead. What it removes is the per-request
+round trip, and on this workload the round trip was already cheap: it went from 64
+entries to 1, and the wall clock did not care.
+
+The compiler-hook test in §6 is the other half of the picture, and it is
+qualitative rather than a benchmark: 1 of 4096 accesses paid for a resolution and
+the rest cost a load.
+
+What the numbers *do* establish is structural: submission is effectively free
+(0.049 ms to enqueue and publish 64 requests), it never blocks (0 blocking entries,
+verifiable by counter rather than by timing), and resolution is lazy and cheap
+while nothing is in flight. Whether those properties turn into throughput depends
+on per-request latency being high enough that having everything in flight at once
+matters — cold cache, real devices, network filesystems. **That has not been
+measured here, and `idea.md` §6 phase 6 explicitly asks for it** (comparison
+against `tokio-uring`/`monoio`). Until that exists, the honest claim is about
+mechanism, not about speed.
+
+---
+
