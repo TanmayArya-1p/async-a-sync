@@ -404,3 +404,53 @@ write only executes after the read completes. That work is **not done**; see §7
 
 ---
 
+## 6. The compiler patch
+
+`compiler/patches/0001-FilPizlonator-resolve-pending.patch` adds a call to
+`filc_resolve_pending` immediately alongside the capability check FilPizlonator
+already emits for each access through an escaping pointer.
+
+It is small, and §4.3 is why. Because resolution does not change the pointer's
+value, the patch does not rebind pointers, rewrite `Place` projections, or touch
+the address computation. It inserts one side-effecting call before the existing
+check and changes nothing else:
+
+```cpp
+if (PK == PointerKind::Escaping)
+  CallInst::Create(
+    ResolvePending,
+    { flightPtrPtr(FlightPtr, Inst), ConstantInt::get(IntPtrTy, 1) },
+    "", Inst)->setDebugLoc(Inst->getDebugLoc());
+```
+
+The callee is bound as `filc_resolve_pending`, native and unprefixed, per §2.5.
+
+**It is built and verified.** clang was compiled from these sources (Release,
+assertions on, X86 only) and the resulting compiler emits the hook: 5 call sites
+appear in a small test program's binary, and `tests/stage4_compiler_hook.c` shows
+the hook actually resolving:
+
+```
+after submit: returned=1 sqes_queued=1 inflight-still-pending=yes
+resolve calls attributed to the access: before=1 after=2
+fast-path hits (means 'nothing was in flight'): 4095
+hook fired at the access:    yes
+completion reaped:           yes
+buffer contents correct:     yes
+```
+
+Read the two counters together, because they are the whole design in miniature:
+one access resolved a pending request, and the other 4095 went through the
+one-load fast path. That program contains no explicit resolution call anywhere —
+`FASYNC_ACCESS()` is compiled to nothing under
+`-DFASYNC_COMPILER_INSERTS_CHECKS` — so the only thing that could have resolved it
+is the compiler's own instrumentation.
+
+**Honest note on performance.** This is the simple form: an unconditional call per
+escaping-pointer access. The runtime makes it cheap (one load, one predicted
+branch, no table touch when nothing is in flight), and restricting it to escaping
+pointers keeps it off stack accesses entirely. But the fuller version described in
+`idea.md` §2.6 would fold the test into the existing bounds compare — one extra
+compare instead of a call — by widening the InvisiCap to carry the pending tag.
+That is a better design and it is not what this patch does.
+
