@@ -1,5 +1,5 @@
 diff --git a/llvm/lib/Transforms/Instrumentation/FilPizlonator.cpp b/llvm/lib/Transforms/Instrumentation/FilPizlonator.cpp
-index d8812aa74..997945c2e 100644
+index d8812aa74..5f4363f74 100644
 --- a/llvm/lib/Transforms/Instrumentation/FilPizlonator.cpp
 +++ b/llvm/lib/Transforms/Instrumentation/FilPizlonator.cpp
 @@ -1541,6 +1541,11 @@ class Pizlonator {
@@ -7,7 +7,7 @@ index d8812aa74..997945c2e 100644
    FunctionCallee OptimizedAlignmentContradiction;
    FunctionCallee OptimizedAccessCheckFail;
 +
-+  /* segfault: resolves a pending async syscall result before an access reads or
++  /* async-a-sync: resolves a pending async syscall result before an access reads or
 +     writes it. Implemented in the trusted runtime (libpizlo); see
 +     runtime/src/fasync.c. */
 +  FunctionCallee ResolvePending;
@@ -19,7 +19,7 @@ index d8812aa74..997945c2e 100644
          return flightPtrWithOffset(FlightPtr, ConstantInt::get(IntPtrTy, Offset), InsertBefore);
        };
 +
-+      /* segfault: if this access goes through an escaping pointer, make sure any
++      /* async-a-sync: if this access goes through an escaping pointer, make sure any
 +         pending async syscall covering it has resolved before the access
 +         happens.
 +

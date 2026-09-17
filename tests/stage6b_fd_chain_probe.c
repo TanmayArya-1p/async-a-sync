@@ -236,7 +236,7 @@ static void prep_read(struct io_uring_sqe* s, unsigned slot, void* buf,
 }
 
 int main(void) {
-  const char* path = "/tmp/segfault_fdchain_payload.txt";
+  const char* path = "/tmp/async-a-sync_fdchain_payload.txt";
   const char* payload = "chained-before-open";
   int fd = open(path, O_CREAT | O_TRUNC | O_RDWR, 0644);
   write(fd, payload, strlen(payload));

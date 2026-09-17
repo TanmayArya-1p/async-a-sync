@@ -293,7 +293,7 @@ static int scenario_dependencies(void) {
 }
 
 int main(void) {
-  const char* path = "/tmp/segfault_demo_payload.bin";
+  const char* path = "/tmp/async-a-sync_demo_payload.bin";
   if (seed(path) != 0) {
     printf("cannot create %s\n", path);
     return 1;

@@ -80,7 +80,7 @@ static unsigned run_and_measure(const struct fasync_op* ops, unsigned n_edges,
 }
 
 int main(void) {
-  const char* path = "/tmp/segfault_stage5_payload.bin";
+  const char* path = "/tmp/async-a-sync_stage5_payload.bin";
 
   /* Seed six distinguishable blocks. */
   int fd = open(path, O_CREAT | O_TRUNC | O_RDWR, 0644);

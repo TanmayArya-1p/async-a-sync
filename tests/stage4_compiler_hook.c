@@ -42,7 +42,7 @@
 int main(void) {
   printf("compiler-inserted resolution hook:\n");
 
-  const char* path = "/tmp/segfault_stage4_payload.bin";
+  const char* path = "/tmp/async-a-sync_stage4_payload.bin";
   int fd = open(path, O_CREAT | O_TRUNC | O_RDWR, 0644);
   if (fd < 0) {
     printf("  cannot create %s\n", path);

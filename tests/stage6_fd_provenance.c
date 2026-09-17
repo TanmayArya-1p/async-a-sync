@@ -38,7 +38,7 @@ static void check(const char* what, int ok) {
 int main(void) {
   printf("descriptor provenance:\n");
 
-  const char* path = "/tmp/segfault_stage6_payload.bin";
+  const char* path = "/tmp/async-a-sync_stage6_payload.bin";
   int fd = open(path, O_CREAT | O_TRUNC | O_RDWR, 0644);
   if (fd < 0) {
     printf("cannot create %s\n", path);

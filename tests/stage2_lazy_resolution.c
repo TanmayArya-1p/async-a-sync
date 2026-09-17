@@ -81,7 +81,7 @@ static int block_is_correct(const unsigned char* buf, size_t len, int index) {
 }
 
 int main(void) {
-  const char* path = "/tmp/segfault_stage2_payload.bin";
+  const char* path = "/tmp/async-a-sync_stage2_payload.bin";
   if (seed_file(path) != 0) {
     fprintf(stderr, "cannot seed %s\n", path);
     return 1;

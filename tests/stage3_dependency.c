@@ -154,7 +154,7 @@ static void test_execution(void) {
   printf("\ndag execution over real file I/O:\n");
   fflush(stdout);
 
-  const char* path = "/tmp/segfault_stage3_payload.bin";
+  const char* path = "/tmp/async-a-sync_stage3_payload.bin";
   int fd = open(path, O_CREAT | O_TRUNC | O_RDWR, 0644);
   if (fd < 0) {
     printf("  cannot create %s\n", path);

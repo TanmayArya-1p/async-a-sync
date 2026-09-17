@@ -1,5 +1,5 @@
 diff --git a/libpas/src/libpas/generate_pizlonated_forwarders.rb b/libpas/src/libpas/generate_pizlonated_forwarders.rb
-index 4b41e9896..2762f5ae3 100644
+index 4b41e9896..dd4cafaae 100644
 --- a/libpas/src/libpas/generate_pizlonated_forwarders.rb
 +++ b/libpas/src/libpas/generate_pizlonated_forwarders.rb
 @@ -288,6 +288,36 @@ addSig nil, "int", "zsys_unlink", "filc_ptr"
@@ -7,7 +7,7 @@ index 4b41e9896..2762f5ae3 100644
  addSig nil, "filc_ptr", "zsys_mmap", "filc_ptr", "size_t", "int", "int", "int", "long"
  addSig nil, "int", "zsys_munmap", "filc_ptr", "size_t"
 +
-+# io_uring entry points, added by the segfault project (transparent async
++# io_uring entry points, added by the async-a-sync project (transparent async
 +# syscalls). These are the three syscalls needed to drive an io_uring ring from
 +# a pizlonated program. They cannot be issued from memory-safe code, and
 +# zsys_syscall's dispatcher rejects them as "unsupported syscall", so they are
@@ -23,7 +23,7 @@ index 4b41e9896..2762f5ae3 100644
 +addSig nil, "long", "zsys_io_uring_enter", "int", "unsigned", "unsigned", "unsigned"
 +addSig nil, "long", "zsys_io_uring_register", "int", "unsigned", "filc_ptr", "size_t"
 +
-+# Async syscall runtime entry points (segfault project). The compiler-emitted
++# Async syscall runtime entry points (async-a-sync project). The compiler-emitted
 +# resolution hook is a native symbol named directly by the patch; these are the
 +# calls the memory-safe half makes into that same native policy, so it is
 +# implemented once rather than twice.
