@@ -525,3 +525,52 @@ mechanism, not about speed.
 
 ---
 
+## 9. Layout
+
+```
+runtime/
+  src/fasync.h             public API (demos link against this)
+  src/fasync.c             memory-safe half: rings, request table, ops, provenance
+  src/fasync_dep.c/.h      effect sets, disjointness proof, DAG + scheduler
+  src/fasync_native.c      trusted half: io_uring syscalls + resolution policy
+  src/fasync_io_uring.h    the kernel ABI, shared by both halves
+  src/fasync_shared.h      the request/ring layout both halves agree on
+  src/fasync_syscalls.h    declarations of the added runtime surface
+  patches/                 the libpas forwarder-generator patch
+  os-include/              kernel headers for compiling the trusted half
+  build.sh                 builds the extension and splices libpizlo.a
+compiler/
+  patches/                 the FilPizlonator patch
+  build.sh                 builds a patched clang (long; see README)
+tests/
+  run.sh                   builds everything and runs the suite
+  stage2b_mmap_probe.c     kernel: which mmaps of a ring are allowed
+  stage2c_gc_pin_probe.c   Fil-C: GC memory must not move
+  stage2_lazy_resolution.c Fil-C: submission never blocks; resolution is lazy
+  stage3_dependency.c      Fil-C: effect sets, disjointness, DAG execution
+  stage4_compiler_hook.c   Fil-C: the compiler inserts the hook (needs the
+                           patched compiler; skipped when it is not built)
+  stage5_trackers.c        Fil-C: serialization tokens vs effect sets, measured
+  stage6_fd_provenance.c   Fil-C: operations against a not-yet-open descriptor
+  stage6b_fd_chain_probe.c kernel probe: what direct descriptors support here
+demos/
+  demo_async_io.c          the showcase
+docs/ARCHITECTURE.md       this file
+vendor/                    Fil-C distribution and source checkout
+```
+
+## 10. Building and running
+
+```sh
+./runtime/build.sh        # builds the extension into runtime/build/lib/libpizlo.a
+./tests/run.sh            # builds and runs the whole suite
+./compiler/build.sh       # builds a patched clang (long; see compiler/README.md)
+
+# the showcase, compiled by the patched compiler, with the hook inserted
+# automatically and no marker macro in the source:
+vendor/fil-c-src/build/bin/filcc -O2 -static -DFASYNC_COMPILER_INSERTS_CHECKS \
+  -I runtime/src -L runtime/build/lib -o demo demos/demo_async_io.c
+```
+
+`runtime/build.sh` needs the Fil-C 0.685 distribution and a Fil-C source
+checkout; both are fetched into `vendor/` (see `README.md`).
