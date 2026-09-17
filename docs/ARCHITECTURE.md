@@ -297,3 +297,110 @@ itself with `zgc_aligned_alloc`. Two consequences:
 
 ---
 
+## 5. Dependencies
+
+`idea.md` §3 splits the dependent-syscall problem in two, and the implementation
+follows that split.
+
+**Explicit dataflow (free).** `x = a(); b(x)` needs no annotation: the pending tag
+on `a`'s result *is* the dependency edge, and it is discovered structurally.
+`tests/stage2_lazy_resolution.c` exercises the derived-pointer case.
+
+**Descriptors (the free case, extended).** Buffers are not the only thing a
+syscall produces. `fasync_open_pending` returns a *pending descriptor* -- negative,
+since a real descriptor never is -- and every operation that takes an fd resolves
+it first. So `fasync_pread(fd, ...)` on a descriptor that does not exist yet is
+what creates the dependency; nothing is declared and nothing is remembered, and
+the same dataflow argument that makes buffer provenance free applies. Resolving a
+pending descriptor also publishes any queued submissions first, so a program that
+never calls `fasync_submit()` explicitly cannot deadlock against its own
+unpublished SQEs.
+
+What this gives up is overlap: the read cannot be submitted until the open has
+produced an fd. Getting that back means having the kernel chain them, which needs
+the open to target an explicit direct-descriptor slot so the read can name it in
+advance. `tests/stage6b_fd_chain_probe.c` shows why that is unavailable here:
+`IORING_REGISTER_FILES` with a sparse table works, `IOSQE_FIXED_FILE` reads on a
+slot work, `IORING_FILE_INDEX_ALLOC` works -- but an openat targeting an *explicit*
+slot is not honoured, and the kernel allocates its own index instead. With the
+index unknown until completion, a chained read has nothing to name.
+
+**Hidden aliasing (needs a declaration).** `fasync_dep.c` implements declared
+effect sets after OpenMP task `depend` clauses and Jade. Each operation declares
+what it reads and writes, and the runtime builds the dependency DAG: writer→reader,
+reader→writer (anti-dependency), writer→writer. Reader/reader pairs never
+conflict.
+
+The Fil-C-specific part is what keeps annotations rare. Before falling back to the
+declarations, the analyser asks the runtime for the true extent of the object
+behind each pointer (`zgetlower`/`zgetupper` — the InvisiCap bounds) and discharges
+any pair whose ranges are provably disjoint:
+
+```
+4 operations, 2 dependency edges
+  writer-to-reader:  2
+conflicts dissolved by proving capability ranges disjoint: 4
+-> write(a) and write(b) declare conflicting kinds, but the runtime
+   proves their objects disjoint, so they run together instead of
+   serializing. That is an annotation nobody wrote.
+```
+
+That is the relationship `restrict` has to C's alias analysis, and it is the
+concrete payoff of building on a substrate where every pointer carries real
+bounds.
+
+### Serialization tokens, measured against effect sets
+
+`async-a-sync.pdf` proposes a different answer to the same problem: rather than
+declaring what an operation touches, pass a token to every call that must be
+ordered against the others sharing it (a hidden trailing `void* PROVENANCE`
+argument in its formulation). It is implemented here as a named resource claimed
+`INOUT`, which means it flows through the ordinary analysis instead of needing its
+own machinery -- and, usefully, means it composes with effect sets rather than
+competing with them.
+
+The same six-operation workload, two independent chains, encoded three ways:
+
+| encoding | edges | peak in flight |
+|---|---|---|
+| declared effect sets | 4 | 5 |
+| two tokens, one per chain | 6 | 2 |
+| one token shared by everything | 15 | 1 |
+
+(`peak in flight` is as counted by the scheduler and is indicative rather than an
+antichain width; the edge counts are exact.)
+
+**A token is coarser, and the table is the cost.** It can only express a chain:
+everyone sharing a token is ordered against everyone else sharing it, including
+pairs that do not actually conflict. A single token over this workload imposes a
+total order where four operations could have run at once, which is exactly the
+over-serialization `idea.md` §3.2 anticipated when it rejected a serial/parallel
+split.
+
+Where a token is genuinely the better tool is the case effect sets cannot reach:
+a dependency on something with no address -- an fd, a path, a lock. Two calls
+colliding on a descriptor have nothing for the capability-range analysis to look
+at, and the token expresses it in one line. And because the token is modelled as a
+*resource*, the one thing the original formulation cannot do becomes possible:
+several operations can share a token as readers (`FASYNC_IN`) at no cost, where a
+token that is always a serialization point forces them to queue.
+
+So: worse than effect sets where the dependency is expressible as a range, better
+where it is not, and best of all composed -- precise ranges where you have them,
+a token for the opaque part.
+
+### The case the design does not get for free
+
+`idea.md` §3.1 flags it precisely: sometimes the dependency is not "code touches
+the buffer" but "the *kernel* needs `a`'s bytes as the content of `b`'s SQE". A
+`write` whose source buffer is a not-yet-filled async read is exactly that case,
+and it cannot be deferred — the kernel reads those bytes when it executes the
+request, whatever is there.
+
+The current implementation resolves the source eagerly in `fasync_pwrite`, which
+is *correct* but gives up the overlap between the write and the read feeding it.
+The kernel-native fix is `IOSQE_IO_LINK`, which chains the two requests so the
+write only executes after the read completes. That work is **not done**; see §7.
+
+---
+
