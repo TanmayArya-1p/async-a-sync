@@ -141,6 +141,19 @@ int fasync_submit(void);
 /* Has this request's completion landed? Never blocks. */
 int fasync_ready(fasync_id id);
 
+/*
+ * Wait until nothing is in flight, reaping completions in whatever order they
+ * arrive.
+ *
+ * The throughput pattern: you care that the batch finished, not which request
+ * finished first. Waiting on each handle in turn costs one kernel entry per
+ * request even when several completions are already sitting in the ring, which
+ * throws away most of what batching buys. This publishes anything queued, then
+ * drains the completion ring until it is empty, sleeping only when there is
+ * genuinely nothing to reap. Returns 0, or -1 if a request never completed.
+ */
+int fasync_wait_all(void);
+
 /* Resolve this handle, waiting if necessary. Returns the raw syscall result
  * (bytes transferred for read/write, 0 for fsync/openat-style success) or
  * -errno. */

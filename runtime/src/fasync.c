@@ -662,6 +662,27 @@ int fasync_ready(fasync_id id) {
   return r->state != FASYNC_REQ_PENDING;
 }
 
+int fasync_wait_all(void) {
+  fasync_submit(); /* publish anything still queued */
+
+  /* Bounded so that a request which never completes cannot hang the process; the
+   * failure mode this guards against is the one idea.md section 2.6 flags as
+   * owned by the runtime rather than by the kernel. */
+  for (unsigned long spin = 0; spin < 100000000UL; spin++) {
+    if (__atomic_load_n(&g_inflight, __ATOMIC_ACQUIRE) == 0)
+      return 0;
+
+    fasync_poll();
+    if (__atomic_load_n(&g_inflight, __ATOMIC_ACQUIRE) == 0)
+      return 0;
+
+    /* Nothing left to reap, so sleep until the kernel has something rather than
+     * spinning through enters. */
+    fasync_block();
+  }
+  return -1;
+}
+
 long fasync_result(fasync_id id) {
   struct fasync_req_shared* r = fasync_req_lookup(id);
   if (!r)
