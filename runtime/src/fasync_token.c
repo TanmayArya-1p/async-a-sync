@@ -1,14 +1,4 @@
-/*
- * fasync_token.c -- serialization-token-ordered syscalls (Fil-C, memory-safe).
- *
- * The token of async-a-sync.pdf, implemented where the dependency actually
- * bites: at syscall issue. fasync_tagged_pread / fasync_tagged_pwrite take the
- * token the calls share, and a call is not enqueued until every *conflicting*
- * tagged call already issued on that token has completed. "Conflicting" means
- * at least one side writes, so reads overlap freely. The queue lives in the
- * fasync_tracker ABI (fasync_dep.h); both ops share one token.
- */
-
+/* fasync_token.c -- token-ordered syscalls at issue time. */
 #include <stdfil.h>
 #include <pizlonated_syscalls.h>
 
@@ -24,12 +14,7 @@ static int fasync_token_conflicts(unsigned a, unsigned b) {
          b == FASYNC_INOUT;
 }
 
-/* Wait until every conflicting tagged call already issued on `tok` has
- * finished, then compact the queue down to the calls that still matter.
- * A completed slot (resolved by a conflict, or via fasync_ready/result on its
- * own) can no longer order anything and is dropped; a still-pending slot that
- * does not conflict with the new call survives because a *later* writing call
- * must wait on it. */
+/* Wait out conflicting calls then drop completed slots. */
 static void fasync_token_wait(fasync_tracker* tok, unsigned kind) {
   if (!tok || !tok->n)
     return;
@@ -47,9 +32,7 @@ static void fasync_token_wait(fasync_tracker* tok, unsigned kind) {
   tok->n = keep;
 }
 
-/* Remember that `id` was issued on `tok` so a later conflicting tagged call
- * waits on it. A full queue is relieved by waiting the oldest slot out and
- * shifting, which honours its ordering rather than silently dropping it. */
+/* A full queue waits out the oldest slot to make room. */
 static void fasync_token_track(fasync_tracker* tok, fasync_id id,
                                unsigned kind) {
   if (!tok || !id)

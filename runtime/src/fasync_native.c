@@ -1,28 +1,7 @@
-/*
- * fasync_native.c -- the native half of the async syscall runtime.
- *
- * Compiled by the HOST compiler (not filcc) and linked into libpizlo's trusted
- * runtime core: the small body of code allowed to be unsafe. This is why
- * io_uring has to live here -- Fil-C has no escape hatch, and inline asm in a
- * filcc file fails at compile time ("thwarted a futile attempt to violate
- * memory safety"), while zsys_syscall's allowlist rejects io_uring outright
- * ("unsupported syscall: 425"). So the three syscalls are added the only way
- * they can be: as first-class pizlonated syscalls, declared in
- * generate_pizlonated_forwarders.rb and generated into the forwarder table.
- *
- * Shape follows the existing pizlonated syscalls: validate every pointer
- * argument against the capability model, then bracket the syscall in the GC
- * safepoint protocol. The only difference is io_uring has no libc wrapper, so
- * the syscall instruction is issued directly and errno is reconstructed from
- * the raw return value.
- */
-
 #include "filc_runtime.h"
 
 #include "fasync_io_uring.h"
 
-/* Raw syscall primitives. Only legal here -- the same inline asm in a
- * filcc-compiled file is refused by the compiler. */
 static PAS_ALWAYS_INLINE long fasync_syscall2(long n, long a, long b) {
   long ret;
   __asm__ volatile("syscall"
@@ -57,8 +36,7 @@ static PAS_ALWAYS_INLINE long fasync_syscall6(long n, long a, long b, long c,
   return ret;
 }
 
-/* Raw syscalls return -errno; convert to the -1-and-errno convention the rest
- * of the pizlonated surface uses so memory-safe callers stay plain C. */
+/* Raw syscalls return -errno so convert to -1 and errno. */
 static PAS_ALWAYS_INLINE long fasync_finish(long ret) {
   if (ret < 0 && ret >= -4095) {
     filc_set_errno((int)-ret);
@@ -67,10 +45,6 @@ static PAS_ALWAYS_INLINE long fasync_finish(long ret) {
   return ret;
 }
 
-/* io_uring_setup(entries, params) -> ring fd, or -1 with errno set.
- * `params` is written by the kernel and is the runtime's own stack object, but
- * it is still checked writable: a checked boundary does not rely on the
- * caller's good behaviour. No safepoint: this call never blocks. */
 PAS_API long filc_native_zsys_io_uring_setup(filc_thread* my_thread,
                                              unsigned entries,
                                              filc_ptr params) {
@@ -81,18 +55,7 @@ PAS_API long filc_native_zsys_io_uring_setup(filc_thread* my_thread,
                       (long)filc_ptr_ptr(params)));
 }
 
-/* io_uring_enter(fd, to_submit, min_complete, flags) -> submitted count, or -1.
- * The kernel's real signature has two trailing signal-mask arguments, both
- * always NULL here (no interrupt-driven reaping; NULL = do not block signals).
- *
- * THE SAFEPOINT SPLIT IS THE IMPORTANT PART.
- *   min_complete == 0: publish only, returns promptly. No safepoint, because a
- *      stop-the-world handshake here would defeat the whole point of
- *      zero-context-switch submission.
- *   min_complete > 0: may block indefinitely, so the thread must leave the
- *      Fil-C world first, or a collector handshake could wait forever on a
- *      thread parked in the kernel and entitled to assume its stack is mutable
- *      while it is actually frozen mid-syscall. */
+/* A submit-only enter takes no safepoint while a blocking enter leaves first. */
 PAS_API long filc_native_zsys_io_uring_enter(filc_thread* my_thread,
                                              int ring_fd, unsigned to_submit,
                                              unsigned min_complete,
@@ -111,10 +74,6 @@ PAS_API long filc_native_zsys_io_uring_enter(filc_thread* my_thread,
   return fasync_finish(ret);
 }
 
-/* io_uring_register(fd, opcode, arg, nr_args) -> 0, or -1 with errno set.
- * `arg` is interpreted by opcode (buffer array, file table, eventfds...) and is
- * checked writable. Bracketed by a safepoint: registering buffers or files can
- * touch every page involved and is not bounded like a queue submission. */
 PAS_API long filc_native_zsys_io_uring_register(filc_thread* my_thread,
                                                 int ring_fd, unsigned opcode,
                                                 filc_ptr arg,
@@ -127,34 +86,20 @@ PAS_API long filc_native_zsys_io_uring_register(filc_thread* my_thread,
   return fasync_finish(ret);
 }
 
-/* The compiler-facing resolution hook: where the patched FilPizlonator's
- * emitted call lands. It has to be native -- a `pizlonated_*` entry point is an
- * 8-byte descriptor stub, so calling it directly returns a function object
- * rather than running the body (see fasync_shared.h). Nothing here owns state:
- * fasync_published points at the memory-safe half's table and ring, published
- * once at ring setup. What lives here is the policy, because this is the only
- * place the compiler can reach. */
+/* The hook must be native because a pizlonated entry is a descriptor stub. */
 #include "fasync_shared.h"
 
 static struct fasync_shared* volatile fasync_published;
 
-/* How long to poll the CQ before agreeing to sleep. Polling is a plain read of
- * shared memory; parking is the expensive operation the design avoids. Must
- * match FASYNC_SPIN_LIMIT in fasync.c. */
 #define FASYNC_NATIVE_SPIN_LIMIT 20000
 
-/* Publish the shared state. Called once from the memory-safe half at ring setup
- * (the fasync_publish_state bridge). The address is retained, not copied, so
- * the memory it points into must not move: the ring is GC memory and the table
- * is static. stage2c_gc_pin_probe.c checks the former. */
 PAS_API void filc_native_fasync_publish_state(filc_thread* my_thread,
                                               filc_ptr state) {
   PAS_UNUSED_PARAM(my_thread);
   fasync_published = (struct fasync_shared*)filc_ptr_ptr(state);
 }
 
-/* Reap whatever completions have landed: a pure userspace read of the shared
- * CQ -- no syscall, no mode switch. */
+/* A pure userspace read of the CQ with no syscall. */
 static void fasync_native_drain(struct fasync_shared* sh) {
   if (!sh || !sh->cqes)
     return;
@@ -176,9 +121,7 @@ static void fasync_native_drain(struct fasync_shared* sh) {
       if (r->state == FASYNC_REQ_PENDING && r->id == cqe.user_data) {
         r->result = cqe.res;
         r->state = cqe.res < 0 ? FASYNC_REQ_FAILED : FASYNC_REQ_DONE;
-        /* Retire only after the final state is visible, so a racing resolver
-         * either sees the request pending (and looks again) or sees it
-         * retired; it never sees a stale-reaped request as in flight. */
+        /* Retire only after the final state is visible. */
         __atomic_sub_fetch(sh->inflight, 1, __ATOMIC_RELEASE);
       }
     }
@@ -190,24 +133,12 @@ static void fasync_native_drain(struct fasync_shared* sh) {
   *sh->completions_reaped += count;
 }
 
-/* The pending request covering [ptr, ptr+size), or 0. The walk lives in
- * fasync_shared.h so the two halves cannot drift apart (it used to be written
- * out once per toolchain, and the memo would have had to be kept in step by
- * hand); see there for why the memo exists and what proves it safe. */
 static struct fasync_req_shared* fasync_native_find(struct fasync_shared* sh,
                                                     const void* ptr,
                                                     size_t size) {
   return fasync_shared_find(sh, ptr, size);
 }
 
-/* The lazy batch publish. The safe half can write SQEs the kernel never sees;
- * it only starts work once the SQ tail word is stored. This publishes
- * everything queued in one non-blocking enter -- what lets a workload written
- * as plain calls (a read_all_files loop) run with no submit step anywhere.
- * Reading the count non-atomically is fine: the resolver is only reached when
- * the acquire load of inflight was non-zero, which already ordered the stores
- * that bumped it. Draining by subtraction keeps a racing safe-side
- * fasync_submit() from re-publishing the same SQEs. */
 static void fasync_native_submit(struct fasync_shared* sh) {
   if (!sh->sq_array)
     return;
@@ -231,13 +162,7 @@ static void fasync_native_submit(struct fasync_shared* sh) {
                   0L, 0L, 0L);
 }
 
-/* filc_resolve_pending -- what the compiler emits calls to.
- *
- * THE HOT PATH: it runs on every instrumented access, so its cost when nothing
- * is pending is the design's most important number -- one acquire load of a
- * cache-resident counter and a predictable branch. It spins against the
- * completion ring first and parks only second, because the common case is that
- * the completion has already landed. */
+// The hot path runs on every access.
 PAS_API void* filc_resolve_pending(void* ptr, size_t size) {
   if (!ptr)
     return ptr;
@@ -257,8 +182,7 @@ PAS_API void* filc_resolve_pending(void* ptr, size_t size) {
   if (!r)
     return ptr;
 
-  /* Lazy batch publish: a workload written as plain calls queues SQEs with no
-   * submit; this is where that batch first becomes visible to the kernel. */
+  /* Lazy publish makes the queued batch visible to the kernel. */
   fasync_native_submit(sh);
 
   for (unsigned int spin = 0; spin < FASYNC_NATIVE_SPIN_LIMIT; spin++) {
@@ -273,10 +197,7 @@ PAS_API void* filc_resolve_pending(void* ptr, size_t size) {
 #endif
   }
 
-  /* A full spin budget with no completion means sleeping is the only thing
-   * left. This is the one call here that can block indefinitely, so it takes
-   * the GC safepoint around the enter (same reason as above: a collector
-   * handshake must not wait forever on a thread parked in the kernel). */
+  /* No completion after the spin budget means sleep with the safepoint. */
   while (r->state == FASYNC_REQ_PENDING) {
     (*sh->parks)++;
     (*sh->kernel_wait_entries)++;
@@ -293,17 +214,12 @@ PAS_API void* filc_resolve_pending(void* ptr, size_t size) {
   return ptr;
 }
 
-/* Non-blocking: reap whatever has landed, so a readiness check is a userspace
- * ring read rather than a syscall. */
 PAS_API void filc_native_fasync_poll(filc_thread* my_thread) {
   PAS_UNUSED_PARAM(my_thread);
   fasync_native_drain(fasync_published);
 }
 
-/* Block until at least one completion is available, for operations that produce
- * a scalar (an fd, an error code) rather than filling a buffer -- those have no
- * range for the resolver to look up. Takes the GC safepoint: it can sleep
- * indefinitely. */
+/* A blocking enter for scalar ops so it takes the safepoint. */
 PAS_API void filc_native_fasync_block(filc_thread* my_thread) {
   struct fasync_shared* sh = fasync_published;
   if (!sh)
