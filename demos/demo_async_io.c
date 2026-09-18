@@ -90,9 +90,18 @@ static int scenario_lazy(const char* path) {
 
   fasync_reset_stats();
 
+  /*
+   * Allocate before the clock starts. A fresh 256 KiB block is zeroed by the
+   * Fil-C allocator, so allocating inside the timed region measures the
+   * allocator rather than submission -- which is why this line used to read
+   * ~7.8 ms here while the equivalent measurement in scenario 2 read 0.05 ms.
+   * Scenario 2 has always allocated outside its timed region; this matches it.
+   */
+  for (int i = 0; i < N_BLOCKS; i++)
+    bufs[i] = malloc(BLOCK_SIZE);
+
   double t0 = now_ms();
   for (int i = 0; i < N_BLOCKS; i++) {
-    bufs[i] = malloc(BLOCK_SIZE);
     ids[i] = fasync_pread(fd, bufs[i], BLOCK_SIZE, (off_t)i * BLOCK_SIZE);
     if (!ids[i]) {
       printf("  enqueue failed: %s\n", fasync_last_error());
