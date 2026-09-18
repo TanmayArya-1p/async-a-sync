@@ -16,6 +16,7 @@
 #            DAG construction and execution (Fil-C)
 #   stage5   serialization tokens (async-a-sync.pdf) vs effect sets (Fil-C)
 #   stage6   descriptor provenance: operations against a not-yet-open fd (Fil-C)
+#   stage7   many small reads: kernel entries saved by batching, vs wall clock
 #
 # Usage: ./tests/run.sh
 #        FILC_ROOT=/path/to/filc-dist ./tests/run.sh
@@ -85,6 +86,7 @@ run_filc_test stage2_lazy_resolution
 run_filc_test stage3_dependency
 run_filc_test stage5_trackers
 run_filc_test stage6_fd_provenance
+run_filc_test stage7_throughput
 
 # stage4 needs the *patched* compiler: it is the test that the pass inserts the
 # resolution hook automatically. Skipped (not failed) when that compiler has not
