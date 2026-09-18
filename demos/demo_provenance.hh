@@ -11,14 +11,15 @@ static int demo_provenance(int fdw, int fdr) {
     // No provnenace token: no dependency between 2 calls
     fasync_id w = fasync_pwrite(fdw, demo_prov_author, demo_prov_len, 0);
     fasync_id r = fasync_pread(fdr, demo_prov_plain_reader, demo_prov_len, 0);
+
     if (w && r && !fasync_ready(w) && !fasync_ready(r) &&
         fasync_result(w) == (long)demo_prov_len &&
         fasync_result(r) == (long)demo_prov_len) {
-    verified++;
+        verified++;
     }
 
     if (demo_prov_resterile(fdw) < 0) {
-    return verified;
+        return verified;
     }
 
     // provnenace token used: dependency between 2 calls

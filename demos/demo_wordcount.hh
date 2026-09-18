@@ -2,7 +2,7 @@
 
 #include "utils.hh"
 
-static size_t demo_wordcount(void) {
+static size_t demo_wordcount() {
     // invoke a read on all files and fill a buffer for each file
     read_all_files();
 
