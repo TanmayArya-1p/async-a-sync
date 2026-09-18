@@ -1,8 +1,5 @@
 #!/bin/sh
-#
 # run.sh -- build everything and run the whole suite.
-#
-# Stage order and what each verifies: see docs/ARCHITECTURE.md §9.
 #
 # Usage: ./tests/run.sh
 #        FILC_ROOT=/path/to/filc-dist ./tests/run.sh

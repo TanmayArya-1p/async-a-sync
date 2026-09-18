@@ -1,4 +1,3 @@
-/* fasync_dep.c -- dependency construction from declared effect sets. */
 #include <stdfil.h>
 
 #include <stdlib.h>
@@ -35,11 +34,11 @@ static int fasync_kind_reads(unsigned kind) {
   return kind == FASYNC_IN || kind == FASYNC_INOUT;
 }
 
-/* Edge kinds 1 true 2 anti and 3 output and reads never conflict. */
+/* edge kinds 1 true 2 anti 3 output */
 static int fasync_access_conflict(const struct fasync_access* a,
                                   const struct fasync_access* b,
                                   int* auto_disjoint) {
-  /* Different resources are always independent. */
+  /* different resources always independent */
   if (!a->buf || !b->buf) {
     if (a->buf || b->buf)
       return 0;
@@ -73,7 +72,6 @@ static int fasync_access_conflict(const struct fasync_access* a,
   return 0;
 }
 
-/* The strongest conflict across all access pairs wins. */
 int fasync_ops_conflict(const struct fasync_op* a, const struct fasync_op* b,
                         int* auto_disjoint) {
   int strongest = 0;
@@ -118,7 +116,7 @@ unsigned fasync_build_dag(const struct fasync_op* ops, unsigned n_ops,
 
   unsigned n_edges = 0;
 
-  /* O(n^2) is fine for a syscall batch. */
+  /* n^2 fine for a syscall batch */
   for (unsigned i = 0; i < n_ops; i++) {
     for (unsigned j = i + 1; j < n_ops; j++) {
       int auto_disjoint = 0;
@@ -140,7 +138,6 @@ unsigned fasync_build_dag(const struct fasync_op* ops, unsigned n_ops,
       local.edges++;
       local.declared_edges++;
 
-      /* Classify the dominant edge kind. */
       int kind = 0;
       for (unsigned x = 0; x < ops[i].n_accesses && !kind; x++) {
         for (unsigned y = 0; y < ops[j].n_accesses && !kind; y++) {
@@ -222,7 +219,6 @@ int fasync_run_dag(const struct fasync_op* ops, unsigned n_ops,
   unsigned in_flight = 0;
 
   while (finished < n_ops) {
-    /* Start everything ready with no waiting. */
     int started_any = 0;
     for (unsigned i = 0; i < n_ops; i++) {
       if (started[i] || in_degree[i] != 0)
@@ -241,7 +237,7 @@ int fasync_run_dag(const struct fasync_op* ops, unsigned n_ops,
 
     if (started_any) {
       run.waves++;
-      /* Publish the wave as one non-blocking submission. */
+      /* publish wave as one non-blocking submit */
       if (fasync_submit() < 0) {
         free(in_degree);
         free(handles);

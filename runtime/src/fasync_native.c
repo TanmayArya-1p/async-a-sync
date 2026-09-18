@@ -36,7 +36,7 @@ static PAS_ALWAYS_INLINE long fasync_syscall6(long n, long a, long b, long c,
   return ret;
 }
 
-/* Raw syscalls return -errno so convert to -1 and errno. */
+/* raw syscalls return -errno so convert to -1 */
 static PAS_ALWAYS_INLINE long fasync_finish(long ret) {
   if (ret < 0 && ret >= -4095) {
     filc_set_errno((int)-ret);
@@ -55,7 +55,7 @@ PAS_API long filc_native_zsys_io_uring_setup(filc_thread* my_thread,
                       (long)filc_ptr_ptr(params)));
 }
 
-/* A submit-only enter takes no safepoint while a blocking enter leaves first. */
+/* submit-only enter no safepoint blocking enter leaves first */
 PAS_API long filc_native_zsys_io_uring_enter(filc_thread* my_thread,
                                              int ring_fd, unsigned to_submit,
                                              unsigned min_complete,
@@ -86,7 +86,7 @@ PAS_API long filc_native_zsys_io_uring_register(filc_thread* my_thread,
   return fasync_finish(ret);
 }
 
-/* The hook must be native because a pizlonated entry is a descriptor stub. */
+/* hook native because pizlonated entry is a stub */
 #include "fasync_shared.h"
 
 static struct fasync_shared* volatile fasync_published;
@@ -99,7 +99,7 @@ PAS_API void filc_native_fasync_publish_state(filc_thread* my_thread,
   fasync_published = (struct fasync_shared*)filc_ptr_ptr(state);
 }
 
-/* A pure userspace read of the CQ with no syscall. */
+/* userspace cq read no syscall */
 static void fasync_native_drain(struct fasync_shared* sh) {
   if (!sh || !sh->cqes)
     return;
@@ -121,7 +121,7 @@ static void fasync_native_drain(struct fasync_shared* sh) {
       if (r->state == FASYNC_REQ_PENDING && r->id == cqe.user_data) {
         r->result = cqe.res;
         r->state = cqe.res < 0 ? FASYNC_REQ_FAILED : FASYNC_REQ_DONE;
-        /* Retire only after the final state is visible. */
+        /* retire only after the final state is visible */
         __atomic_sub_fetch(sh->inflight, 1, __ATOMIC_RELEASE);
       }
     }
@@ -152,7 +152,7 @@ static void fasync_native_submit(struct fasync_shared* sh) {
   for (unsigned int i = head; i != tail; i++)
     sh->sq_array[i & mask] = i & mask;
 
-  /* The store that hands the batch to the kernel. */
+  /* the store that hands the batch to the kernel */
   __atomic_store_n(sh->sq_tail, tail, __ATOMIC_RELEASE);
   *sh->sqe_head = tail;
   __atomic_sub_fetch(sh->queued, n, __ATOMIC_RELAXED);
@@ -162,7 +162,7 @@ static void fasync_native_submit(struct fasync_shared* sh) {
                   0L, 0L, 0L);
 }
 
-// The hot path runs on every access.
+/* hot path runs on every access */
 PAS_API void* filc_resolve_pending(void* ptr, size_t size) {
   if (!ptr)
     return ptr;
@@ -182,7 +182,7 @@ PAS_API void* filc_resolve_pending(void* ptr, size_t size) {
   if (!r)
     return ptr;
 
-  /* Lazy publish makes the queued batch visible to the kernel. */
+  /* lazy publish makes the batch visible */
   fasync_native_submit(sh);
 
   for (unsigned int spin = 0; spin < FASYNC_NATIVE_SPIN_LIMIT; spin++) {
@@ -197,7 +197,7 @@ PAS_API void* filc_resolve_pending(void* ptr, size_t size) {
 #endif
   }
 
-  /* No completion after the spin budget means sleep with the safepoint. */
+  /* spin budget out so sleep with the safepoint */
   while (r->state == FASYNC_REQ_PENDING) {
     (*sh->parks)++;
     (*sh->kernel_wait_entries)++;
@@ -219,7 +219,6 @@ PAS_API void filc_native_fasync_poll(filc_thread* my_thread) {
   fasync_native_drain(fasync_published);
 }
 
-/* A blocking enter for scalar ops so it takes the safepoint. */
 PAS_API void filc_native_fasync_block(filc_thread* my_thread) {
   struct fasync_shared* sh = fasync_published;
   if (!sh)

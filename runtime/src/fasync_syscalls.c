@@ -1,4 +1,3 @@
-/* fasync_syscalls.c -- the public async syscall surface. */
 #include <stdfil.h>
 #include <pizlonated_syscalls.h>
 
@@ -11,7 +10,7 @@
 #include "fasync_shared.h"
 #include "fasync_internal.h"
 
-/* Pending opens return a negative handle starting at -2. */
+/* pending opens return negative handle from -2 */
 #define FASYNC_MAX_PENDING_FDS 64
 
 struct fasync_pending_fd {
@@ -29,7 +28,7 @@ static int fasync_pending_fd_new(fasync_id id) {
     g_pending_fds[i].used = 1;
     g_pending_fds[i].id = id;
     g_pending_fds[i].fd = -1;
-    return -(i + 2); /* keeps -1 as the failure value */
+    return -(i + 2); /* -1 stays the failure value */
   }
   return -1;
 }
@@ -52,7 +51,7 @@ fasync_id fasync_pwrite(int fd, void* buf, size_t len, unsigned long offset) {
 
   zcheck_readonly(buf, len); /* the kernel only reads it */
 
-  /* The kernel reads the source bytes at execute time. */
+  /* kernel reads the source at execute time */
   fasync_resolve_pending(buf, len);
 
   return fasync_push_sqe(FASYNC_OP_WRITE, fd, (unsigned long)(size_t)buf,
@@ -73,7 +72,6 @@ fasync_id fasync_close(int fd) {
   return fasync_push_sqe(FASYNC_OP_CLOSE, (int)real, 0, 0, 0, 0, 0, 0);
 }
 
-/* A pending open resolved by the first op that takes the handle. */
 int fasync_open_pending(int dirfd, const char* path, int flags, int mode) {
   fasync_id id = fasync_openat(dirfd, path, flags, mode);
   if (!id)
@@ -86,15 +84,13 @@ fasync_id fasync_openat(int dirfd, const char* path, int flags, int mode) {
     errno = EFAULT;
     return 0;
   }
-  /* Paths have no length so check the terminator byte. */
+  /* paths have no length so check terminator byte */
   zcheck_readonly((void*)path, 1);
 
-  /* The path rides in addr and the mode in len. */
+  /* path rides in addr mode in len */
   return fasync_push_sqe(FASYNC_OP_OPENAT, dirfd, (unsigned long)(size_t)path,
                          (unsigned int)mode, (unsigned long)flags, 0, 0, 0);
 }
-
-/* fasync_openat_direct lands with promise-pipelining. */
 
 int fasync_ready(fasync_id id) {
   struct fasync_req_shared* r = fasync_req_lookup(id);
@@ -105,7 +101,7 @@ int fasync_ready(fasync_id id) {
   return r->state != FASYNC_REQ_PENDING;
 }
 
-/* Wait without releasing so the handle stays resolvable. */
+/* wait without releasing so the handle stays resolvable */
 long fasync_req_wait(struct fasync_req_shared* r) {
   if (r->state == FASYNC_REQ_PENDING)
     fasync_submit();
@@ -128,7 +124,6 @@ long fasync_result(fasync_id id) {
   return result;
 }
 
-/* A real fd passes through and a pending handle is waited on. */
 long fasync_fd_resolve(int fd) {
   if (fd >= 0)
     return fd;

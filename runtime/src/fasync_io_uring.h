@@ -1,4 +1,3 @@
-/* fasync_io_uring.h -- the io_uring kernel ABI. */
 #pragma once
 
 #include <stddef.h>
@@ -101,7 +100,7 @@ struct fasync_params {
 #define FASYNC_OFF_CQ_RING 0x8000000UL
 #define FASYNC_OFF_SQES 0x10000000UL
 
-/* The caller supplies the ring memory (kernel >= 6.5). */
+/* caller supplies ring memory kernel >= 6.5 */
 #define FASYNC_SETUP_NO_MMAP (1U << 14U)
 
 #define FASYNC_RINGS_BYTES (2U * 1024U * 1024U)
@@ -115,10 +114,10 @@ struct fasync_params {
 #define FASYNC_OP_READ 22
 #define FASYNC_OP_WRITE 23
 
-/* GETEVENTS makes min_complete block the enter. */
+/* getevents makes min_complete block the enter */
 #define FASYNC_ENTER_GETEVENTS (1U << 0U)
 
-/* IO_LINK makes this SQE wait for the previous one. */
+/* io_link makes sqe wait for the previous one */
 #define FASYNC_SQE_IO_LINK (1U << 2U)
 
 #define FASYNC_REGISTER_BUFFERS 0

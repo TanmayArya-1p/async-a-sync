@@ -1,5 +1,3 @@
-/* Plumbing the demos share -- compile with -DFASYNC_IMPLICIT to use the
- * io_uring backend, otherwise plain pread. See docs/DEMOS.md. */
 #pragma once
 
 #include <fcntl.h>
@@ -235,4 +233,3 @@ static inline void demo_show_submit(const char* note) {
 }
 
 #endif /* FASYNC_IMPLICIT */
-

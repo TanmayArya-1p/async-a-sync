@@ -1,4 +1,3 @@
-/* fasync_shared.h -- state shared by both halves of the runtime. */
 #pragma once
 
 #include <stddef.h>
@@ -8,22 +7,22 @@
 #define FASYNC_REQ_DONE 2
 #define FASYNC_REQ_FAILED 3
 
-/* Sized so a whole workload fits in flight. */
+/* sized so a whole workload fits in flight */
 #define FASYNC_MAX_INFLIGHT 1024
 
 #define FASYNC_ALLOC_WORDS (FASYNC_MAX_INFLIGHT / 64)
 
-/* One in-flight request as the native resolver sees it. */
+/* one in-flight request as the native resolver sees it */
 struct fasync_req_shared {
   unsigned long id;     /* handle handed to the caller */
   unsigned long gen;    /* so a recycled slot cannot alias */
-  void* buf;            /* result buffer (0 for fd-only ops) */
+  void* buf;            /* result buffer zero for fd only ops */
   unsigned long len;
   unsigned long offset;
   int fd;
   unsigned char op;
   unsigned char state;  /* FASYNC_REQ_* */
-  unsigned char linked; /* submitted with IOSQE_IO_LINK */
+  unsigned char linked; /* submitted with io_link */
   long result;          /* bytes transferred or -errno */
 };
 
@@ -33,13 +32,13 @@ struct fasync_shared {
   unsigned long n_reqs;
   int ring_fd; /* for the blocking enter */
 
-  /* One bit per slot so free slots are skipped 64 at a time. */
+  /* one bit per slot so free slots skipped 64 at a time */
   unsigned long alloc_bits[FASYNC_ALLOC_WORDS];
 
-  /* Bumped on every allocation to invalidate the memo. */
+  /* bumped on every allocation to invalidate the memo */
   unsigned long alloc_epoch;
 
-  /* A range known to contain no pending result buffer. */
+  /* range known to contain no pending result buffer */
   struct fasync_memo {
     unsigned long epoch;
     const char* start;
@@ -52,15 +51,15 @@ struct fasync_shared {
   unsigned int* cq_mask;
   unsigned int* local_cq_head;
 
-  /* Submission-ring state for the lazy batch auto-submit. */
-  unsigned int* sq_tail;  /* kernel's SQ tail word */
+  /* submission ring state for the lazy batch auto-submit */
+  unsigned int* sq_tail;  /* kernel's sq tail word */
   unsigned int* sq_mask;
   unsigned int* sq_array;
-  unsigned int* sqe_head; /* next SQE slot to publish */
-  unsigned int* sqe_tail; /* next SQE slot to write */
-  unsigned int* queued;   /* SQEs written but not yet published */
+  unsigned int* sqe_head; /* next sqe slot to publish */
+  unsigned int* sqe_tail; /* next sqe slot to write */
+  unsigned int* queued;   /* sqes written but not yet published */
 
-  /* Counters incremented from both halves. */
+  /* counters incremented from both halves */
   unsigned long* userspace_cq_polls;
   unsigned long* resolve_calls;
   unsigned long* fast_path_hits;
@@ -83,7 +82,7 @@ static inline int fasync_memo_covers(const struct fasync_shared* sh, const char*
   return 1;
 }
 
-/* The pending request covering this range or 0. */
+/* the pending request covering this range or zero */
 static inline struct fasync_req_shared* fasync_shared_find(struct fasync_shared* sh,
                                                            const void* ptr,
                                                            size_t size) {
@@ -93,7 +92,7 @@ static inline struct fasync_req_shared* fasync_shared_find(struct fasync_shared*
     return 0;
   }
 
-  const char* limit = 0; /* nearest pending buffer starting above p */
+  const char* limit = 0; /* nearest pending buffer above p */
   struct fasync_req_shared* found = 0;
 
   for (unsigned long w = 0; w < FASYNC_ALLOC_WORDS; w++) {
@@ -125,7 +124,7 @@ static inline struct fasync_req_shared* fasync_shared_find(struct fasync_shared*
   if (found)
     return found;
 
-  /* Nothing pending can cover up to limit so remember that. */
+  /* nothing pending up to limit so remember */
   sh->memo.epoch = sh->alloc_epoch;
   sh->memo.start = p;
   sh->memo.end = limit;

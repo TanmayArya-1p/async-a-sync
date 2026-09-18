@@ -1,4 +1,3 @@
-/* fasync_token.c -- token-ordered syscalls at issue time. */
 #include <stdfil.h>
 #include <pizlonated_syscalls.h>
 
@@ -14,7 +13,7 @@ static int fasync_token_conflicts(unsigned a, unsigned b) {
          b == FASYNC_INOUT;
 }
 
-/* Wait out conflicting calls then drop completed slots. */
+/* wait conflicting calls drop completed slots */
 static void fasync_token_wait(fasync_tracker* tok, unsigned kind) {
   if (!tok || !tok->n)
     return;
@@ -32,7 +31,7 @@ static void fasync_token_wait(fasync_tracker* tok, unsigned kind) {
   tok->n = keep;
 }
 
-/* A full queue waits out the oldest slot to make room. */
+/* full queue waits oldest slot for room */
 static void fasync_token_track(fasync_tracker* tok, fasync_id id,
                                unsigned kind) {
   if (!tok || !id)

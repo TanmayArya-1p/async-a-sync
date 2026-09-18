@@ -1,35 +1,5 @@
 #!/bin/sh
-#
-# build.sh -- build a patched Fil-C clang that inserts the async-resolution hook.
-#
-# WHAT THIS DOES
-# --------------
-# Installs compiler/upstream-overrides/FilPizlonator.cpp (this repo's modified
-# copy of upstream's pass -- it emits a call to filc_resolve_pending() alongside
-# the capability check the pass already emits for every access through an
-# escaping pointer) and builds clang.
-#
-# Until this binary exists, programs have to mark the same points by hand with
-# the FASYNC_ACCESS() macro (see runtime/src/fasync.h). Once it exists, the macro
-# becomes a no-op: build with -DFASYNC_COMPILER_INSERTS_CHECKS and the compiler
-# supplies the calls. The runtime does not change either way.
-#
-# WHY THIS IS EXPENSIVE, AND WHY IT IS SEPARATE
-# ---------------------------------------------
-# Fil-C's pass is one large LLVM pass inside the compiler, so the hook cannot be
-# added from outside: the distribution ships no libLLVM to link an out-of-tree
-# plugin against, which was checked. So this needs a full clang build.
-#
-# Fil-C's own build uses RelWithDebInfo with assertions on, which is neither the
-# cheapest nor the smallest configuration. The settings below are the cheap ones:
-# Release, no assertions, X86 only. Even so expect a long build and a large
-# build directory -- check your free space first, because an LLVM build that runs
-# out of disk late is a bad afternoon.
-#
-# It also matters how much RAM you have. A parallel LLVM build uses roughly
-# 1-2 GiB per compile job, so a machine with little free memory has to lower
-# JOBS, and the build gets correspondingly longer.
-#
+# build a patched Fil-C clang that inserts the async-resolution hook.
 # Usage:
 #   JOBS=2 ./build.sh              # conservative
 #   BUILD_TYPE=RelWithDebInfo ./build.sh

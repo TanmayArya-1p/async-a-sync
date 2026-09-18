@@ -1,4 +1,3 @@
-/* fasync.h -- the public surface of the async runtime. */
 #pragma once
 
 #include <stddef.h>
@@ -7,11 +6,11 @@ typedef unsigned long fasync_id; /* one in-flight request */
 
 void* fasync_resolve_pending(void* ptr, size_t size);
 
-/* The hook the patched compiler emits. */
+/* hook the patched compiler emits */
 void* filc_resolve_pending(void* ptr, size_t size);
 
-/* Explicit resolution points that are a no-op with the patched compiler. */
-#ifdef FASYNC_COMPILER_INSERTS_CHECKS /* patched compiler */
+/* no-op with the patched compiler */
+#ifdef FASYNC_COMPILER_INSERTS_CHECKS
 #define FASYNC_ACCESS(ptr, size) ((void)0)
 #else
 #define FASYNC_ACCESS(ptr, size) ((void)fasync_resolve_pending((void*)(ptr), (size)))
@@ -29,16 +28,15 @@ fasync_id fasync_pread(int fd, void* buf, size_t len, unsigned long offset);
 fasync_id fasync_pwrite(int fd, void* buf, size_t len, unsigned long offset);
 fasync_id fasync_fsync(int fd);
 fasync_id fasync_close(int fd);
+/* no fasync_read because an offset is mandatory */
 fasync_id fasync_openat(int dirfd, const char* path, int flags, int mode);
-/* No fasync_read() because an offset is mandatory. */
 
-/* Pending descriptor usable anywhere an fd is accepted. */
+/* pending descriptor usable where an fd accepted */
 int fasync_open_pending(int dirfd, const char* path, int flags, int mode);
 
-long fasync_fd_resolve(int fd); /* real fd or a waited pending handle */
-/* fasync_openat_direct arrives with promise-pipelining. */
+long fasync_fd_resolve(int fd); /* real fd or waited pending handle */
 
-int fasync_submit(void); /* publish all queued SQEs */
+int fasync_submit(void); /* publish all queued sqes */
 int fasync_ready(fasync_id id);
 int fasync_wait_all(void);
 long fasync_result(fasync_id id); /* bytes transferred or -errno */

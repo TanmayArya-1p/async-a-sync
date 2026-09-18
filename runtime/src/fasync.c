@@ -1,4 +1,3 @@
-/* fasync.c -- the memory-safe core half. */
 #include <stdfil.h>
 #include <pizlonated_syscalls.h>
 
@@ -10,10 +9,10 @@
 #include "fasync_shared.h"
 #include "fasync_internal.h"
 
-/* Ring depth matches the request table depth. */
+/* ring depth matches request table */
 #define FASYNC_RING_ENTRIES 1024
 
-/* Must match FASYNC_NATIVE_SPIN_LIMIT in fasync_native.c. */
+/* must match native spin limit */
 #define FASYNC_SPIN_LIMIT 20000
 
 static struct fasync_req_shared req_slots[FASYNC_MAX_INFLIGHT];
@@ -38,10 +37,10 @@ struct fasync_ring {
   unsigned int* cq_tail;
   unsigned int* cq_mask;
 
-  unsigned int sqe_tail;      /* next slot to write */
-  unsigned int sqe_head;      /* next slot to publish */
+  unsigned int sqe_tail;
+  unsigned int sqe_head;
   unsigned int queued;        /* written but not yet published */
-  unsigned int local_cq_head; /* our view of the CQ head */
+  unsigned int local_cq_head;
 };
 
 static struct fasync_ring g_ring;
@@ -62,7 +61,7 @@ void fasync_get_stats(struct fasync_stats* out) {
 
 const char* fasync_last_error(void) { return g_last_error; }
 
-/* NO_MMAP because Fil-C cannot map io_uring rings. */
+/* no mmap because filc cannot map rings */
 static int fasync_ring_init(void) {
   struct fasync_params p;
   memset(&p, 0, sizeof(p));
@@ -109,7 +108,7 @@ static int fasync_ring_init(void) {
 
   fasync_req_table_init();
 
-  /* Retained not copied so this memory must not move. */
+  /* retained not copied so memory must not move */
   g_shared.inflight = &g_inflight;
   g_shared.reqs = req_slots;
   g_shared.n_reqs = FASYNC_MAX_INFLIGHT;
@@ -145,7 +144,7 @@ static int fasync_ensure_ring(void) {
   return fasync_ring_init();
 }
 
-/* Free list with one-based slots so zero means empty. */
+/* free list one based so zero means empty */
 static unsigned int g_req_free_head;
 static unsigned int g_req_free_next[FASYNC_MAX_INFLIGHT];
 
@@ -164,10 +163,10 @@ static void fasync_req_table_init(void) {
   g_shared.memo.end = 0;
   for (unsigned int i = 0; i < FASYNC_MAX_INFLIGHT; i++) {
     req_slots[i].state = FASYNC_REQ_FREE;
-    /* Slot i's next is i+2 so slot 0 is never handed out. */
+    /* slot i next is i+2 so slot 0 never handed out */
     g_req_free_next[i] = (i + 2 <= FASYNC_MAX_INFLIGHT) ? i + 2 : 0;
   }
-  g_req_free_head = 1; /* slot 0 */
+  g_req_free_head = 1;
 }
 
 static struct fasync_req_shared* fasync_req_alloc(void) {
@@ -180,7 +179,7 @@ static struct fasync_req_shared* fasync_req_alloc(void) {
 
   struct fasync_req_shared* r = &req_slots[index];
   r->gen = ++req_next_gen;
-  /* The id packs slot and generation so reuse cannot alias. */
+  /* id packs slot and generation so reuse cannot alias */
   r->id = ((fasync_id)r->gen << 32) | (fasync_id)index;
   r->state = FASYNC_REQ_PENDING;
   r->result = 0;
@@ -216,7 +215,7 @@ static struct fasync_req_shared* fasync_find_covering(const void* ptr, size_t si
 
 static struct fasync_sqe* fasync_get_sqe(void) {
   if (g_ring.queued >= FASYNC_RING_ENTRIES) {
-    /* Ring full so publish what we have. */
+    /* ring full so publish now */
     if (fasync_submit() < 0)
       return 0;
   }
@@ -224,7 +223,7 @@ static struct fasync_sqe* fasync_get_sqe(void) {
   return &g_ring.sqes[index];
 }
 
-/* addr and len are raw operands while result_buf names the waitable range. */
+/* addr len are operands result buf is wait region */
 fasync_id fasync_push_sqe(unsigned char op, int fd, unsigned long addr,
                           unsigned int len, unsigned long offset,
                           void* result_buf, size_t result_len,
@@ -264,7 +263,7 @@ fasync_id fasync_push_sqe(unsigned char op, int fd, unsigned long addr,
   r->op = op;
   r->linked = (sqe_flags & FASYNC_SQE_IO_LINK) ? 1 : 0;
 
-  /* Publish state before the count becomes visible. */
+  /* publish state before the count becomes visible */
   g_shared.alloc_epoch++;
   __atomic_add_fetch(&g_inflight, 1, __ATOMIC_RELEASE);
   return r->id;
@@ -284,14 +283,13 @@ int fasync_submit(void) {
   for (unsigned int i = g_ring.sqe_head; i != g_ring.sqe_tail; i++)
     g_ring.sq_array[i & mask] = i & mask;
 
-  /* The store that hands the SQEs to the kernel. */
+  /* the store that hands sqes to the kernel */
   __atomic_store_n(g_ring.sq_tail, g_ring.sqe_tail, __ATOMIC_RELEASE);
   g_ring.sqe_head = g_ring.sqe_tail;
 
   unsigned int n = g_ring.queued;
   g_ring.queued = 0;
 
-  /* min_complete zero submits and returns. */
   g_stats.kernel_submit_entries++;
   long ret = zsys_io_uring_enter(g_ring.fd, n, 0, 0);
   if (ret < 0) {
@@ -301,7 +299,6 @@ int fasync_submit(void) {
   return (int)n;
 }
 
-/* Explicit resolution with the same policy as the native hook. */
 void* fasync_resolve_pending(void* ptr, size_t size) {
   if (!ptr)
     return ptr;
@@ -317,7 +314,7 @@ void* fasync_resolve_pending(void* ptr, size_t size) {
   if (!r)
     return ptr;
 
-  /* The lazy batch publish submits everything in one enter. */
+  /* lazy batch publishes in one enter */
   fasync_submit();
 
   for (unsigned int spin = 0; spin < FASYNC_SPIN_LIMIT; spin++) {
@@ -338,7 +335,7 @@ void* fasync_resolve_pending(void* ptr, size_t size) {
 int fasync_wait_all(void) {
   fasync_submit();
 
-  /* Bounded so a stuck request cannot hang the process. */
+  /* bounded so a stuck request cannot hang */
   for (unsigned long spin = 0; spin < 100000000UL; spin++) {
     if (__atomic_load_n(&g_inflight, __ATOMIC_ACQUIRE) == 0)
       return 0;

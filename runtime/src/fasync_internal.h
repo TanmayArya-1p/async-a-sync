@@ -1,4 +1,3 @@
-/* fasync_internal.h -- private API shared between the runtime's own TUs. */
 #pragma once
 
 #include "fasync.h"
@@ -16,5 +15,5 @@ struct fasync_req_shared* fasync_req_lookup(fasync_id id);
 
 void fasync_req_release(struct fasync_req_shared* r);
 
-/* Wait without releasing so the same handle stays resolvable. */
+/* wait without releasing so handle stays resolvable */
 long fasync_req_wait(struct fasync_req_shared* r);

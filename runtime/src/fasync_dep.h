@@ -1,4 +1,3 @@
-/* fasync_dep.h -- declared effect sets and automatic dependencies. */
 #pragma once
 
 #include <stddef.h>
@@ -6,10 +5,10 @@
 #include "fasync.h"
 
 struct fasync_access {
-  const void* buf;         /* byte range or NULL for a resource */
+  const void* buf;         /* byte range or null for a resource */
   size_t len;
-  unsigned kind;           /* FASYNC_IN OUT or INOUT */
-  unsigned long resource;  /* ignored when buf is non NULL */
+  unsigned kind;           /* in out or inout */
+  unsigned long resource;  /* ignored when buf set */
 };
 
 #define FASYNC_ACCESS_RANGE(ptr, len, k) \
@@ -18,7 +17,7 @@ struct fasync_access {
 #define FASYNC_ACCESS_RESOURCE(id, k) \
   ((struct fasync_access){0, 0, (k), (id)})
 
-/* One operation with its declared effect set. */
+/* one operation with its declared effect set */
 struct fasync_op {
   const char* name; /* reporting only */
   const struct fasync_access* accesses;
@@ -29,7 +28,7 @@ struct fasync_dag_stats {
   unsigned ops;
   unsigned edges;
   unsigned declared_edges;
-  unsigned auto_disjoint_pairs; /* conflicts dissolved by the range proof */
+  unsigned auto_disjoint_pairs; /* conflicts dissolved by range proof */
   unsigned read_write_edges;
   unsigned write_read_edges;
   unsigned write_write_edges;
@@ -45,11 +44,11 @@ unsigned fasync_build_dag(const struct fasync_op* ops, unsigned n_ops,
 #define FASYNC_TOKEN_QLEN 16
 
 typedef struct fasync_tracker {
-  unsigned long resource; /* the named resource the DAG layer orders on */
+  unsigned long resource; /* named resource the dag orders on */
   unsigned n;             /* ops still in flight on this token */
   struct {
-    fasync_id id;         /* handle of an issued not-yet-complete op */
-    unsigned kind;        /* the access kind it was issued with */
+    fasync_id id; /* handle of issued not yet complete op */
+    unsigned kind; /* access kind it was issued with */
   } q[FASYNC_TOKEN_QLEN];
 } fasync_tracker;
 
@@ -60,7 +59,7 @@ void fasync_tracker_free(fasync_tracker* tracker);
 struct fasync_access fasync_tracker_access(const fasync_tracker* tracker,
                                            unsigned kind);
 
-/* Tagged calls wait for every conflicting tagged call on the token. */
+/* tagged calls wait for conflicting tagged calls */
 fasync_id fasync_tagged_pread(int fd, void* buf, size_t len, unsigned long offset,
                               fasync_tracker* tok, unsigned kind);
 fasync_id fasync_tagged_pwrite(int fd, void* buf, size_t len, unsigned long offset,
