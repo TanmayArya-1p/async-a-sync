@@ -138,3 +138,11 @@ accesses. The fuller design in `idea.md` §2.6 would widen the InvisiCap to carr
 the pending tag and fold the test into the bounds compare the pass already emits —
 one extra compare, no call. That is the better end state; this patch is the
 straightforward one that gets the mechanism working.
+
+The "one extra call" is not free, and it is worth knowing where it bites. The
+runtime's fast path is a check that *nothing at all* is in flight, so with a batch
+outstanding every instrumented access takes the slow path instead. A 512 KiB scan
+through an ordinary function, with three reads still pending, measured 42 ms
+against an 8 ms blocking baseline; `docs/ARCHITECTURE.md` §8 has the breakdown,
+§7 item 7 states it as a limitation, and `demos/demo_plain_io.c` reproduces it.
+That gap is the argument for the compare-instead-of-call end state above.

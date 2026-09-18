@@ -505,6 +505,22 @@ These are real and are worth stating plainly.
 6. **Supported opcodes are a subset**: `pread`, `pwrite`, `openat`, `close`,
    `fsync`. `read`, `writev`, sockets, and the rest are not wired up.
 
+7. **The resolve fast path is global, so one pending request slows the whole
+   program.** `filc_resolve_pending` short-circuits on exactly one question: is
+   *anything* in flight. While any request is pending, every instrumented access
+   takes the slow path, which walks the request table for a request covering the
+   address. For an access inside no pending buffer — most of them — that is a walk
+   to answer "no", and a program scanning a buffer pays it once per byte.
+
+   `demos/demo_plain_io.c` is the reproduction and §8 has the numbers: 524288
+   accesses taking the slow path, once per byte of a 512 KiB buffer. An
+   allocation bitmap now lets the walk skip 64 free slots per load, which cut the
+   overhead by more than half; what is left is the per-access call itself. The
+   real fix is the one `idea.md` §2.6 proposes — fold the pending test into the
+   bounds compare the pass already emits, so it costs a compare instead of a
+   call. This is the strongest evidence in the project that that change is worth
+   making.
+
 ---
 
 ## 8. Measurements, and how to read them
@@ -528,7 +544,11 @@ entries to 1, and the wall clock did not care.
 
 The compiler-hook test in §6 is the other half of the picture, and it is
 qualitative rather than a benchmark: 1 of 4096 accesses paid for a resolution and
-the rest cost a load.
+the rest cost a load. That ratio holds because that test arranges for exactly one
+request to be in flight and retires it at the first access, after which nothing is
+pending and every later access takes the one-load fast path. With a *batch* in
+flight that never happens until the batch drains, and the ratio changes completely
+— see below.
 
 What the numbers *do* establish is structural: submission is effectively free
 (0.049 ms to enqueue and publish 64 requests), it never blocks (0 blocking entries,
@@ -539,6 +559,34 @@ matters — cold cache, real devices, network filesystems. **That has not been
 measured here, and `idea.md` §6 phase 6 explicitly asks for it** (comparison
 against `tokio-uring`/`monoio`). Until that exists, the honest claim is about
 mechanism, not about speed.
+
+### What a batch in flight costs an access
+
+`demos/demo_plain_io.c` approaches the same mechanism from the ergonomic side: an
+ordinary `count_words()` that has never heard of io_uring, reading buffers that are
+still in flight. It is also the first measurement here that leaves a *batch*
+outstanding while it touches the data, which is what makes the resolve fast path
+unavailable for the whole of the first file — all 524288 of its byte accesses take
+the slow path:
+
+```
+                                    slow-path accesses    wall clock
+blocking: read + count per file     —                     8.1 ms
+async: full-table walk              524288 of 524288      0.3 + 42.5 ms
+async: bitmap walk                  524288 of 524288      0.3 + 18 ms
+```
+
+The 42 ms was the slow path walking all 256 slots, 32 bytes each, to answer "no"
+for an address inside no pending buffer: roughly 4 GB of L1 traffic to say no half
+a million times. Skipping free slots a word at a time removes most of it. The
+remaining 10 ms over the blocking baseline is the per-access *call* into the native
+resolver and its gate load — precisely the cost `idea.md` §2.6's in-capability
+pending bit would remove, since it replaces the call with a compare the pass is
+already emitting.
+
+The later files show the gate recovering: file 1 takes 1 slow access of 524288
+(its first access drains every completion that has landed, after which nothing is
+in flight), and files 2 and 3 take none at all.
 
 ### The workload where batching is supposed to pay
 
@@ -607,6 +655,8 @@ tests/
   stage7_throughput.c      Fil-C: many small reads, batched vs one syscall each
 demos/
   demo_async_io.c          the showcase
+  demo_plain_io.c          Fil-C: sync-looking code with no markers, run async
+                           (needs the patched compiler, like stage4)
 docs/ARCHITECTURE.md       this file
 vendor/                    Fil-C distribution and source checkout
 ```
