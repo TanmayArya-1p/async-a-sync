@@ -284,7 +284,24 @@ beyond simplicity: because the pointer's value is unchanged, the compiler patch
 in §6 does not have to rebind anything — it only has to guarantee resolution
 happened first, which is a much smaller and safer change.
 
-### 4.4 Ring memory
+### 4.4 A blocking enter must ask for events
+
+Worth recording because it is a silent trap: `io_uring_enter` ignores
+`min_complete` unless **`IORING_ENTER_GETEVENTS`** is set in its flags. With
+`min_complete=1` and `flags=0` the kernel processes `to_submit` and returns
+immediately, so a "wait" loop spins in userspace at one syscall per iteration
+while looking like it sleeps.
+
+It went unnoticed for a long time because the spin almost always resolved before
+the park was reached, so the park path was rarely executed. Moving the wait policy
+exposed it: the explicit `fasync_result` path was doing **17,233** kernel entries
+for 64 reads, and after adding the flag it does **64** -- one real sleep per
+request. The same flag was missing from the park path inside the compiler hook.
+
+There is a general lesson in it: a wait loop that "works" is not evidence that it
+waits.
+
+### 4.5 Ring memory
 
 Because of §2.3, the runtime does not mmap the ring. It sets
 `IORING_SETUP_NO_MMAP` (kernel 6.5+) and hands the kernel memory it allocated

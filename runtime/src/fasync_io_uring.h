@@ -148,6 +148,17 @@ struct fasync_params {
 #define FASYNC_OP_READ 22
 #define FASYNC_OP_WRITE 23
 
+/*
+ * io_uring_enter flags.
+ *
+ * GETEVENTS is what makes min_complete mean anything: without it the kernel
+ * processes to_submit and returns, ignoring min_complete entirely. Passing
+ * min_complete=1 with flags=0 therefore does not sleep -- it spins in userspace
+ * at syscall cost, which is how a wait loop ends up doing thousands of enters
+ * instead of one sleep.
+ */
+#define FASYNC_ENTER_GETEVENTS (1U << 0U)
+
 /* SQE flags. IO_LINK makes this SQE wait for the previous one to complete,
  * which is what builds kernel-native promise chains. */
 #define FASYNC_SQE_IO_LINK (1U << 2U)

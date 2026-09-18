@@ -349,8 +349,8 @@ PAS_API void* filc_resolve_pending(void* ptr, size_t size) {
     filc_thread* my_thread = filc_get_my_thread();
     if (my_thread)
       filc_exit(my_thread);
-    fasync_syscall6(FASYNC_SYS_io_uring_enter, (long)sh->ring_fd, 0L, 1L, 0L, 0L,
-                    0L);
+    fasync_syscall6(FASYNC_SYS_io_uring_enter, (long)sh->ring_fd, 0L, 1L,
+                    FASYNC_ENTER_GETEVENTS, 0L, 0L);
     if (my_thread)
       filc_enter(my_thread);
     fasync_native_drain(sh);
@@ -380,8 +380,8 @@ PAS_API void filc_native_fasync_block(filc_thread* my_thread) {
   (*sh->kernel_wait_entries)++;
   if (my_thread)
     filc_exit(my_thread);
-  fasync_syscall6(FASYNC_SYS_io_uring_enter, (long)sh->ring_fd, 0L, 1L, 0L, 0L,
-                  0L);
+  fasync_syscall6(FASYNC_SYS_io_uring_enter, (long)sh->ring_fd, 0L, 1L,
+                  FASYNC_ENTER_GETEVENTS, 0L, 0L);
   if (my_thread)
     filc_enter(my_thread);
   fasync_native_drain(sh);
