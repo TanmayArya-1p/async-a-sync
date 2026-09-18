@@ -82,7 +82,10 @@
 /* ------------------------------------------------------------------ */
 
 static struct fasync_req_shared req_slots[FASYNC_MAX_INFLIGHT];
-static unsigned int req_next_gen = 1;
+
+/* Defined below; needed by the ring setup path above it. */
+static void fasync_req_table_init(void);
+static unsigned int req_next_gen = 0;
 
 /*
  * The fast-path gate.
@@ -284,7 +287,7 @@ static int fasync_ring_init(void) {
   g_ring.local_cq_head = 0;
   g_ring.ready = 1;
 
-  memset(req_slots, 0, sizeof(req_slots));
+  fasync_req_table_init();
 
   /*
    * Publish what the native resolver needs. It retains these addresses rather
@@ -323,22 +326,57 @@ static int fasync_ensure_ring(void) {
 /* Request table                                                       */
 /* ------------------------------------------------------------------ */
 
-static struct fasync_req_shared* fasync_req_alloc(void) {
+/*
+ * Allocation is a free list, not a scan.
+ *
+ * The table used to be searched linearly for a FREE slot on every submission,
+ * which is O(in-flight) per request -- fine at a handful of requests and
+ * ruinous for the many-small-operations case the whole design is aimed at. The
+ * throughput test is what made that visible: it was saving 32x the kernel
+ * entries and still coming out slower than a plain read loop.
+ *
+ * Slots indices are stored one-based so that 0 can mean "empty".
+ */
+static unsigned int g_req_free_head;
+static unsigned int g_req_free_next[FASYNC_MAX_INFLIGHT];
+
+static void fasync_req_table_init(void) {
   for (unsigned int i = 0; i < FASYNC_MAX_INFLIGHT; i++) {
-    struct fasync_req_shared* r = &req_slots[i];
-    if (r->state != FASYNC_REQ_FREE)
-      continue;
-    r->gen = req_next_gen++;
-    /* The id packs a slot index in the low 32 bits and a generation above it,
-     * so that a handle held across a slot recycle is detected rather than
-     * silently resolving to an unrelated request. */
-    r->id = ((fasync_id)r->gen << 32) | (fasync_id)i;
-    r->state = FASYNC_REQ_PENDING;
-    r->result = 0;
-    r->linked = 0;
-    return r;
+    req_slots[i].state = FASYNC_REQ_FREE;
+    /* Indices are stored one-based, so the link to slot i+1 is i+2. Getting
+     * this wrong hands out slot 0 forever, which is a hang rather than a
+     * wrong answer: several requests share one slot and only the last one's
+     * completion can ever be matched. */
+    g_req_free_next[i] = (i + 2 <= FASYNC_MAX_INFLIGHT) ? i + 2 : 0;
   }
-  return 0;
+  g_req_free_head = 1; /* slot 0 */
+}
+
+static struct fasync_req_shared* fasync_req_alloc(void) {
+  unsigned int head = g_req_free_head;
+  if (!head)
+    return 0;
+
+  unsigned int index = head - 1;
+  g_req_free_head = g_req_free_next[index];
+
+  struct fasync_req_shared* r = &req_slots[index];
+  r->gen = ++req_next_gen;
+  /* The id packs a slot index in the low 32 bits and a generation above it, so
+   * that a handle held across a slot recycle is detected rather than silently
+   * resolving to an unrelated request. */
+  r->id = ((fasync_id)r->gen << 32) | (fasync_id)index;
+  r->state = FASYNC_REQ_PENDING;
+  r->result = 0;
+  r->linked = 0;
+  return r;
+}
+
+static void fasync_req_release(struct fasync_req_shared* r) {
+  unsigned int index = (unsigned int)(r->id & 0xFFFFFFFFUL);
+  r->state = FASYNC_REQ_FREE;
+  g_req_free_next[index] = g_req_free_head;
+  g_req_free_head = index + 1;
 }
 
 static struct fasync_req_shared* fasync_req_lookup(fasync_id id) {
@@ -422,7 +460,7 @@ static fasync_id fasync_push_sqe(unsigned char op, int fd, unsigned long addr,
 
   struct fasync_sqe* sqe = fasync_get_sqe();
   if (!sqe) {
-    r->state = FASYNC_REQ_FREE;
+    fasync_req_release(r);
     return 0;
   }
 
@@ -715,7 +753,7 @@ long fasync_result(fasync_id id) {
   }
 
   long result = r->result;
-  r->state = FASYNC_REQ_FREE;
+  fasync_req_release(r);
   return result;
 }
 
