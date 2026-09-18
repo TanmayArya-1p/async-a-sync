@@ -1,14 +1,7 @@
-/*
- * stage_token_ordering.c -- a provenance tag orders two calls with no visible
- * dataflow connection.
- *
- * A write and a read of the same region, expressed as two separate buffers:
- * nothing in the dataflow ties them together, so there is no dependency. The
- * tag -- async-a-sync.pdf's serialization token, via the tracking API -- is the
- * ordering: the second call cannot issue its syscall until the first has
- * finished. The control is the same pair without the tag, which the runtime
- * proves is unheld by design by showing neither request has completed.
- */
+/* stage_token_ordering.c -- a provenance tag orders two calls with no visible
+ * dataflow connection: the second tagged call cannot issue until conflicting
+ * earlier ones finish. The untagged control proves the runtime holds nothing by
+ * itself. See docs/ARCHITECTURE.md §5. */
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -38,13 +31,13 @@ int main(void) {
     return 1;
   }
 
-  /* What is already on disk: the "stale" bytes a racing read would fetch. */
+  /* The bytes a racing read would fetch. */
   unsigned char* stale = malloc(BLOCK);
   memset(stale, 0x5A, BLOCK);
   if (pwrite(fd, stale, BLOCK, 0) != BLOCK)
     return 1;
 
-  /* Control -- the same pair without the tag. */
+  /* Control: the same pair without the tag. */
   {
     unsigned char* src = malloc(BLOCK);
     memset(src, 0x3C, BLOCK);

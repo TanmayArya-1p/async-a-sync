@@ -1,13 +1,7 @@
-/*
- * stage3_dependency.c -- declared effect sets and automatic disjointness.
- *
- * Two things are checked. (1) The analysis: given declared in/out sets the DAG
- * has exactly the implied edges (write->read, read->write, write->write) and
- * none for read->read; conflicting kinds over provably disjoint ranges produce
- * NO edge, and that saving is counted. (2) The execution: a DAG over real file
- * I/O, measuring peak concurrency -- independent ops in flight together,
- * dependent ops not.
- */
+/* stage3_dependency.c -- declared effect sets and automatic disjointness: the
+ * DAG has exactly the implied edges (write->read, read->write, write->write;
+ * never read->read), provably disjoint ranges produce no edge (and count the
+ * saving), and execution reaches peak concurrency over real file I/O. */
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -29,16 +23,14 @@ static void check(const char* what, int ok) {
 
 #define MAX_EDGES 64
 
-/* ------------------------------------------------------------------ */
-/* Part 1: the analysis                                                */
-/* ------------------------------------------------------------------ */
+/* Part 1: the analysis. */
 
 static void test_analysis(void) {
   printf("dependency analysis:\n");
   fflush(stdout);
 
   void* x = malloc(4096);
-  void* y = malloc(4096); /* a separate GC object: provably disjoint from x */
+  void* y = malloc(4096); /* separate GC object: provably disjoint from x */
 
   struct fasync_access wx[] = {{x, 128, FASYNC_OUT}};
   struct fasync_access rx[] = {{x, 128, FASYNC_IN}};
@@ -101,9 +93,7 @@ static void test_analysis(void) {
   free(y);
 }
 
-/* ------------------------------------------------------------------ */
-/* Part 2: executing a DAG over real I/O                               */
-/* ------------------------------------------------------------------ */
+/* Part 2: executing a DAG over real I/O. */
 
 #define N_BLOCKS 4
 #define BLOCK 65536
@@ -111,23 +101,16 @@ static void test_analysis(void) {
 static int g_fd;
 static unsigned char* g_bufs[N_BLOCKS];
 
-/*
- * The submit callback: called the moment the DAG says the op is ready, before
- * any dependency has been waited on -- a dependent op's prologue runs here, and
- * the point is that it blocks on nothing it does not actually touch.
- */
+/* Called the moment the DAG says the op is ready; nothing here blocks on a
+ * dependency it does not touch. */
 static unsigned long g_prologue_ran;
 
 static const struct fasync_op* g_ops_base;
 
 static fasync_id submit_block(const struct fasync_op* op, void* ctx) {
   (void)ctx;
-  /* Recover which block this op is responsible for from its array position. */
   unsigned index = (unsigned)(op - g_ops_base);
   g_prologue_ran++;
-
-  /* A dependent op would touch its input here; the declared access keeps the
-   * DAG aware of that. */
   if (op->n_accesses)
     FASYNC_ACCESS(op->accesses[0].buf, op->accesses[0].len);
 

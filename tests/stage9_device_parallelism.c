@@ -1,24 +1,9 @@
-/*
- * stage9_device_parallelism.c -- what this device can actually do in parallel.
- *
- * A probe, not a test of the runtime (plain C, no Fil-C). It exists because of
- * what stage8 measured: on an uncached workload the implicit path beat the
- * blocking one by about 2.3x, which is much less than the device round trip
- * suggests it should be. The question this answers is whether that ceiling is the
- * device's or the runtime's.
- *
- * It is the device's if a fixed number of blocking threads cannot do better than
- * the async path either -- in which case the async path is taking everything the
- * hardware has. It is the runtime's if threads go several times faster, because
- * then the kernel can clearly sustain that concurrency and the async path is not
- * reaching it.
- *
- * The same workload as stage8: 512 files of 4 KiB, page cache dropped before each
- * pass, one read per file.
- *
- * Build (see tests/run.sh):
- *   cc -O2 -pthread -o stage9 tests/stage9_device_parallelism.c [dir]
- */
+/* stage9_device_parallelism.c -- what this device can actually do in parallel.
+ * Plain C, not a Fil-C test. It exists because stage8's implicit path beat
+ * blocking by only ~2.3x on an uncached workload: if a handful of blocking
+ * threads cannot beat the async path either, the ceiling is the device's; if
+ * they go several times faster, the gap is the runtime's. Same workload as
+ * stage8: 512 files of 4 KiB, page cache dropped per pass. */
 
 #define _GNU_SOURCE
 #include <stdio.h>

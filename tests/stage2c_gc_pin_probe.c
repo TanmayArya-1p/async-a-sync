@@ -1,22 +1,10 @@
-/*
- * stage2c_gc_pin_probe.c -- can GC memory hold a pointer the kernel keeps?
+/* stage2c_gc_pin_probe.c -- can GC memory hold a pointer the kernel keeps?
  *
- * IORING_SETUP_NO_MMAP would let us hand the kernel a buffer we allocated, which
- * is attractive because then the ring lives in ordinary Fil-C memory and the
- * memory-safe half can read the completion queue directly, with no copying and
- * no extra trips across the trusted boundary.
- *
- * That only works if the allocation never moves. Fil-C's runtime exposes
- * zscavenge_synchronously() and zgc_request_fresh(), so the collector does
- * scavenge; the question is whether the large-object path relocates.
- *
- * This probe allocates a page-aligned buffer, records its address, forces
- * several collection cycles, and checks whether the address and contents
- * survived. If the address is stable, IORING_SETUP_NO_MMAP is safe to build on.
- *
- * Build:
- *   filcc -O2 -static -o stage2c_gc_pin_probe tests/stage2c_gc_pin_probe.c
- */
+ * IORING_SETUP_NO_MMAP hands the kernel a buffer we allocated, which is
+ * attractive because the ring then lives in ordinary Fil-C memory and the
+ * memory-safe half can read the completion queue directly. Sound only if the
+ * allocation never moves: allocate page-aligned, force scavenges, and check the
+ * address and contents survived. */
 
 #include <stdio.h>
 #include <string.h>
@@ -44,8 +32,8 @@ int main(void) {
     s[i] = (unsigned char)(0x50 + (i & 15));
   }
 
-  /* Force real collection work. Allocate a pile of garbage first so there is
-   * something to scavenge. */
+/* Force real collection work: allocate garbage first so there is something to
+ * scavenge. */
   for (unsigned i = 0; i < 20000; i++) {
     void* g = zgc_alloc(1024);
     memset(g, 1, 1024);

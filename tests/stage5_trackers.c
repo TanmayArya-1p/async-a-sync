@@ -1,15 +1,12 @@
-/*
- * stage5_trackers.c -- async-a-sync.pdf's serialization token versus declared
+/* stage5_trackers.c -- async-a-sync.pdf's serialization token versus declared
  * effect sets: one workload, three encodings, so the comparison is data.
  *
- *   workload: op0,op1 root; op2,op4 use op0's result; op3,op5 use op1's.
  *   precise effect sets   4 edges, four ops in flight
  *   two tokens            6 edges, two in flight
  *   one token             15 edges, fully serialized
  *
  * A token can only express "after everything else on this token", so its price
- * is over-serialization wherever the DAG is wider than a chain.
- */
+ * is over-serialization wherever the DAG is wider than a chain. */
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -32,9 +29,7 @@ static void check(const char* what, int ok) {
     failures++;
 }
 
-/* ------------------------------------------------------------------ */
-/* Real I/O behind the DAG                                             */
-/* ------------------------------------------------------------------ */
+/* Real I/O behind the DAG. */
 
 static int g_fd;
 static unsigned char* g_bufs[N_OPS];
@@ -87,9 +82,7 @@ int main(void) {
 
   unsigned edges[64];
 
-  /* ---------------------------------------------------------------- */
-  /* Encoding 1: precise effect sets.                                  */
-  /* ---------------------------------------------------------------- */
+  /* Encoding 1: precise effect sets. */
   printf("encoding 1: declared effect sets (in/out over buffer ranges)\n");
 
   struct fasync_access precise[N_OPS];
@@ -121,9 +114,7 @@ int main(void) {
          st.write_write_edges);
   check("four edges: one per real dependency", n_precise == 4);
 
-  /* ---------------------------------------------------------------- */
-  /* Encoding 2: one token per independent chain.                      */
-  /* ---------------------------------------------------------------- */
+  /* Encoding 2: one token per independent chain. */
   printf("\nencoding 2: two tokens, one per independent chain\n");
 
   fasync_tracker* t0 = fasync_tracker_new();
@@ -150,9 +141,7 @@ int main(void) {
   check("a token can only chain, so each 3-op chain is fully connected",
         n_tokens == 6);
 
-  /* ---------------------------------------------------------------- */
   /* Encoding 3: one token for the whole workload (the PDF's example). */
-  /* ---------------------------------------------------------------- */
   printf("\nencoding 3: a single token shared by every call\n");
 
   fasync_tracker* all = fasync_tracker_new();
@@ -168,9 +157,7 @@ int main(void) {
   printf("  edges: %u  (every pair, i.e. a total order)\n", n_one);
   check("one token => completely serialized", n_one == (N_OPS * (N_OPS - 1)) / 2);
 
-  /* ---------------------------------------------------------------- */
-  /* Execution: what each encoding actually achieves.                  */
-  /* ---------------------------------------------------------------- */
+  /* Execution: what each encoding actually achieves. */
   printf("\nexecution over real I/O (peak operations in flight):\n");
 
   unsigned measured_precise = run_and_measure(ops_precise, n_precise, edges, 0);
@@ -191,15 +178,11 @@ int main(void) {
         measured_tokens < measured_precise);
   check("a single shared token serializes everything", measured_one == 1);
 
-  /* ---------------------------------------------------------------- */
-  /* Where a token is genuinely better.                                */
-  /* -------------------------------------------------- */
+  /* Where a token is genuinely better. */
   printf("\nwhere a token is genuinely better:\n");
 
-  /*
-   * (a) An opaque dependency with no address: collisions on an fd, path, or
-   * device have nothing the capability-range analysis can look at.
-   */
+  /* (a) An opaque dependency with no address: collisions on an fd, path, or
+   * device have nothing for the capability-range analysis to look at. */
   fasync_tracker* fd_tok = fasync_tracker_new();
   struct fasync_access fd_acc[2];
   fd_acc[0] = fasync_tracker_access(fd_tok, FASYNC_INOUT);
@@ -209,10 +192,8 @@ int main(void) {
   unsigned n_fd = fasync_build_dag(fd_ops, 2, edges, 64, 0);
   check("a token expresses a dependency on a non-address resource", n_fd == 1);
 
-  /*
-   * (b) A token read IN rather than INOUT: any number of readers share one at no
-   * cost -- something the PDF's always-serializing token cannot express.
-   */
+  /* (b) A token read IN rather than INOUT: any number of readers share one at no
+   * cost -- something the PDF's always-serializing token cannot express. */
   fasync_tracker* reader_tok = fasync_tracker_new();
   struct fasync_access rd[3];
   rd[0] = fasync_tracker_access(reader_tok, FASYNC_IN);

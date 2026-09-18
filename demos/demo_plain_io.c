@@ -1,6 +1,3 @@
-/* demo_plain_io run file: settle the directory and sizes, create the files,
- * then run the crux and print the verdict and the mechanism counters. */
-
 #include <stdio.h>
 
 #include "demo_plain_io.hh"

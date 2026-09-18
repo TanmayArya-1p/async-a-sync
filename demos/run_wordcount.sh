@@ -1,23 +1,5 @@
 #!/bin/sh
-#
-# run_wordcount.sh -- one word-count program, two backends.
-#
-# The same demos/demo_wordcount.c is built and run twice:
-#
-#   sync:     plain Fil-C (falling back to cc if no Fil-C dist is present).
-#             read_all_files() blocks; every byte costs a round trip.
-#   implicit: patched Fil-C + the io_uring runtime. read_all_files() enqueues
-#             and returns first; counting is what waits, and the first access
-#             publishes the whole queue lazily -- no submit call exists.
-#
-# Prints the two measured timings and the ratio. The payload lives under
-# $OUT/wc so it lands on a real filesystem: on tmpfs the reads are cached and
-# the ratio is meaningless. A warm page cache makes a re-run pointless too.
-#
-# Usage:
-#   ./demos/run_wordcount.sh [payload-dir]
-#   OUT=/path ./demos/run_wordcount.sh
-#   PATCHED_CC=/path/to/patched-filcc ./demos/run_wordcount.sh
+
 
 set -e
 

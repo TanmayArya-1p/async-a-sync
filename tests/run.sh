@@ -2,26 +2,7 @@
 #
 # run.sh -- build everything and run the whole suite.
 #
-# Stages, in order:
-#
-#   stage2b  kernel behaviour: how an io_uring ring can and cannot be mapped
-#            (plain C; establishes why the runtime is shaped the way it is)
-#   stage2c  GC stability: Fil-C GC memory must not move, because the kernel is
-#            handed a pointer to it (Fil-C)
-#   stage2   lazy resolution: submission never blocks, resolution happens on
-#            first genuine access (Fil-C)
-#   stage2l  lazy submit: no submit call at all -- the first access publishes
-#            the whole queue (Fil-C)
-#   stage6b  kernel probe: whether an fd can be chained to a not-yet-open file
-#            (plain C; documents a kernel limitation the runtime is built around)
-#   stage3   dependencies: declared effect sets, capability-range disjointness,
-#            DAG construction and execution (Fil-C)
-#   stage5   serialization tokens (async-a-sync.pdf) vs effect sets (Fil-C)
-#   stage6   descriptor provenance: operations against a not-yet-open fd (Fil-C)
-#   stage7   many small reads: kernel entries saved by batching, vs wall clock
-#   stage8   the latency regime: blocking vs explicit wait vs implicit (Fil-C)
-#   stage9   device parallelism probe: how much of it the kernel can sustain
-#            (plain C, pthreads)
+# Stage order and what each verifies: see docs/ARCHITECTURE.md §9.
 #
 # Usage: ./tests/run.sh
 #        FILC_ROOT=/path/to/filc-dist ./tests/run.sh

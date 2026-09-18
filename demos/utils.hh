@@ -1,8 +1,5 @@
-/*
- * utils.hh -- plumbing the demos share: make files, read them into buffers,
- * wordcount them, time it. Compiles two ways (-DFASYNC_IMPLICIT selects the
- * io_uring backend, otherwise plain pread); run_wordcount.sh builds both.
- */
+/* Plumbing the demos share -- compile with -DFASYNC_IMPLICIT to use the
+ * io_uring backend, otherwise plain pread. See docs/DEMOS.md. */
 #pragma once
 
 #include <fcntl.h>
@@ -23,7 +20,6 @@ build with -DFASYNC_COMPILER_INSERTS_CHECKS"
 #define DEMO_PATH_MAX 128
 #define DEMO_MAX_FILES 2048
 
-/* the files the demos are working on */
 static char demo_paths[DEMO_MAX_FILES][DEMO_PATH_MAX];
 static int demo_fd[DEMO_MAX_FILES];
 static unsigned char* demo_buf[DEMO_MAX_FILES];
@@ -31,14 +27,12 @@ static size_t demo_expect[DEMO_MAX_FILES];
 static int demo_n;
 static size_t demo_bytes;
 
-/* Wall clock, in milliseconds. */
 static inline double demo_now_ms(void) {
   struct timespec ts;
   clock_gettime(CLOCK_MONOTONIC, &ts);
   return (double)ts.tv_sec * 1000.0 + (double)ts.tv_nsec / 1e6;
 }
 
-/* A stopwatch: demo_start() ... demo_elapsed() in milliseconds. */
 static double demo_t0;
 
 static inline void demo_start(void) {
@@ -49,7 +43,6 @@ static inline double demo_elapsed(void) {
   return demo_now_ms() - demo_t0;
 }
 
-/* Deterministic random, so every run makes the same files. */
 static inline unsigned int demo_rand(unsigned int* state) {
   *state = *state * 1103515245u + 12345u;
   return *state >> 16;
@@ -78,11 +71,6 @@ static inline size_t demo_fill_words(unsigned char* p, size_t cap,
   return words;
 }
 
-/*
- * wordcount -- counts the words in a file's contents. The demos hand it a
- * buffer the kernel may still be filling, and it cannot tell. noinline keeps
- * the load inside this ordinary function instead of in main.
- */
 __attribute__((noinline))
 static size_t wordcount(const char* p) {
   size_t words = 0;
@@ -96,7 +84,6 @@ static size_t wordcount(const char* p) {
   return words;
 }
 
-/* Make n files of `bytes` each under dir; open them and set up the buffers. */
 static inline int demo_files(const char* dir, int n, size_t bytes) {
   if (n > DEMO_MAX_FILES)
     return -1;
@@ -104,7 +91,7 @@ static inline int demo_files(const char* dir, int n, size_t bytes) {
   demo_bytes = bytes;
 
   unsigned int state = 7;
-  unsigned char* b = malloc(bytes);
+  unsigned char* b = (unsigned char*)malloc(bytes);
   if (!b)
     return -1;
 
@@ -120,7 +107,7 @@ static inline int demo_files(const char* dir, int n, size_t bytes) {
     fsync(w);
     close(w);
 
-    demo_buf[i] = malloc(bytes);
+    demo_buf[i] = (unsigned char*)malloc(bytes);
     memset(demo_buf[i], 0, bytes);
     demo_fd[i] = open(demo_paths[i], O_RDONLY);
     if (demo_fd[i] < 0) {
@@ -132,26 +119,17 @@ static inline int demo_files(const char* dir, int n, size_t bytes) {
   return 0;
 }
 
-/* Drop the files from the page cache, so the next read really hits the disk. */
 static inline void demo_cold(void) {
   for (int i = 0; i < demo_n; i++)
     posix_fadvise(demo_fd[i], 0, demo_bytes, POSIX_FADV_DONTNEED);
 }
 
-/* Blocking read of file i; returns its contents. */
 static inline const char* read_file(int i) {
   if (pread(demo_fd[i], demo_buf[i], demo_bytes, 0) != (ssize_t)demo_bytes)
     return 0;
   return (const char*)demo_buf[i];
 }
 
-/* Ask for every file, without waiting for any of them.
- *
- *   implicit: each call enqueues an async read and returns; no submit reaches
- *             the kernel until a buffer is genuinely touched. Resolve-on-access
- *             -- the wait -- publishes the whole queue lazily.
- *   sync:     each call blocks until that file is read, the ordinary way.
- */
 static inline void read_all_files(void) {
   for (int i = 0; i < demo_n; i++) {
 #ifdef FASYNC_IMPLICIT
@@ -165,7 +143,6 @@ static inline void read_all_files(void) {
   }
 }
 
-/* The contents of file i. Reading this is what waits. */
 static inline const char* file_data(int i) {
   return (const char*)demo_buf[i];
 }
@@ -179,12 +156,8 @@ static inline void demo_finish(void) {
   }
 }
 
-/*
- * demo_seed_file -- write one file whose every block is a recognizable pattern:
- * all bytes of block i are (i + 1) & 0xFF, so a misdirected read is obvious.
- */
 static inline int demo_seed_file(const char* path, int blocks, size_t block_size) {
-  unsigned char* block = malloc(block_size);
+  unsigned char* block = (unsigned char*)malloc(block_size);
   if (!block)
     return -1;
 
@@ -207,7 +180,6 @@ static inline int demo_seed_file(const char* path, int blocks, size_t block_size
   return 0;
 }
 
-/* Every sample of block `index` must read (index + 1) & 0xFF. */
 static inline int demo_block_ok(const unsigned char* buf, size_t block_size,
                                 int index) {
   unsigned char expected = (unsigned char)((index + 1) & 0xFF);
@@ -217,7 +189,6 @@ static inline int demo_block_ok(const unsigned char* buf, size_t block_size,
   return 1;
 }
 
-/* --- the provenance demo's buffers (demo_provenance.hh) --- */
 
 static unsigned char* demo_prov_author;       /* what the author writes       */
 static unsigned char* demo_prov_plain_reader; /* an untagged read lands here  */
@@ -225,12 +196,11 @@ static unsigned char* demo_prov_tagged_reader; /* a tagged read lands here     *
 static unsigned char* demo_prov_stale;        /* the "on disk" old bytes      */
 static size_t demo_prov_len;
 
-/* Allocate and fill the provenance demo's buffers. Called by the run file. */
 static inline int demo_prov_setup(size_t len) {
-  demo_prov_author = malloc(len);
-  demo_prov_plain_reader = malloc(len);
-  demo_prov_tagged_reader = malloc(len);
-  demo_prov_stale = malloc(len);
+  demo_prov_author = (unsigned char*)malloc(len);
+  demo_prov_plain_reader = (unsigned char*)malloc(len);
+  demo_prov_tagged_reader = (unsigned char*)malloc(len);
+  demo_prov_stale = (unsigned char*)malloc(len);
   if (!demo_prov_author || !demo_prov_plain_reader ||
       !demo_prov_tagged_reader || !demo_prov_stale)
     return -1;
@@ -242,7 +212,6 @@ static inline int demo_prov_setup(size_t len) {
   return 0;
 }
 
-/* Re-stale the region, so a racing tagged read would fetch the old bytes. */
 static inline int demo_prov_resterile(int fd) {
   return pwrite(fd, demo_prov_stale, demo_prov_len, 0) == (ssize_t)demo_prov_len
              ? 0
@@ -258,7 +227,6 @@ static inline void demo_prov_teardown(void) {
 
 #ifdef FASYNC_IMPLICIT
 
-/* One snapshot of the runtime's submission counters. */
 static inline void demo_show_submit(const char* note) {
   struct fasync_stats s;
   fasync_get_stats(&s);

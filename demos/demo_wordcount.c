@@ -1,6 +1,3 @@
-/* demo_wordcount run file: create and cold-cache the files, time the crux,
- * and report. The same source is either backend by the build flag. */
-
 #include <stdio.h>
 
 #include "demo_wordcount.hh"

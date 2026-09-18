@@ -1,14 +1,7 @@
-/*
- * stage7_throughput.c -- where io_uring actually pays: many small reads.
- *
- * 256 KiB warm-cache reads are memcpy-bound and come out level -- unflattering
- * but the wrong shape of workload. At 64 bytes a read is almost entirely syscall
- * cost (entry, exit, per-request bookkeeping), not copy: the regime batching
- * wins in, the FlexSC argument idea.md section 4 cites. Both paths do identical
- * work; what is counted is kernel entries, from the runtime's own counters, so
- * the structural claim owes nothing to the machine. Wall clock is reported
- * alongside and is expected to vary.
- */
+/* stage7_throughput.c -- the workload io_uring pays in: many small reads, where
+ * a read is nearly all syscall cost. Both paths do identical work; what is
+ * counted is kernel entries, from the runtime's own counters. Wall clock is
+ * reported alongside and expected to vary. */
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -25,8 +18,7 @@
 #define N_READS 20000
 #endif
 
-/* Requests in flight at once. The runtime's tables are sized for a few hundred,
- * so this is the queue depth the benchmark fills and drains. */
+/* The queue depth the batched path fills and drains. */
 #define WAVE 200
 
 static int failures = 0;
@@ -76,9 +68,7 @@ int main(void) {
   unsigned char* buf = malloc(READ_SIZE);
   int ok;
 
-  /* ------------------------------------------------------------------ */
-  /* Blocking: one syscall per read                                      */
-  /* ------------------------------------------------------------------ */
+  /* Blocking: one syscall per read. */
   memset(buf, 0, READ_SIZE);
   double t0 = now_ms();
   for (int i = 0; i < N_READS; i++) {
@@ -99,14 +89,8 @@ int main(void) {
   }
   check("blocking reads return the right bytes", ok);
 
-  /* ------------------------------------------------------------------ */
-  /* Async: batched SQEs, completions reaped from shared memory          */
-  /*                                                                     */
-  /* The runtime caps how many requests may be in flight at once, so this */
-  /* works in waves: fill the queue, drain it, refill. That is the        */
-  /* throughput pattern -- submit a batch, reap it, repeat -- and it is   */
-  /* what makes the entry count per wave rather than per read.            */
-  /* ------------------------------------------------------------------ */
+  /* Async: the runtime caps requests in flight, so this works in waves -- fill
+ * the queue, drain it, refill: one kernel entry per wave instead of per read. */
   fasync_reset_stats();
 
   double t1 = now_ms();
@@ -135,8 +119,7 @@ int main(void) {
       return 1;
     }
 
-    /* Reclaim the slots so the next wave has room. Everything has completed, so
-     * each of these is a table lookup, not a wait. */
+    /* Everything completed, so each result is a table lookup, not a wait. */
     for (int i = 0; i < wave; i++) {
       if (fasync_result(ids[i]) != READ_SIZE)
         async_ok = 0;
@@ -176,9 +159,7 @@ int main(void) {
   }
   free(wave_buf);
 
-  /* ------------------------------------------------------------------ */
-  /* Report                                                              */
-  /* ------------------------------------------------------------------ */
+  /* Report. */
   printf("\n");
   printf("  blocking: %8.2f ms for %d reads  (%.2f us/read, %d syscalls)\n",
          blocking_ms, N_READS, blocking_ms * 1000.0 / N_READS, N_READS);

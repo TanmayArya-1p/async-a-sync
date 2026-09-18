@@ -1,32 +1,14 @@
-/*
- * stage8_latency.c -- the regime where overlapped execution actually pays: many
- * independent reads that each cost a device round trip, so a serial program pays
- * N round trips and an overlapped one pays about one.
+/* stage8_latency.c -- the regime where overlap pays: many independent reads,
+ * each a device round trip, so a serial program pays N round trips and an
+ * overlapped one pays about one. Page cache dropped (posix_fadvise DONTNEED, no
+ * root) before each timed pass; separate files so readahead cannot prefetch
+ * them. If the drop changes nothing, the timings mean nothing and it says so.
  *
- * Every other measurement in this suite reads cache-resident data. The page
- * cache is dropped (posix_fadvise(DONTNEED); no root) before each timed pass.
- * It only takes here -- and not over one big file -- because separate files
- * cannot be prefetched by readahead, and because the payload must sit on a real
- * backing store (tmpfs has no device to wait for). If the drop changes nothing,
- * the program says the timings mean nothing rather than quoting an unsupported
- * ratio; O_DIRECT skips that check entirely.
- *
- * THREE ARMS:
- *   blocking  a pread per file, each waiting for the device
- *   explicit  submit everything, wait handle by handle -- what a hand-written
- *             io_uring program does, on the same runtime and substrate, isolating
- *             the question the project has to answer: does being implicit cost?
- *   implicit  submit everything, then hand the buffers to ordinary code; the
- *             compiler's hook resolves them at the first byte touched
- *
- * An independent raw-liburing baseline would not isolate the question: it would
- * also lack Fil-C's per-access checking, and the difference would be substrate,
- * not ergonomics. See stage9 for the ceiling this runs into.
- *
- * Build (needs the patched compiler -- run.sh skips this when it is not built):
- *   <patched>/filcc -O2 -static -DFASYNC_COMPILER_INSERTS_CHECKS -Iruntime/src \
- *     -Lruntime/build/lib -o stage8 tests/stage8_latency.c [dir]
- */
+ * Three arms: blocking, explicit (submit everything, wait handle by handle),
+ * and implicit (the compiler's hook resolves at first use). An independent
+ * raw-liburing baseline would measure substrate, not ergonomics -- see stage9
+ * for the ceiling this runs into. Needs the patched compiler and
+ * -DFASYNC_COMPILER_INSERTS_CHECKS (run.sh skips when it is not built). */
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -37,13 +19,8 @@
 
 #include "fasync.h"
 
-/*
- * Arm C is only implicit if the compiler inserts the hook. Built with the stock
- * compiler there is no resolution call anywhere in the program, so arm C reads
- * unfilled buffers and its checksum comes out short -- which is exactly the
- * failure this test caught when it was first run against the wrong toolchain.
- * Refuse to build that way.
- */
+/* Arm C is only implicit if the compiler inserts the hook; without it nothing
+ * resolves the buffers and the checksum comes out short. Refuse. */
 #ifndef FASYNC_COMPILER_INSERTS_CHECKS
 #error "build with the patched compiler and -DFASYNC_COMPILER_INSERTS_CHECKS"
 #endif
@@ -69,11 +46,8 @@ static double now_ms(void) {
   return (double)ts.tv_sec * 1000.0 + (double)ts.tv_nsec / 1e6;
 }
 
-/*
- * An ordinary function, the same one every arm uses. Nothing about it is
- * async-aware; in the implicit arm the compiler puts a resolution check in front
- * of its load.
- */
+/* The same ordinary function every arm uses; in the implicit arm the compiler
+ * puts a resolution check in front of its load. */
 __attribute__((noinline))
 static unsigned long checksum(const unsigned char* p, size_t n) {
   unsigned long sum = 0;
@@ -135,9 +109,8 @@ int main(int argc, char** argv) {
     }
   }
 
-  /* Establish that dropping the cache costs something, before claiming anything
-   * about the ratio between the arms. O_DIRECT needs no such check: it does not
-   * use the page cache at all. */
+  /* Requires a real device: page cache must be cold, or no case can prove
+   * 1.5x. O_DIRECT needs no such check. */
   double regime = 0;
   int regime_ok = use_direct;
   if (!use_direct) {
@@ -171,9 +144,7 @@ int main(int argc, char** argv) {
 
   unsigned long sum_a = 0, sum_b = 0, sum_c = 0;
 
-  /* ------------------------------------------------------------------ */
-  /* A: blocking                                                         */
-  /* ------------------------------------------------------------------ */
+  /* A: blocking */
   drop_caches();
   fasync_reset_stats();
 
@@ -185,9 +156,7 @@ int main(int argc, char** argv) {
   }
   double a_ms = now_ms() - t_a;
 
-  /* ------------------------------------------------------------------ */
-  /* B: explicit -- submit everything, then wait handle by handle        */
-  /* ------------------------------------------------------------------ */
+  /* B: explicit -- submit everything, then wait handle by handle */
   drop_caches();
   fasync_reset_stats();
 
@@ -220,9 +189,7 @@ int main(int argc, char** argv) {
   struct fasync_stats sb;
   fasync_get_stats(&sb);
 
-  /* ------------------------------------------------------------------ */
-  /* C: implicit -- submit everything, then just use the buffers         */
-  /* ------------------------------------------------------------------ */
+  /* C: implicit -- submit everything, then just use the buffers */
   drop_caches();
   fasync_reset_stats();
 
@@ -244,15 +211,11 @@ int main(int argc, char** argv) {
       }
       fasync_submit();
 
-      /* No wait anywhere: the compiler resolves each buffer at the first byte
-       * checksum() touches. */
+      /* Checksum only: the first load resolves. */
       for (int i = 0; i < wave; i++)
         sum_c += checksum(buf[enqueued + i], FILE_BYTES);
 
-      /* Bookkeeping only (releases slots for the next wave). An earlier draft
-       * checked the buffers here -- useless, since the check is itself an
-       * instrumented access that resolves whatever it looks at. The checksums
-       * above are the real check. */
+      /* Bookkeeping only: releases slots for the next wave. */
       for (int i = 0; i < wave; i++)
         fasync_result(ids[i]);
       enqueued += wave;
@@ -262,9 +225,7 @@ int main(int argc, char** argv) {
   struct fasync_stats sc;
   fasync_get_stats(&sc);
 
-  /* ------------------------------------------------------------------ */
-  /* Report                                                              */
-  /* ------------------------------------------------------------------ */
+  /* Report. */
   printf("  %-26s %9s %9s\n", "arm", "ms", "us/file");
   printf("  %-26s %9.2f %9.2f\n", "A blocking", a_ms, a_ms * 1000.0 / N_FILES);
   printf("  %-26s %9.2f %9.2f\n", "B explicit (wait per handle)", b_ms,

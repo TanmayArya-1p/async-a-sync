@@ -1,17 +1,7 @@
-/*
- * stage2_lazy_submit.c -- submission is implicit: never call fasync_submit().
- *
- * This is stage2 with the publish step removed: the workload is plain enqueue
- * calls, exactly as a program would write them, and no submit appears after.
- * Two things are asserted: (1) after enqueueing, nothing has reached the kernel
- * -- writing SQEs is a memory operation; (2) the first genuine access to a
- * pending buffer publishes the whole queue in one non-blocking enter, because a
- * resolver cannot spin for a completion that was never submitted.
- *
- * The FASYNC_ACCESS() calls stand in for the points where the patched
- * FilPizlonator will insert filc_resolve_pending() automatically; see
- * docs/ARCHITECTURE.md.
- */
+/* stage2_lazy_submit.c -- no fasync_submit(): enqueueing is a memory op that
+ * reaches nothing, and the first genuine access to a pending buffer publishes
+ * the whole queue in one non-blocking enter. The FASYNC_ACCESS() calls stand in
+ * for the compiled-in hook (docs/ARCHITECTURE.md). */
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -81,9 +71,7 @@ int main(void) {
 
   fasync_reset_stats();
 
-  /* ------------------------------------------------------------------ */
-  /* Phase 1: enqueue only. No submit, no access.                        */
-  /* ------------------------------------------------------------------ */
+  /* Phase 1: enqueue only. */
   for (int i = 0; i < N_READS; i++) {
     bufs[i] = malloc(BLOCK_SIZE);
     if (!bufs[i]) {
@@ -116,9 +104,7 @@ int main(void) {
     printf("  OK: submission is fully implicit so far\n");
   }
 
-  /* ------------------------------------------------------------------ */
-  /* Phase 2: first genuine access publishes the whole batch lazily.     */
-  /* ------------------------------------------------------------------ */
+  /* Phase 2: first genuine access publishes the whole batch lazily. */
   for (int i = 0; i < N_READS; i++) {
     FASYNC_ACCESS(bufs[i], 1);
 

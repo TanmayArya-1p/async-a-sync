@@ -1,17 +1,6 @@
-/*
- * stage2_lazy_resolution.c -- the core mechanism of idea.md section 1, tested.
- *
- *   1. SUBMISSION NEVER BLOCKS: after queueing and publishing N reads, the
- *      blocking-entry counter is still zero. Checked structurally, not by timing,
- *      so a fast machine cannot satisfy it.
- *   2. CORRECTNESS: every buffer reads back exactly the bytes written there.
- *   3. RESOLUTION IS LAZY AND CHEAP: the checked path spins against the
- *      completion ring and parks only if needed; idle resolves are one load.
- *
- * The FASYNC_ACCESS() calls are exactly where the FilPizlonator patch will insert
- * filc_resolve_pending() automatically; they are written by hand here because the
- * patched compiler did not exist yet. See docs/ARCHITECTURE.md.
- */
+/* stage2_lazy_resolution.c -- submission never blocks; resolution is lazy and
+ * cheap; every read returns the seeded bytes. The FASYNC_ACCESS() calls stand
+ * in for the hook the patched compiler inserts (docs/ARCHITECTURE.md). */
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -25,8 +14,7 @@
 #define BLOCK_SIZE 262144 /* 256 KiB per read */
 #define FILE_SIZE (N_READS * BLOCK_SIZE)
 
-/* Fill the scratch file so each block is distinguishable: every byte of block
- * i is the value (i + 1) & 0xFF. */
+/* Make each block distinguishable: every byte of block i is (i + 1) & 0xFF. */
 static int seed_file(const char* path) {
   unsigned char* block = malloc(BLOCK_SIZE);
   if (!block)
@@ -79,15 +67,13 @@ int main(void) {
     return 1;
   }
 
-  /* Heap buffers, one per read. They become the pending ranges. */
+  /* Heap buffers, one per read: the pending ranges. */
   unsigned char* bufs[N_READS];
   fasync_id ids[N_READS];
 
   fasync_reset_stats();
 
-  /* ------------------------------------------------------------------ */
-  /* Claim 1: submission never blocks.                                   */
-  /* ------------------------------------------------------------------ */
+  /* Claim 1: submission never blocks. */
   for (int i = 0; i < N_READS; i++) {
     bufs[i] = malloc(BLOCK_SIZE);
     if (!bufs[i]) {
@@ -127,25 +113,15 @@ int main(void) {
     printf("  OK: no blocking kernel entry during submission\n");
   }
 
-  /*
-   * Claims 2 and 3: resolution on genuine access. Nothing has touched bufs[]
-   * yet; the FASYNC_ACCESS calls below are where the patch inserts
-   * filc_resolve_pending(). */
+  /* Claims 2 and 3: resolution on genuine access, then on the fast path. */
   for (int i = 0; i < N_READS; i++) {
-    /* First genuine access to the pending range: this is the resolution
-     * point. */
     FASYNC_ACCESS(bufs[i], 1);
-
-    /* The byte count is itself an async value; reading it resolves too. */
     long n = fasync_result(ids[i]);
     if (n != BLOCK_SIZE) {
       fprintf(stderr, "read %d returned %ld, expected %d\n", i, n, BLOCK_SIZE);
       ok = 0;
       continue;
     }
-
-    /* Second access to the same range: the request is retired, so this must
-     * take the fast path (no table scan, no completion poll). */
     FASYNC_ACCESS(bufs[i], BLOCK_SIZE);
 
     if (!block_is_correct(bufs[i], BLOCK_SIZE, i)) {

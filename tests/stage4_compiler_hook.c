@@ -1,29 +1,10 @@
-/*
- * stage4_compiler_hook.c -- proves the patched FilPizlonator inserts the hook.
+/* stage4_compiler_hook.c -- proves the patched FilPizlonator inserts the hook.
  *
- * This test is only meaningful when built with the *patched* compiler and with
- * -DFASYNC_COMPILER_INSERTS_CHECKS, which makes the FASYNC_ACCESS() macro expand
- * to nothing. Under those conditions this program contains no explicit
- * resolution call anywhere: not the macro (compiled away), and not
- * fasync_result() (never called).
- *
- * So the only thing that can resolve a pending request is a call the *compiler*
- * inserted. The test detects that by sampling the runtime's resolve counter
- * immediately before and after a plain memory access:
- *
- *     fasync_get_stats(&before);
- *     sum += buf[i];              <- an ordinary load
- *     fasync_get_stats(&after);
- *
- * If the counter moved, the hook fired at the access. This is deterministic: it
- * does not depend on whether the kernel has finished the read yet, because the
- * request stays in flight in the runtime's table until someone reaps its
- * completion, and the inserted call is what reaps it.
- *
- * Build (see tests/run.sh):
- *   <patched>/filcc -O2 -static -DFASYNC_COMPILER_INSERTS_CHECKS \
- *     -I runtime/src -L runtime/build/lib -o stage4 tests/stage4_compiler_hook.c
- */
+ * Built with the patched compiler and -DFASYNC_COMPILER_INSERTS_CHECKS,
+ * FASYNC_ACCESS() expands to nothing and fasync_result() is never called, so
+ * the only thing that can resolve a pending request is a call the compiler
+ * inserted. Sampling the resolve counter across a plain load shows it firing.
+ * Build and run see tests/run.sh. */
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -61,7 +42,7 @@ int main(void) {
   if (fd < 0)
     return 1;
 
-  /* Heap buffer: an escaping pointer, which is what the pass instruments. */
+  /* Escaping pointer: what the pass instruments. */
   unsigned char* buf = malloc(BLOCK);
   memset(buf, 0, BLOCK);
 
@@ -81,10 +62,8 @@ int main(void) {
            submitted, s0.sqes_queued, s0.completions_reaped ? "no" : "yes");
   }
 
-  /*
-   * No fasync_result(), no FASYNC_ACCESS(). Just an ordinary access through an
-   * escaping pointer. If the compiler instrumented it, this resolves; if it did
-   * not, nothing does.
+  /* No fasync_result(), no FASYNC_ACCESS(): an ordinary access through an
+   * escaping pointer. Whatever resolved it was the compiler's instrumentation.
    */
   struct fasync_stats before, after;
   fasync_get_stats(&before);

@@ -1,30 +1,12 @@
-/*
- * stage2b_mmap_probe.c -- kernel behaviour check. NOT a Fil-C program.
+/* stage2b_mmap_probe.c -- kernel behaviour, plain C (deliberately not a Fil-C
+ * program: it establishes a property of the kernel and of Fil-C's mmap wrapper).
  *
- * This is plain C compiled with the system compiler, and that is deliberate: it
- * establishes a property of the *kernel*, and of Fil-C's mmap wrapper, rather
- * than of our runtime, and it should be readable without any Fil-C context.
- *
- * WHY THIS EXISTS
- * ---------------
- * The obvious way to build an io_uring ring is to let the kernel create it and
- * then mmap it. On Fil-C that cannot work, and it is not a bug on either side:
- *
- *   - Fil-C's mmap wrapper (filc_native_zsys_mmap) must guarantee that the
- *     address a mapping lands at is the address it hands back a capability for.
- *     It does that by pre-allocating the address out of the GC heap and passing
- *     MAP_FIXED.
- *   - The kernel rejects MAP_FIXED for io_uring ring mappings.
- *
- * Cases (a) and (c) below demonstrate that directly. The consequence is that a
- * ring mapping can never carry a Fil-C capability, so the memory-safe half of the
- * runtime could never read the completion queue out of one. That is why fasync.c
- * uses IORING_SETUP_NO_MMAP and supplies the ring memory itself, out of ordinary
- * GC memory -- which in turn requires that memory to be stable, the question
- * stage2c_gc_pin_probe.c answers.
- *
- * Build: cc -O2 -o stage2b_mmap_probe tests/stage2b_mmap_probe.c
- */
+ * Fil-C's mmap wrapper must hand back a capability for the address a mapping
+ * lands at, so it pre-allocates the address and passes MAP_FIXED. The kernel
+ * rejects MAP_FIXED for io_uring ring mappings ((a) and (c) below), so a ring
+ * can never carry a Fil-C capability -- which is why the runtime uses
+ * IORING_SETUP_NO_MMAP and supplies ring memory itself, out of GC memory that
+ * stage2c probes for stability. */
 
 #define _GNU_SOURCE
 #include <stdio.h>

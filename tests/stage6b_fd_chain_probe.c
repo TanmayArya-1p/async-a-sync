@@ -1,14 +1,8 @@
-/*
- * stage6b_fd_chain_probe.c -- can a read chain to a file that is not open yet,
- * entirely in the kernel? Plain C, system compiler, NOT a Fil-C program.
- *
- * The prize: provenance on an fd would let a read be submittable against a slot
- * that does not exist yet and execute when the open completes. The probe checks
- * the pieces in order: A. a sparse direct-descriptor table (entries of -1) and
- * an explicit-slot openat; B. a fixed-file read on the slot the open reported;
- * C. openat and read submitted together with IOSQE_IO_LINK, the read naming a
- * slot that (with IORING_FEAT_LINKED_FILE) need not exist at submit time.
- */
+/* stage6b_fd_chain_probe.c -- kernel probe (plain C): can a read chain to a
+ * file that is not open yet, entirely in the kernel? Checks the pieces in
+ * order: A. a sparse direct-descriptor table and an explicit-slot openat; B. a
+ * fixed-file read on the slot the open reported; C. openat and read submitted
+ * together with IOSQE_IO_LINK. */
 
 #define _GNU_SOURCE
 #include <stdio.h>
@@ -110,13 +104,8 @@ static uint32_t *g_sq_tail, *g_sq_mask, *g_sq_array, *g_cq_head, *g_cq_tail,
     *g_cq_mask;
 static uint32_t g_local_cq_head;
 
-/*
- * The submission queue is a circular buffer whose tail only ever advances. An
- * earlier version of this probe rewound it on each submission, which made the
- * second submission invisible to the kernel and had the probe reporting a stale
- * completion as if it were fresh. Keeping an explicit local tail is the fix, and
- * it is worth stating because the symptom was thoroughly misleading.
- */
+/* The submission queue's tail only ever advances; rewinding it made the second
+ * submission invisible to the kernel (a stale completion reported as fresh). */
 static uint32_t g_next_sqe;
 
 static struct io_uring_sqe* next_sqe(void) {
@@ -139,8 +128,7 @@ static double now_s(void) {
   return (double)ts.tv_sec + (double)ts.tv_nsec / 1e9;
 }
 
-/* Time-bounded, so that a hang is distinguishable from "the kernel never
- * completed it". */
+/* Time-bounded so a hang is distinguishable from "the kernel never completed it". */
 static int reap(struct io_uring_cqe* out, unsigned want) {
   double deadline = now_s() + 3.0;
   while (now_s() < deadline) {
@@ -255,9 +243,7 @@ int main(void) {
   char buf[64];
   int a_ok = 0, b_ok = 0;
 
-  /* ---------------------------------------------------------------- */
-  /* A: two phases -- open into a slot, wait, then read that slot.     */
-  /* ---------------------------------------------------------------- */
+  /* A: open into a slot, wait, then read that slot. */
   memset(buf, 0, sizeof(buf));
   prep_openat(next_sqe(), path, 2, 0, 0xA1);
   commit(1);
@@ -265,12 +251,9 @@ int main(void) {
   printf("A: openat into slot 2         -> %s (res=%d)\n",
          g1 == 1 ? "completed" : "NO COMPLETION", g1 == 1 ? cqes[0].res : -999);
 
-  /*
-   * Two hypotheses to separate: either the open did not use a direct descriptor
-   * at all, or it used one but not the index we asked for. `res` on a direct
-   * open is supposed to be the index it landed in, so read whatever it reported
-   * as well as the index we requested.
-   */
+  /* Separate two hypotheses: the open did not use a direct descriptor at all, or
+ * it used one but not the requested index. `res` on a direct open is the index
+ * it landed in, so read both. */
   int reported = (g1 == 1) ? cqes[0].res : -999;
   printf("A: open reported index %d (we asked for 2)\n", reported);
 
@@ -298,10 +281,8 @@ int main(void) {
          a_ok ? "WORKS -- a direct descriptor was used"
               : "does NOT work -- no direct descriptor became readable");
 
-  /* ---------------------------------------------------------------- */
-  /* B: one chain -- openat (linked) and read submitted together, with */
-  /*    the read naming a slot that does not exist yet.                */
-  /* ---------------------------------------------------------------- */
+  /* B: one chain -- openat (linked) and read submitted together, the read naming
+ *    a slot that does not exist yet. */
   memset(buf, 0, sizeof(buf));
   prep_openat(next_sqe(), path, 4, IOSQE_IO_LINK, 0xB1);
   prep_read(next_sqe(), 4, buf, sizeof(buf) - 1, IOSQE_FIXED_FILE, 0xB2);
@@ -317,13 +298,8 @@ int main(void) {
   printf("B: %s\n\n",
          b_ok ? "WORKS -- genuine kernel promise pipelining" : "does NOT work");
 
-  /*
- * A probe, not a pass/fail test: it establishes what the kernel supports so the
- * runtime can be built around it. The observable finding is that an openat
- * targeting an explicit slot is not honoured here -- the kernel allocates its
- * own slot instead (it returned index 0 for a requested 2), so a chained read
- * has nothing to name in advance and kernel-native fd pipelining is unavailable.
- */
+  /* A probe, not a pass/fail: it establishes what the kernel supports so the
+ * runtime can be built around it (see docs/ARCHITECTURE.md §5). */
   printf("\nFINDING: explicit-slot openat honoured: %s\n",
          a_ok ? "yes" : "no");
   printf("FINDING: kernel-native fd chaining:     %s\n",
