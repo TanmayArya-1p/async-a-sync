@@ -1,0 +1,33 @@
+CompileFlags:
+  Add:
+    - -I/home/tanmay/Documents/CodingRepos/segfault/runtime/src
+    - -I/home/tanmay/Documents/CodingRepos/segfault/demos
+    - -I/home/tanmay/Documents/CodingRepos/segfault/runtime/os-include
+    - -DFASYNC_IMPLICIT
+    - -DFASYNC_COMPILER_INSERTS_CHECKS
+    - -D_GNU_SOURCE
+    - -Wall
+    - -Wextra
+    - -Wno-unused-parameter
+    - -Wno-unused-function
+    - -Wno-unused-variable
+  Remove:
+    - -static
+  Compiler: clang
+
+---
+If:
+  PathMatch: .*\.(c|h|hh)
+CompileFlags:
+  Add:
+    - -x
+    - c-header
+    - -std=gnu11
+---
+If:
+  PathMatch: .*\.c
+CompileFlags:
+  Add:
+    - -x
+    - c
+    - -std=gnu11

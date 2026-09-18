@@ -1,0 +1,607 @@
+[
+  {
+    "directory": "/home/tanmay/Documents/CodingRepos/segfault",
+    "file": "/home/tanmay/Documents/CodingRepos/segfault/demos/demo_provenance.c",
+    "arguments": [
+      "clang",
+      "-I/home/tanmay/Documents/CodingRepos/segfault/runtime/src",
+      "-I/home/tanmay/Documents/CodingRepos/segfault/demos",
+      "-I/home/tanmay/Documents/CodingRepos/segfault/runtime/os-include",
+      "-DFASYNC_IMPLICIT",
+      "-DFASYNC_COMPILER_INSERTS_CHECKS",
+      "-D_GNU_SOURCE",
+      "-std=gnu11",
+      "-O2",
+      "-c",
+      "/home/tanmay/Documents/CodingRepos/segfault/demos/demo_provenance.c",
+      "-o",
+      "/home/tanmay/Documents/CodingRepos/segfault/build/demo_provenance.c.o"
+    ]
+  },
+  {
+    "directory": "/home/tanmay/Documents/CodingRepos/segfault",
+    "file": "/home/tanmay/Documents/CodingRepos/segfault/demos/demo_async_io.c",
+    "arguments": [
+      "clang",
+      "-I/home/tanmay/Documents/CodingRepos/segfault/runtime/src",
+      "-I/home/tanmay/Documents/CodingRepos/segfault/demos",
+      "-I/home/tanmay/Documents/CodingRepos/segfault/runtime/os-include",
+      "-DFASYNC_IMPLICIT",
+      "-DFASYNC_COMPILER_INSERTS_CHECKS",
+      "-D_GNU_SOURCE",
+      "-std=gnu11",
+      "-O2",
+      "-c",
+      "/home/tanmay/Documents/CodingRepos/segfault/demos/demo_async_io.c",
+      "-o",
+      "/home/tanmay/Documents/CodingRepos/segfault/build/demo_async_io.c.o"
+    ]
+  },
+  {
+    "directory": "/home/tanmay/Documents/CodingRepos/segfault",
+    "file": "/home/tanmay/Documents/CodingRepos/segfault/demos/demo_wordcount.c",
+    "arguments": [
+      "clang",
+      "-I/home/tanmay/Documents/CodingRepos/segfault/runtime/src",
+      "-I/home/tanmay/Documents/CodingRepos/segfault/demos",
+      "-I/home/tanmay/Documents/CodingRepos/segfault/runtime/os-include",
+      "-DFASYNC_IMPLICIT",
+      "-DFASYNC_COMPILER_INSERTS_CHECKS",
+      "-D_GNU_SOURCE",
+      "-std=gnu11",
+      "-O2",
+      "-c",
+      "/home/tanmay/Documents/CodingRepos/segfault/demos/demo_wordcount.c",
+      "-o",
+      "/home/tanmay/Documents/CodingRepos/segfault/build/demo_wordcount.c.o"
+    ]
+  },
+  {
+    "directory": "/home/tanmay/Documents/CodingRepos/segfault",
+    "file": "/home/tanmay/Documents/CodingRepos/segfault/demos/demo_plain_io.c",
+    "arguments": [
+      "clang",
+      "-I/home/tanmay/Documents/CodingRepos/segfault/runtime/src",
+      "-I/home/tanmay/Documents/CodingRepos/segfault/demos",
+      "-I/home/tanmay/Documents/CodingRepos/segfault/runtime/os-include",
+      "-DFASYNC_IMPLICIT",
+      "-DFASYNC_COMPILER_INSERTS_CHECKS",
+      "-D_GNU_SOURCE",
+      "-std=gnu11",
+      "-O2",
+      "-c",
+      "/home/tanmay/Documents/CodingRepos/segfault/demos/demo_plain_io.c",
+      "-o",
+      "/home/tanmay/Documents/CodingRepos/segfault/build/demo_plain_io.c.o"
+    ]
+  },
+  {
+    "directory": "/home/tanmay/Documents/CodingRepos/segfault",
+    "file": "/home/tanmay/Documents/CodingRepos/segfault/demos/demo_provenance.hh",
+    "arguments": [
+      "clang",
+      "-I/home/tanmay/Documents/CodingRepos/segfault/runtime/src",
+      "-I/home/tanmay/Documents/CodingRepos/segfault/demos",
+      "-I/home/tanmay/Documents/CodingRepos/segfault/runtime/os-include",
+      "-DFASYNC_IMPLICIT",
+      "-DFASYNC_COMPILER_INSERTS_CHECKS",
+      "-D_GNU_SOURCE",
+      "-std=gnu11",
+      "-O2",
+      "-x",
+      "c-header"
+    ]
+  },
+  {
+    "directory": "/home/tanmay/Documents/CodingRepos/segfault",
+    "file": "/home/tanmay/Documents/CodingRepos/segfault/demos/demo_plain_io.hh",
+    "arguments": [
+      "clang",
+      "-I/home/tanmay/Documents/CodingRepos/segfault/runtime/src",
+      "-I/home/tanmay/Documents/CodingRepos/segfault/demos",
+      "-I/home/tanmay/Documents/CodingRepos/segfault/runtime/os-include",
+      "-DFASYNC_IMPLICIT",
+      "-DFASYNC_COMPILER_INSERTS_CHECKS",
+      "-D_GNU_SOURCE",
+      "-std=gnu11",
+      "-O2",
+      "-x",
+      "c-header"
+    ]
+  },
+  {
+    "directory": "/home/tanmay/Documents/CodingRepos/segfault",
+    "file": "/home/tanmay/Documents/CodingRepos/segfault/demos/demo_wordcount.hh",
+    "arguments": [
+      "clang",
+      "-I/home/tanmay/Documents/CodingRepos/segfault/runtime/src",
+      "-I/home/tanmay/Documents/CodingRepos/segfault/demos",
+      "-I/home/tanmay/Documents/CodingRepos/segfault/runtime/os-include",
+      "-DFASYNC_IMPLICIT",
+      "-DFASYNC_COMPILER_INSERTS_CHECKS",
+      "-D_GNU_SOURCE",
+      "-std=gnu11",
+      "-O2",
+      "-x",
+      "c-header"
+    ]
+  },
+  {
+    "directory": "/home/tanmay/Documents/CodingRepos/segfault",
+    "file": "/home/tanmay/Documents/CodingRepos/segfault/demos/utils.hh",
+    "arguments": [
+      "clang",
+      "-I/home/tanmay/Documents/CodingRepos/segfault/runtime/src",
+      "-I/home/tanmay/Documents/CodingRepos/segfault/demos",
+      "-I/home/tanmay/Documents/CodingRepos/segfault/runtime/os-include",
+      "-DFASYNC_IMPLICIT",
+      "-DFASYNC_COMPILER_INSERTS_CHECKS",
+      "-D_GNU_SOURCE",
+      "-std=gnu11",
+      "-O2",
+      "-x",
+      "c-header"
+    ]
+  },
+  {
+    "directory": "/home/tanmay/Documents/CodingRepos/segfault",
+    "file": "/home/tanmay/Documents/CodingRepos/segfault/demos/demo_async_io.hh",
+    "arguments": [
+      "clang",
+      "-I/home/tanmay/Documents/CodingRepos/segfault/runtime/src",
+      "-I/home/tanmay/Documents/CodingRepos/segfault/demos",
+      "-I/home/tanmay/Documents/CodingRepos/segfault/runtime/os-include",
+      "-DFASYNC_IMPLICIT",
+      "-DFASYNC_COMPILER_INSERTS_CHECKS",
+      "-D_GNU_SOURCE",
+      "-std=gnu11",
+      "-O2",
+      "-x",
+      "c-header"
+    ]
+  },
+  {
+    "directory": "/home/tanmay/Documents/CodingRepos/segfault",
+    "file": "/home/tanmay/Documents/CodingRepos/segfault/runtime/src/fasync_dep.c",
+    "arguments": [
+      "clang",
+      "-I/home/tanmay/Documents/CodingRepos/segfault/runtime/src",
+      "-I/home/tanmay/Documents/CodingRepos/segfault/demos",
+      "-I/home/tanmay/Documents/CodingRepos/segfault/runtime/os-include",
+      "-DFASYNC_IMPLICIT",
+      "-DFASYNC_COMPILER_INSERTS_CHECKS",
+      "-D_GNU_SOURCE",
+      "-std=gnu11",
+      "-O2",
+      "-c",
+      "/home/tanmay/Documents/CodingRepos/segfault/runtime/src/fasync_dep.c",
+      "-o",
+      "/home/tanmay/Documents/CodingRepos/segfault/build/fasync_dep.c.o"
+    ]
+  },
+  {
+    "directory": "/home/tanmay/Documents/CodingRepos/segfault",
+    "file": "/home/tanmay/Documents/CodingRepos/segfault/runtime/src/fasync_token.c",
+    "arguments": [
+      "clang",
+      "-I/home/tanmay/Documents/CodingRepos/segfault/runtime/src",
+      "-I/home/tanmay/Documents/CodingRepos/segfault/demos",
+      "-I/home/tanmay/Documents/CodingRepos/segfault/runtime/os-include",
+      "-DFASYNC_IMPLICIT",
+      "-DFASYNC_COMPILER_INSERTS_CHECKS",
+      "-D_GNU_SOURCE",
+      "-std=gnu11",
+      "-O2",
+      "-c",
+      "/home/tanmay/Documents/CodingRepos/segfault/runtime/src/fasync_token.c",
+      "-o",
+      "/home/tanmay/Documents/CodingRepos/segfault/build/fasync_token.c.o"
+    ]
+  },
+  {
+    "directory": "/home/tanmay/Documents/CodingRepos/segfault",
+    "file": "/home/tanmay/Documents/CodingRepos/segfault/runtime/src/fasync_native.c",
+    "arguments": [
+      "clang",
+      "-I/home/tanmay/Documents/CodingRepos/segfault/runtime/src",
+      "-I/home/tanmay/Documents/CodingRepos/segfault/demos",
+      "-I/home/tanmay/Documents/CodingRepos/segfault/runtime/os-include",
+      "-DFASYNC_IMPLICIT",
+      "-DFASYNC_COMPILER_INSERTS_CHECKS",
+      "-D_GNU_SOURCE",
+      "-std=gnu11",
+      "-O2",
+      "-c",
+      "/home/tanmay/Documents/CodingRepos/segfault/runtime/src/fasync_native.c",
+      "-o",
+      "/home/tanmay/Documents/CodingRepos/segfault/build/fasync_native.c.o"
+    ]
+  },
+  {
+    "directory": "/home/tanmay/Documents/CodingRepos/segfault",
+    "file": "/home/tanmay/Documents/CodingRepos/segfault/runtime/src/fasync_syscalls.c",
+    "arguments": [
+      "clang",
+      "-I/home/tanmay/Documents/CodingRepos/segfault/runtime/src",
+      "-I/home/tanmay/Documents/CodingRepos/segfault/demos",
+      "-I/home/tanmay/Documents/CodingRepos/segfault/runtime/os-include",
+      "-DFASYNC_IMPLICIT",
+      "-DFASYNC_COMPILER_INSERTS_CHECKS",
+      "-D_GNU_SOURCE",
+      "-std=gnu11",
+      "-O2",
+      "-c",
+      "/home/tanmay/Documents/CodingRepos/segfault/runtime/src/fasync_syscalls.c",
+      "-o",
+      "/home/tanmay/Documents/CodingRepos/segfault/build/fasync_syscalls.c.o"
+    ]
+  },
+  {
+    "directory": "/home/tanmay/Documents/CodingRepos/segfault",
+    "file": "/home/tanmay/Documents/CodingRepos/segfault/runtime/src/fasync.c",
+    "arguments": [
+      "clang",
+      "-I/home/tanmay/Documents/CodingRepos/segfault/runtime/src",
+      "-I/home/tanmay/Documents/CodingRepos/segfault/demos",
+      "-I/home/tanmay/Documents/CodingRepos/segfault/runtime/os-include",
+      "-DFASYNC_IMPLICIT",
+      "-DFASYNC_COMPILER_INSERTS_CHECKS",
+      "-D_GNU_SOURCE",
+      "-std=gnu11",
+      "-O2",
+      "-c",
+      "/home/tanmay/Documents/CodingRepos/segfault/runtime/src/fasync.c",
+      "-o",
+      "/home/tanmay/Documents/CodingRepos/segfault/build/fasync.c.o"
+    ]
+  },
+  {
+    "directory": "/home/tanmay/Documents/CodingRepos/segfault",
+    "file": "/home/tanmay/Documents/CodingRepos/segfault/runtime/src/fasync_shared.h",
+    "arguments": [
+      "clang",
+      "-I/home/tanmay/Documents/CodingRepos/segfault/runtime/src",
+      "-I/home/tanmay/Documents/CodingRepos/segfault/demos",
+      "-I/home/tanmay/Documents/CodingRepos/segfault/runtime/os-include",
+      "-DFASYNC_IMPLICIT",
+      "-DFASYNC_COMPILER_INSERTS_CHECKS",
+      "-D_GNU_SOURCE",
+      "-std=gnu11",
+      "-O2",
+      "-x",
+      "c-header"
+    ]
+  },
+  {
+    "directory": "/home/tanmay/Documents/CodingRepos/segfault",
+    "file": "/home/tanmay/Documents/CodingRepos/segfault/runtime/src/fasync_dep.h",
+    "arguments": [
+      "clang",
+      "-I/home/tanmay/Documents/CodingRepos/segfault/runtime/src",
+      "-I/home/tanmay/Documents/CodingRepos/segfault/demos",
+      "-I/home/tanmay/Documents/CodingRepos/segfault/runtime/os-include",
+      "-DFASYNC_IMPLICIT",
+      "-DFASYNC_COMPILER_INSERTS_CHECKS",
+      "-D_GNU_SOURCE",
+      "-std=gnu11",
+      "-O2",
+      "-x",
+      "c-header"
+    ]
+  },
+  {
+    "directory": "/home/tanmay/Documents/CodingRepos/segfault",
+    "file": "/home/tanmay/Documents/CodingRepos/segfault/runtime/src/fasync_internal.h",
+    "arguments": [
+      "clang",
+      "-I/home/tanmay/Documents/CodingRepos/segfault/runtime/src",
+      "-I/home/tanmay/Documents/CodingRepos/segfault/demos",
+      "-I/home/tanmay/Documents/CodingRepos/segfault/runtime/os-include",
+      "-DFASYNC_IMPLICIT",
+      "-DFASYNC_COMPILER_INSERTS_CHECKS",
+      "-D_GNU_SOURCE",
+      "-std=gnu11",
+      "-O2",
+      "-x",
+      "c-header"
+    ]
+  },
+  {
+    "directory": "/home/tanmay/Documents/CodingRepos/segfault",
+    "file": "/home/tanmay/Documents/CodingRepos/segfault/runtime/src/fasync_syscalls.h",
+    "arguments": [
+      "clang",
+      "-I/home/tanmay/Documents/CodingRepos/segfault/runtime/src",
+      "-I/home/tanmay/Documents/CodingRepos/segfault/demos",
+      "-I/home/tanmay/Documents/CodingRepos/segfault/runtime/os-include",
+      "-DFASYNC_IMPLICIT",
+      "-DFASYNC_COMPILER_INSERTS_CHECKS",
+      "-D_GNU_SOURCE",
+      "-std=gnu11",
+      "-O2",
+      "-x",
+      "c-header"
+    ]
+  },
+  {
+    "directory": "/home/tanmay/Documents/CodingRepos/segfault",
+    "file": "/home/tanmay/Documents/CodingRepos/segfault/runtime/src/fasync_io_uring.h",
+    "arguments": [
+      "clang",
+      "-I/home/tanmay/Documents/CodingRepos/segfault/runtime/src",
+      "-I/home/tanmay/Documents/CodingRepos/segfault/demos",
+      "-I/home/tanmay/Documents/CodingRepos/segfault/runtime/os-include",
+      "-DFASYNC_IMPLICIT",
+      "-DFASYNC_COMPILER_INSERTS_CHECKS",
+      "-D_GNU_SOURCE",
+      "-std=gnu11",
+      "-O2",
+      "-x",
+      "c-header"
+    ]
+  },
+  {
+    "directory": "/home/tanmay/Documents/CodingRepos/segfault",
+    "file": "/home/tanmay/Documents/CodingRepos/segfault/runtime/src/fasync.h",
+    "arguments": [
+      "clang",
+      "-I/home/tanmay/Documents/CodingRepos/segfault/runtime/src",
+      "-I/home/tanmay/Documents/CodingRepos/segfault/demos",
+      "-I/home/tanmay/Documents/CodingRepos/segfault/runtime/os-include",
+      "-DFASYNC_IMPLICIT",
+      "-DFASYNC_COMPILER_INSERTS_CHECKS",
+      "-D_GNU_SOURCE",
+      "-std=gnu11",
+      "-O2",
+      "-x",
+      "c-header"
+    ]
+  },
+  {
+    "directory": "/home/tanmay/Documents/CodingRepos/segfault",
+    "file": "/home/tanmay/Documents/CodingRepos/segfault/tests/stage6_fd_provenance.c",
+    "arguments": [
+      "clang",
+      "-I/home/tanmay/Documents/CodingRepos/segfault/runtime/src",
+      "-I/home/tanmay/Documents/CodingRepos/segfault/demos",
+      "-I/home/tanmay/Documents/CodingRepos/segfault/runtime/os-include",
+      "-DFASYNC_IMPLICIT",
+      "-DFASYNC_COMPILER_INSERTS_CHECKS",
+      "-D_GNU_SOURCE",
+      "-std=gnu11",
+      "-O2",
+      "-c",
+      "/home/tanmay/Documents/CodingRepos/segfault/tests/stage6_fd_provenance.c",
+      "-o",
+      "/home/tanmay/Documents/CodingRepos/segfault/build/stage6_fd_provenance.c.o"
+    ]
+  },
+  {
+    "directory": "/home/tanmay/Documents/CodingRepos/segfault",
+    "file": "/home/tanmay/Documents/CodingRepos/segfault/tests/stage_token_ordering.c",
+    "arguments": [
+      "clang",
+      "-I/home/tanmay/Documents/CodingRepos/segfault/runtime/src",
+      "-I/home/tanmay/Documents/CodingRepos/segfault/demos",
+      "-I/home/tanmay/Documents/CodingRepos/segfault/runtime/os-include",
+      "-DFASYNC_IMPLICIT",
+      "-DFASYNC_COMPILER_INSERTS_CHECKS",
+      "-D_GNU_SOURCE",
+      "-std=gnu11",
+      "-O2",
+      "-c",
+      "/home/tanmay/Documents/CodingRepos/segfault/tests/stage_token_ordering.c",
+      "-o",
+      "/home/tanmay/Documents/CodingRepos/segfault/build/stage_token_ordering.c.o"
+    ]
+  },
+  {
+    "directory": "/home/tanmay/Documents/CodingRepos/segfault",
+    "file": "/home/tanmay/Documents/CodingRepos/segfault/tests/stage5_trackers.c",
+    "arguments": [
+      "clang",
+      "-I/home/tanmay/Documents/CodingRepos/segfault/runtime/src",
+      "-I/home/tanmay/Documents/CodingRepos/segfault/demos",
+      "-I/home/tanmay/Documents/CodingRepos/segfault/runtime/os-include",
+      "-DFASYNC_IMPLICIT",
+      "-DFASYNC_COMPILER_INSERTS_CHECKS",
+      "-D_GNU_SOURCE",
+      "-std=gnu11",
+      "-O2",
+      "-c",
+      "/home/tanmay/Documents/CodingRepos/segfault/tests/stage5_trackers.c",
+      "-o",
+      "/home/tanmay/Documents/CodingRepos/segfault/build/stage5_trackers.c.o"
+    ]
+  },
+  {
+    "directory": "/home/tanmay/Documents/CodingRepos/segfault",
+    "file": "/home/tanmay/Documents/CodingRepos/segfault/tests/stage2_lazy_submit.c",
+    "arguments": [
+      "clang",
+      "-I/home/tanmay/Documents/CodingRepos/segfault/runtime/src",
+      "-I/home/tanmay/Documents/CodingRepos/segfault/demos",
+      "-I/home/tanmay/Documents/CodingRepos/segfault/runtime/os-include",
+      "-DFASYNC_IMPLICIT",
+      "-DFASYNC_COMPILER_INSERTS_CHECKS",
+      "-D_GNU_SOURCE",
+      "-std=gnu11",
+      "-O2",
+      "-c",
+      "/home/tanmay/Documents/CodingRepos/segfault/tests/stage2_lazy_submit.c",
+      "-o",
+      "/home/tanmay/Documents/CodingRepos/segfault/build/stage2_lazy_submit.c.o"
+    ]
+  },
+  {
+    "directory": "/home/tanmay/Documents/CodingRepos/segfault",
+    "file": "/home/tanmay/Documents/CodingRepos/segfault/tests/stage7_throughput.c",
+    "arguments": [
+      "clang",
+      "-I/home/tanmay/Documents/CodingRepos/segfault/runtime/src",
+      "-I/home/tanmay/Documents/CodingRepos/segfault/demos",
+      "-I/home/tanmay/Documents/CodingRepos/segfault/runtime/os-include",
+      "-DFASYNC_IMPLICIT",
+      "-DFASYNC_COMPILER_INSERTS_CHECKS",
+      "-D_GNU_SOURCE",
+      "-std=gnu11",
+      "-O2",
+      "-c",
+      "/home/tanmay/Documents/CodingRepos/segfault/tests/stage7_throughput.c",
+      "-o",
+      "/home/tanmay/Documents/CodingRepos/segfault/build/stage7_throughput.c.o"
+    ]
+  },
+  {
+    "directory": "/home/tanmay/Documents/CodingRepos/segfault",
+    "file": "/home/tanmay/Documents/CodingRepos/segfault/tests/stage8_latency.c",
+    "arguments": [
+      "clang",
+      "-I/home/tanmay/Documents/CodingRepos/segfault/runtime/src",
+      "-I/home/tanmay/Documents/CodingRepos/segfault/demos",
+      "-I/home/tanmay/Documents/CodingRepos/segfault/runtime/os-include",
+      "-DFASYNC_IMPLICIT",
+      "-DFASYNC_COMPILER_INSERTS_CHECKS",
+      "-D_GNU_SOURCE",
+      "-std=gnu11",
+      "-O2",
+      "-c",
+      "/home/tanmay/Documents/CodingRepos/segfault/tests/stage8_latency.c",
+      "-o",
+      "/home/tanmay/Documents/CodingRepos/segfault/build/stage8_latency.c.o"
+    ]
+  },
+  {
+    "directory": "/home/tanmay/Documents/CodingRepos/segfault",
+    "file": "/home/tanmay/Documents/CodingRepos/segfault/tests/stage2_lazy_resolution.c",
+    "arguments": [
+      "clang",
+      "-I/home/tanmay/Documents/CodingRepos/segfault/runtime/src",
+      "-I/home/tanmay/Documents/CodingRepos/segfault/demos",
+      "-I/home/tanmay/Documents/CodingRepos/segfault/runtime/os-include",
+      "-DFASYNC_IMPLICIT",
+      "-DFASYNC_COMPILER_INSERTS_CHECKS",
+      "-D_GNU_SOURCE",
+      "-std=gnu11",
+      "-O2",
+      "-c",
+      "/home/tanmay/Documents/CodingRepos/segfault/tests/stage2_lazy_resolution.c",
+      "-o",
+      "/home/tanmay/Documents/CodingRepos/segfault/build/stage2_lazy_resolution.c.o"
+    ]
+  },
+  {
+    "directory": "/home/tanmay/Documents/CodingRepos/segfault",
+    "file": "/home/tanmay/Documents/CodingRepos/segfault/tests/stage6b_fd_chain_probe.c",
+    "arguments": [
+      "clang",
+      "-I/home/tanmay/Documents/CodingRepos/segfault/runtime/src",
+      "-I/home/tanmay/Documents/CodingRepos/segfault/demos",
+      "-I/home/tanmay/Documents/CodingRepos/segfault/runtime/os-include",
+      "-DFASYNC_IMPLICIT",
+      "-DFASYNC_COMPILER_INSERTS_CHECKS",
+      "-D_GNU_SOURCE",
+      "-std=gnu11",
+      "-O2",
+      "-c",
+      "/home/tanmay/Documents/CodingRepos/segfault/tests/stage6b_fd_chain_probe.c",
+      "-o",
+      "/home/tanmay/Documents/CodingRepos/segfault/build/stage6b_fd_chain_probe.c.o"
+    ]
+  },
+  {
+    "directory": "/home/tanmay/Documents/CodingRepos/segfault",
+    "file": "/home/tanmay/Documents/CodingRepos/segfault/tests/stage9_device_parallelism.c",
+    "arguments": [
+      "clang",
+      "-I/home/tanmay/Documents/CodingRepos/segfault/runtime/src",
+      "-I/home/tanmay/Documents/CodingRepos/segfault/demos",
+      "-I/home/tanmay/Documents/CodingRepos/segfault/runtime/os-include",
+      "-DFASYNC_IMPLICIT",
+      "-DFASYNC_COMPILER_INSERTS_CHECKS",
+      "-D_GNU_SOURCE",
+      "-std=gnu11",
+      "-O2",
+      "-c",
+      "/home/tanmay/Documents/CodingRepos/segfault/tests/stage9_device_parallelism.c",
+      "-o",
+      "/home/tanmay/Documents/CodingRepos/segfault/build/stage9_device_parallelism.c.o"
+    ]
+  },
+  {
+    "directory": "/home/tanmay/Documents/CodingRepos/segfault",
+    "file": "/home/tanmay/Documents/CodingRepos/segfault/tests/stage3_dependency.c",
+    "arguments": [
+      "clang",
+      "-I/home/tanmay/Documents/CodingRepos/segfault/runtime/src",
+      "-I/home/tanmay/Documents/CodingRepos/segfault/demos",
+      "-I/home/tanmay/Documents/CodingRepos/segfault/runtime/os-include",
+      "-DFASYNC_IMPLICIT",
+      "-DFASYNC_COMPILER_INSERTS_CHECKS",
+      "-D_GNU_SOURCE",
+      "-std=gnu11",
+      "-O2",
+      "-c",
+      "/home/tanmay/Documents/CodingRepos/segfault/tests/stage3_dependency.c",
+      "-o",
+      "/home/tanmay/Documents/CodingRepos/segfault/build/stage3_dependency.c.o"
+    ]
+  },
+  {
+    "directory": "/home/tanmay/Documents/CodingRepos/segfault",
+    "file": "/home/tanmay/Documents/CodingRepos/segfault/tests/stage4_compiler_hook.c",
+    "arguments": [
+      "clang",
+      "-I/home/tanmay/Documents/CodingRepos/segfault/runtime/src",
+      "-I/home/tanmay/Documents/CodingRepos/segfault/demos",
+      "-I/home/tanmay/Documents/CodingRepos/segfault/runtime/os-include",
+      "-DFASYNC_IMPLICIT",
+      "-DFASYNC_COMPILER_INSERTS_CHECKS",
+      "-D_GNU_SOURCE",
+      "-std=gnu11",
+      "-O2",
+      "-c",
+      "/home/tanmay/Documents/CodingRepos/segfault/tests/stage4_compiler_hook.c",
+      "-o",
+      "/home/tanmay/Documents/CodingRepos/segfault/build/stage4_compiler_hook.c.o"
+    ]
+  },
+  {
+    "directory": "/home/tanmay/Documents/CodingRepos/segfault",
+    "file": "/home/tanmay/Documents/CodingRepos/segfault/tests/stage2b_mmap_probe.c",
+    "arguments": [
+      "clang",
+      "-I/home/tanmay/Documents/CodingRepos/segfault/runtime/src",
+      "-I/home/tanmay/Documents/CodingRepos/segfault/demos",
+      "-I/home/tanmay/Documents/CodingRepos/segfault/runtime/os-include",
+      "-DFASYNC_IMPLICIT",
+      "-DFASYNC_COMPILER_INSERTS_CHECKS",
+      "-D_GNU_SOURCE",
+      "-std=gnu11",
+      "-O2",
+      "-c",
+      "/home/tanmay/Documents/CodingRepos/segfault/tests/stage2b_mmap_probe.c",
+      "-o",
+      "/home/tanmay/Documents/CodingRepos/segfault/build/stage2b_mmap_probe.c.o"
+    ]
+  },
+  {
+    "directory": "/home/tanmay/Documents/CodingRepos/segfault",
+    "file": "/home/tanmay/Documents/CodingRepos/segfault/tests/stage2c_gc_pin_probe.c",
+    "arguments": [
+      "clang",
+      "-I/home/tanmay/Documents/CodingRepos/segfault/runtime/src",
+      "-I/home/tanmay/Documents/CodingRepos/segfault/demos",
+      "-I/home/tanmay/Documents/CodingRepos/segfault/runtime/os-include",
+      "-DFASYNC_IMPLICIT",
+      "-DFASYNC_COMPILER_INSERTS_CHECKS",
+      "-D_GNU_SOURCE",
+      "-std=gnu11",
+      "-O2",
+      "-c",
+      "/home/tanmay/Documents/CodingRepos/segfault/tests/stage2c_gc_pin_probe.c",
+      "-o",
+      "/home/tanmay/Documents/CodingRepos/segfault/build/stage2c_gc_pin_probe.c.o"
+    ]
+  }
+]

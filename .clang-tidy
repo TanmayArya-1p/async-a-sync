@@ -1,0 +1,4 @@
+---
+Checks: '-*,readability-*,bugprone-*,clang-analyzer-*,-clang-analyzer-security.insecureAPI.DeprecatedOrUnsafeBufferHandling'
+HeaderFilterRegex: '.*'
+WarningsAsErrors: ''

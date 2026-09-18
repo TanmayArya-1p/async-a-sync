@@ -15,11 +15,9 @@ if [ ! -x "$PATCHED_CC" ]; then
   exit 1
 fi
 
-echo "=================================================================="
-echo " Word Count over 512 Files (Cold Page Cache)"
+echo " word count over 512 Files (Cold Page Cache)"
 echo "=================================================================="
 
-# 1. Build runtime
 "$REPO/runtime/build.sh" >/dev/null 2>&1
 
 # 2. Build 3 versions from the exact same source file: demos/demo_wordcount.c
@@ -34,8 +32,6 @@ if [ -x "$FILCC" ]; then
   HAVE_FILC_SYNC=1
 fi
 
-echo "Running benchmarks..."
-echo "------------------------------------------------------------------"
 
 gcc_out=$("$OUT/wc_gcc" "$DIR")
 implicit_out=$("$OUT/wc_implicit" "$DIR")
@@ -43,15 +39,15 @@ implicit_out=$("$OUT/wc_implicit" "$DIR")
 gcc_ms=$(printf '%s\n' "$gcc_out" | awk '{print $2}')
 implicit_ms=$(printf '%s\n' "$implicit_out" | awk '{print $2}')
 
-printf "  %-16s %7.2f ms  (%s)\n" "1. GCC (sync)" "$gcc_ms" "Standard C baseline"
+printf "  %-16s %7.2f ms  (%s)\n" "GCC (sync)" "$gcc_ms" "Standard C baseline"
 
 if [ "$HAVE_FILC_SYNC" -eq 1 ]; then
   filc_sync_out=$("$OUT/wc_filc_sync" "$DIR")
   filc_sync_ms=$(printf '%s\n' "$filc_sync_out" | awk '{print $2}')
-  printf "  %-16s %7.2f ms  (%s)\n" "2. Fil-C (sync)" "$filc_sync_ms" "Safe C baseline (bounds-checked)"
+  printf "  %-16s %7.2f ms  (%s)\n" "Fil-C (sync)" "$filc_sync_ms" "Safe C baseline (bounds-checked)"
 fi
 
-printf "  %-16s %7.2f ms  (%s)\n" "3. Fil-C (implicit)" "$implicit_ms" "Transparent async io_uring"
+printf "  %-16s %7.2f ms  (%s)\n" "Fil-C (implicit)" "$implicit_ms" "Transparent async io_uring"
 
 echo "------------------------------------------------------------------"
 echo "RESULTS & SPEEDUP RATIOS:"
