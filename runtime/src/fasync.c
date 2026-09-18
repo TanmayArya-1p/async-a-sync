@@ -59,10 +59,9 @@
 /* Configuration                                                        */
 /* ------------------------------------------------------------------ */
 
-/* How many requests may be in flight at once. Also the size of the request
- * table, which is scanned linearly when resolving -- acceptable at this size
- * and deliberately simple. */
-#define FASYNC_MAX_INFLIGHT 256
+/* The request table's size, FASYNC_MAX_INFLIGHT, comes from fasync_shared.h:
+ * the native half walks the same table and the bitmap that lets that walk skip
+ * free slots is sized from it, so the two halves have to agree on it. */
 
 /* Ring depth: how many SQEs may be queued before the kernel must be told. */
 #define FASYNC_RING_ENTRIES 128
@@ -340,7 +339,17 @@ static int fasync_ensure_ring(void) {
 static unsigned int g_req_free_head;
 static unsigned int g_req_free_next[FASYNC_MAX_INFLIGHT];
 
+/* Mark a slot allocated or free in the bitmap the resolvers walk. */
+static void fasync_slot_mark(unsigned int index, int allocated) {
+  unsigned long bit = 1UL << (index % 64);
+  if (allocated)
+    g_shared.alloc_bits[index / 64] |= bit;
+  else
+    g_shared.alloc_bits[index / 64] &= ~bit;
+}
+
 static void fasync_req_table_init(void) {
+  memset(g_shared.alloc_bits, 0, sizeof(g_shared.alloc_bits));
   for (unsigned int i = 0; i < FASYNC_MAX_INFLIGHT; i++) {
     req_slots[i].state = FASYNC_REQ_FREE;
     /* Indices are stored one-based, so the link to slot i+1 is i+2. Getting
@@ -369,12 +378,14 @@ static struct fasync_req_shared* fasync_req_alloc(void) {
   r->state = FASYNC_REQ_PENDING;
   r->result = 0;
   r->linked = 0;
+  fasync_slot_mark(index, 1);
   return r;
 }
 
 static void fasync_req_release(struct fasync_req_shared* r) {
   unsigned int index = (unsigned int)(r->id & 0xFFFFFFFFUL);
   r->state = FASYNC_REQ_FREE;
+  fasync_slot_mark(index, 0);
   g_req_free_next[index] = g_req_free_head;
   g_req_free_head = index + 1;
 }
@@ -397,20 +408,38 @@ static struct fasync_req_shared* fasync_req_lookup(fasync_id id) {
  * hazard, and excluding it is the "self-healing" step -- once resolved, the
  * range stops being reported as pending, so subsequent accesses fall straight
  * through to the fast path.
+ *
+ * The walk skips whole words of free slots, which matters more than it looks.
+ * This runs on every instrumented access while anything is in flight, and the
+ * access that is inside *no* pending buffer is the common one -- a program
+ * scanning a buffer walks its bytes. Touching all 256 slots for each of those
+ * cost demos/demo_plain_io.c about 40 ms over a 512 KiB loop, against a
+ * blocking baseline of 9 ms: 256 slots x 32 bytes x 524288 accesses is roughly
+ * 4 GB of L1 traffic to answer "no" 524288 times.
  */
 static struct fasync_req_shared* fasync_find_covering(const void* ptr, size_t size) {
   const char* p = (const char*)ptr;
-  for (unsigned int i = 0; i < FASYNC_MAX_INFLIGHT; i++) {
-    struct fasync_req_shared* r = &req_slots[i];
-    if (r->state != FASYNC_REQ_PENDING || !r->buf)
+  for (unsigned int w = 0; w < FASYNC_ALLOC_WORDS; w++) {
+    unsigned long bits = g_shared.alloc_bits[w];
+    if (!bits)
       continue;
-    const char* start = (const char*)r->buf;
-    const char* end = start + r->len;
-    if (p < start)
-      continue;
-    if (p + size > end)
-      continue;
-    return r;
+    for (unsigned int b = 0; b < 64; b++) {
+      if (!(bits & (1UL << b)))
+        continue;
+      unsigned int i = w * 64 + b;
+      if (i >= FASYNC_MAX_INFLIGHT)
+        break;
+      struct fasync_req_shared* r = &req_slots[i];
+      if (r->state != FASYNC_REQ_PENDING || !r->buf)
+        continue;
+      const char* start = (const char*)r->buf;
+      const char* end = start + r->len;
+      if (p < start)
+        continue;
+      if (p + size > end)
+        continue;
+      return r;
+    }
   }
   return 0;
 }

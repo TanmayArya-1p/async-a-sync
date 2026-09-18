@@ -40,6 +40,18 @@
 #define FASYNC_REQ_FAILED 3
 
 /*
+ * Slots in the request table.
+ *
+ * Part of the shared contract rather than a private detail of fasync.c, because
+ * the native resolver walks this table and the allocation bitmap below is sized
+ * from it.
+ */
+#define FASYNC_MAX_INFLIGHT 256
+
+/* One bit per request slot, set while that slot is allocated. */
+#define FASYNC_ALLOC_WORDS (FASYNC_MAX_INFLIGHT / 64)
+
+/*
  * One in-flight request, as the native resolver sees it. Must match
  * `struct fasync_req` in fasync.c field for field.
  */
@@ -65,6 +77,18 @@ struct fasync_shared {
   struct fasync_req_shared* reqs;   /* request table                      */
   unsigned long n_reqs;             /* number of slots in that table      */
   int ring_fd;                      /* io_uring ring, for the blocking enter */
+
+  /*
+   * Which slots are worth looking at.
+   *
+   * The resolver's job on the slow path is "is this address inside a pending
+   * result buffer?", which is a walk of the request table. Walking all 256 slots
+   * on an access that is inside none of them is the expensive case, and it is
+   * the common one: a program scanning a buffer pays it once per byte. Most
+   * slots are free, so a word-at-a-time bitmap lets the walk skip 64 slots per
+   * load and only touch the handful that are actually allocated.
+   */
+  unsigned long alloc_bits[FASYNC_ALLOC_WORDS];
 
   /* Completion ring, so the resolver can poll without a syscall. */
   struct fasync_cqe* cqes;

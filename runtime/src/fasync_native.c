@@ -274,22 +274,39 @@ static void fasync_native_drain(struct fasync_shared* sh) {
  * A completed request is excluded, which is the self-healing step: once a request
  * resolves, its range stops being reported as pending, so later accesses fall
  * straight through to the fast path.
+ *
+ * This is the hot path's inner loop -- it runs on every instrumented access while
+ * anything is in flight, including the ones that are inside no pending buffer at
+ * all, which is most of them. So it walks the allocation bitmap a word at a time
+ * and only opens the slots that are actually in use. See the note on
+ * alloc_bits in fasync_shared.h, and demos/demo_plain_io.c for what the naive
+ * full-table walk cost.
  */
 static struct fasync_req_shared* fasync_native_find(struct fasync_shared* sh,
                                                     const void* ptr,
                                                     size_t size) {
   const char* p = (const char*)ptr;
-  for (unsigned long i = 0; i < sh->n_reqs; i++) {
-    struct fasync_req_shared* r = &sh->reqs[i];
-    if (r->state != FASYNC_REQ_PENDING || !r->buf)
+  for (unsigned long w = 0; w < FASYNC_ALLOC_WORDS; w++) {
+    unsigned long bits = sh->alloc_bits[w];
+    if (!bits)
       continue;
-    const char* start = (const char*)r->buf;
-    const char* end = start + r->len;
-    if (p < start)
-      continue;
-    if (p + size > end)
-      continue;
-    return r;
+    for (unsigned long b = 0; b < 64; b++) {
+      if (!(bits & (1UL << b)))
+        continue;
+      unsigned long i = w * 64 + b;
+      if (i >= sh->n_reqs)
+        break;
+      struct fasync_req_shared* r = &sh->reqs[i];
+      if (r->state != FASYNC_REQ_PENDING || !r->buf)
+        continue;
+      const char* start = (const char*)r->buf;
+      const char* end = start + r->len;
+      if (p < start)
+        continue;
+      if (p + size > end)
+        continue;
+      return r;
+    }
   }
   return 0;
 }
