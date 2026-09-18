@@ -1,19 +1,10 @@
 /*
  * stage6_fd_provenance.c -- provenance attached to descriptors.
  *
- * A buffer's provenance is a range: the request that fills it. A descriptor's
- * provenance is a slot: the request that will produce it. This test exercises the
- * second, which is the case idea.md section 3.1 calls out -- "the kernel needs
- * a's output as a literal SQE field for b" -- where the field is an fd.
- *
- * The whole point is what is NOT written here: the read is submitted against a
- * descriptor that does not exist at the time it is written, and nothing at the
- * call site says so. No handle, no await, no annotation. Passing the pending
- * descriptor to fasync_pread is what creates the dependency.
- *
- * Build:
- *   filcc -O2 -static -Iruntime/src -Lruntime/build/lib -o stage6 \
- *         tests/stage6_fd_provenance.c
+ * A buffer's provenance is a range; a descriptor's is a slot: the request that
+ * will produce it. The point is what is NOT written here: the read submits
+ * against a descriptor that does not exist yet, with no handle, no await, no
+ * annotation -- passing the pending descriptor to fasync_pread creates the edge.
  */
 
 #include <stdio.h>
@@ -64,13 +55,9 @@ int main(void) {
         pending < 0);
   check("and it is distinct from the failure value -1", pending != -1);
 
-  /* ------------------------------------------------------------------ */
-  /* 2. Using it is what creates the dependency -- with no submit() call. */
-  /*                                                                     */
-  /*    Resolving a pending descriptor is the ergonomic path, so it must  */
-  /*    publish the queued open itself. Requiring the caller to remember  */
-  /*    an fasync_submit() first would be a trap.                        */
-  /* ------------------------------------------------------------------ */
+  /* 2. Using it creates the dependency -- with no submit() call. Resolving is
+   *    the ergonomic path, so it must publish the queued open itself; asking the
+   *    caller to remember an fasync_submit() first would be a trap. */
   long resolved = fasync_fd_resolve(pending);
   printf("  fasync_fd_resolve returned %ld\n", resolved);
   check("it resolves to a real descriptor", resolved >= 0);
@@ -104,8 +91,8 @@ int main(void) {
   long real = fasync_fd_resolve(pending2);
   check("the pending descriptor still resolves to a usable fd", real >= 0);
 
-  /* A synchronous read on it must work, proving it is a real descriptor and not
-   * a direct-descriptor index. */
+  /* A synchronous read on it must work, proving it is a real descriptor, not a
+   * direct-descriptor index. */
   char probe[8];
   ssize_t got = pread((int)real, probe, sizeof(probe), 0);
   check("a synchronous pread on the resolved fd works", got == (ssize_t)sizeof(probe));

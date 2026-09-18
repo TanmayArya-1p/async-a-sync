@@ -1,23 +1,13 @@
 /*
- * stage6b_fd_chain_probe.c -- can a read be chained to a file that is not open
- * yet, entirely in the kernel? Plain C, system compiler. NOT a Fil-C program.
+ * stage6b_fd_chain_probe.c -- can a read chain to a file that is not open yet,
+ * entirely in the kernel? Plain C, system compiler, NOT a Fil-C program.
  *
- * This is idea.md section 3.1's "(b) the kernel needs a's output as a literal SQE
- * field" case applied to descriptors: if provenance is attached to an fd, then a
- * read on an fd that does not exist yet should be submittable now and execute
- * when the open completes, with no userspace wait.
- *
- * It needs three things, and the probe checks them in order:
- *
- *   A. a sparse direct-descriptor table (entries of -1), giving the runtime its
- *      own pool of slots, and an openat that targets a specific slot;
- *   B. a read on that slot in a separate submission, once the open has landed;
- *   C. the real prize: openat and read submitted *together*, ordered by
- *      IOSQE_IO_LINK, with the read naming a slot that does not exist yet. This
- *      depends on IORING_FEAT_LINKED_FILE to defer file assignment until the
- *      request is issued.
- *
- * Build: cc -O2 -o stage6b_fd_chain_probe tests/stage6b_fd_chain_probe.c
+ * The prize: provenance on an fd would let a read be submittable against a slot
+ * that does not exist yet and execute when the open completes. The probe checks
+ * the pieces in order: A. a sparse direct-descriptor table (entries of -1) and
+ * an explicit-slot openat; B. a fixed-file read on the slot the open reported;
+ * C. openat and read submitted together with IOSQE_IO_LINK, the read naming a
+ * slot that (with IORING_FEAT_LINKED_FILE) need not exist at submit time.
  */
 
 #define _GNU_SOURCE
@@ -328,15 +318,12 @@ int main(void) {
          b_ok ? "WORKS -- genuine kernel promise pipelining" : "does NOT work");
 
   /*
-   * This is a probe, not a pass/fail test: it establishes what the kernel
-   * supports so that the runtime can be built around it. The observable finding
-   * is that an openat targeting an *explicit* slot is not honoured here -- the
-   * kernel allocates its own slot instead (tests showed it returning index 0 for
-   * a requested 2), which is why a chained read has nothing to name in advance
-   * and kernel-native fd pipelining is unavailable. A separate probe
-   * (/tmp/fixedfile.c, reproduced in docs) confirmed the IORING_FILE_INDEX_ALLOC
-   * path does work, and that fixed-file reads on a registered slot work.
-   */
+ * A probe, not a pass/fail test: it establishes what the kernel supports so the
+ * runtime can be built around it. The observable finding is that an openat
+ * targeting an explicit slot is not honoured here -- the kernel allocates its
+ * own slot instead (it returned index 0 for a requested 2), so a chained read
+ * has nothing to name in advance and kernel-native fd pipelining is unavailable.
+ */
   printf("\nFINDING: explicit-slot openat honoured: %s\n",
          a_ok ? "yes" : "no");
   printf("FINDING: kernel-native fd chaining:     %s\n",

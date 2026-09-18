@@ -1,34 +1,14 @@
 /*
- * stage5_trackers.c -- async-a-sync.pdf's serialization token, measured against
- * declared effect sets.
+ * stage5_trackers.c -- async-a-sync.pdf's serialization token versus declared
+ * effect sets: one workload, three encodings, so the comparison is data.
  *
- * async-a-sync.pdf proposes handling hidden dependencies with a token passed to
- * every call that must be ordered against the others sharing it:
+ *   workload: op0,op1 root; op2,op4 use op0's result; op3,op5 use op1's.
+ *   precise effect sets   4 edges, four ops in flight
+ *   two tokens            6 edges, two in flight
+ *   one token             15 edges, fully serialized
  *
- *     void* PROVTRACKER = prov_alloc();
- *     balls(&a, b, PROVTRACKER);   // ...
- *     balls(&c, d, PROVTRACKER);   // must wait for the call above
- *
- * That is a real alternative to the declared effect sets this project implements
- * from idea.md section 3.2. This test encodes ONE workload three ways and
- * measures what each costs, so the comparison is data rather than opinion.
- *
- *   workload:  six operations forming two independent chains.
- *
- *              op0 ---> op2        op1 ---> op3
- *                \----> op4          \----> op5
- *
- *   precise effect sets   4 edges, four operations can run at once
- *   two tokens            6 edges, two at once
- *   one token for all    15 edges, one at a time
- *
- * The last two are correct in every case -- they just over-serialize, because a
- * token can only express "after everything else on this token" and cannot express
- * a diamond.
- *
- * Build:
- *   filcc -O2 -static -Iruntime/src -Lruntime/build/lib -o stage5 \
- *         tests/stage5_trackers.c
+ * A token can only express "after everything else on this token", so its price
+ * is over-serialization wherever the DAG is wider than a chain.
  */
 
 #include <stdio.h>
@@ -217,9 +197,8 @@ int main(void) {
   printf("\nwhere a token is genuinely better:\n");
 
   /*
-   * (a) An opaque dependency with no address. Two calls that collide on a file
-   * descriptor, a path, or a device have nothing the capability-range analysis
-   * can look at, so effect sets over buffers cannot express them at all.
+   * (a) An opaque dependency with no address: collisions on an fd, path, or
+   * device have nothing the capability-range analysis can look at.
    */
   fasync_tracker* fd_tok = fasync_tracker_new();
   struct fasync_access fd_acc[2];
@@ -231,11 +210,8 @@ int main(void) {
   check("a token expresses a dependency on a non-address resource", n_fd == 1);
 
   /*
-   * (b) Reading the token IN rather than INOUT. The PDF's token is always a
-   * serialization point, so several readers cannot share one; a resource
-   * declared IN can be shared by any number of readers at no cost. This is the
-   * one place where folding the token into the effect-set machinery buys
-   * something the original formulation cannot express.
+   * (b) A token read IN rather than INOUT: any number of readers share one at no
+   * cost -- something the PDF's always-serializing token cannot express.
    */
   fasync_tracker* reader_tok = fasync_tracker_new();
   struct fasync_access rd[3];

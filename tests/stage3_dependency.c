@@ -1,23 +1,12 @@
 /*
  * stage3_dependency.c -- declared effect sets and automatic disjointness.
  *
- * This tests idea.md section 3.2. Two things are checked:
- *
- *   1. THE ANALYSIS. Given declared in/out sets, the dependency DAG has exactly
- *      the edges the declarations imply -- writer-to-reader, reader-to-writer,
- *      writer-to-writer -- and no edges for reader-to-reader pairs. Crucially,
- *      declarations whose ranges are provably disjoint produce NO edge even
- *      though their access kinds conflict, and that saving is counted. That
- *      count is the annotation the programmer did not have to write, which is
- *      the whole point of having the analysis try before asking.
- *
- *   2. THE EXECUTION. A DAG over real file I/O is run, and peak concurrency is
- *      measured. Operations with no dependency between them are in flight at the
- *      same time; operations with a dependency are not.
- *
- * Build:
- *   filcc -O2 -static -Iruntime/src -Lruntime/build/lib -o stage3 \
- *         tests/stage3_dependency.c
+ * Two things are checked. (1) The analysis: given declared in/out sets the DAG
+ * has exactly the implied edges (write->read, read->write, write->write) and
+ * none for read->read; conflicting kinds over provably disjoint ranges produce
+ * NO edge, and that saving is counted. (2) The execution: a DAG over real file
+ * I/O, measuring peak concurrency -- independent ops in flight together,
+ * dependent ops not.
  */
 
 #include <stdio.h>
@@ -123,12 +112,9 @@ static int g_fd;
 static unsigned char* g_bufs[N_BLOCKS];
 
 /*
- * The submit callback. This is where an operation's work is enqueued.
- *
- * Note that a dependent operation's *prologue* runs here, before any of its
- * dependencies have been waited on: the submit callback is called the moment the
- * DAG says the operation is ready, and the whole point is that it does not block
- * on anything it does not actually touch (idea.md section 3.1).
+ * The submit callback: called the moment the DAG says the op is ready, before
+ * any dependency has been waited on -- a dependent op's prologue runs here, and
+ * the point is that it blocks on nothing it does not actually touch.
  */
 static unsigned long g_prologue_ran;
 
@@ -136,13 +122,12 @@ static const struct fasync_op* g_ops_base;
 
 static fasync_id submit_block(const struct fasync_op* op, void* ctx) {
   (void)ctx;
-  /* Recover which block this operation is responsible for from its position in
-   * the operation array. */
+  /* Recover which block this op is responsible for from its array position. */
   unsigned index = (unsigned)(op - g_ops_base);
   g_prologue_ran++;
 
-  /* A dependent operation would touch its input here; the declared access is
-   * what makes the DAG aware of that. */
+  /* A dependent op would touch its input here; the declared access keeps the
+   * DAG aware of that. */
   if (op->n_accesses)
     FASYNC_ACCESS(op->accesses[0].buf, op->accesses[0].len);
 
@@ -181,10 +166,8 @@ static void test_execution(void) {
     return;
   }
 
-  /*
-   * Four reads of four different blocks. Each declares only what it writes.
-   * No pair conflicts, so all four should be in flight simultaneously.
-   */
+  /* Four reads of four different blocks: no pair conflicts, so all four
+   * should be in flight at once. */
   struct fasync_access acc[N_BLOCKS];
   struct fasync_op ops[N_BLOCKS];
   for (int i = 0; i < N_BLOCKS; i++) {

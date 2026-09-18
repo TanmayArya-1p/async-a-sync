@@ -1,14 +1,6 @@
-# The Fil-C distribution (~390 MB extracted) and the Fil-C source checkout. Both
-# are fetched by the quickstart in README.md; neither belongs in version control.
 vendor/
-
-# Build output.
 build/
 runtime/build/
-
-# Kernel headers assembled from the system by runtime/build.sh: absolute symlinks
-# into /usr/include, which would not survive a clone on another machine.
 runtime/os-include/
-
-# Tool state, not project source.
 .commandcode/
+slides

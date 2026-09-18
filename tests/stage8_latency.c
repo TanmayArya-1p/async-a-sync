@@ -1,41 +1,27 @@
 /*
- * stage8_latency.c -- the regime where overlapped execution actually pays.
+ * stage8_latency.c -- the regime where overlapped execution actually pays: many
+ * independent reads that each cost a device round trip, so a serial program pays
+ * N round trips and an overlapped one pays about one.
  *
- * Every other measurement in this suite reads cache-resident data, and there the
- * two paths are level and honestly reported as such. This one measures the shape
- * the design exists for: many independent reads that each cost a device round
- * trip, so that a serial program pays N round trips and an overlapped one pays
- * about one.
+ * Every other measurement in this suite reads cache-resident data. The page
+ * cache is dropped (posix_fadvise(DONTNEED); no root) before each timed pass.
+ * It only takes here -- and not over one big file -- because separate files
+ * cannot be prefetched by readahead, and because the payload must sit on a real
+ * backing store (tmpfs has no device to wait for). If the drop changes nothing,
+ * the program says the timings mean nothing rather than quoting an unsupported
+ * ratio; O_DIRECT skips that check entirely.
  *
- * The page cache is dropped with posix_fadvise(DONTNEED) before each timed pass,
- * which needs no root. Two things make the drop effective here and not with one
- * big file:
+ * THREE ARMS:
+ *   blocking  a pread per file, each waiting for the device
+ *   explicit  submit everything, wait handle by handle -- what a hand-written
+ *             io_uring program does, on the same runtime and substrate, isolating
+ *             the question the project has to answer: does being implicit cost?
+ *   implicit  submit everything, then hand the buffers to ordinary code; the
+ *             compiler's hook resolves them at the first byte touched
  *
- *   - separate files cannot be prefetched for us by readahead (a sequential loop
- *     over one file refills the cache ahead of the reads, which is why a first
- *     attempt at this measured 2.3x and not 11x), and
- *   - the payload has to be on a real backing store. On tmpfs there is no device
- *     to wait for at all.
- *
- * If the drop has no effect on this filesystem, the program says so and reports
- * the timings as not meaningful rather than quoting a ratio it cannot support.
- *
- * THREE ARMS, two of which are the comparison that matters:
- *
- *   blocking  a pread per file, each one waiting for the device
- *   explicit  submit everything, then wait handle by handle with fasync_result()
- *             -- this is what a hand-written io_uring program does, on the same
- *             runtime and the same substrate, so it isolates the question the
- *             project has to answer: does being implicit cost anything?
- *   implicit  submit everything, then hand the buffers to an ordinary function
- *             that has never heard of any of this; the compiler's hook resolves
- *             them at the first byte touched
- *
- * Asking that question of an independent baseline (raw liburing in plain C) would
- * not isolate it: that arm would also carry no Fil-C per-access checking, and the
- * difference would be the substrate rather than the ergonomics. See
- * docs/ARCHITECTURE.md section 8, "The regime where overlap pays", and
- * tests/stage9_device_parallelism.c for the ceiling all of this runs into.
+ * An independent raw-liburing baseline would not isolate the question: it would
+ * also lack Fil-C's per-access checking, and the difference would be substrate,
+ * not ergonomics. See stage9 for the ceiling this runs into.
  *
  * Build (needs the patched compiler -- run.sh skips this when it is not built):
  *   <patched>/filcc -O2 -static -DFASYNC_COMPILER_INSERTS_CHECKS -Iruntime/src \
@@ -263,10 +249,10 @@ int main(int argc, char** argv) {
       for (int i = 0; i < wave; i++)
         sum_c += checksum(buf[enqueued + i], FILE_BYTES);
 
-      /* Bookkeeping only, after the fact: releases the slots for the next wave.
-       * An earlier draft checked the buffers here, which is useless -- the check
-       * is itself an instrumented access, so it resolves whatever it looks at and
-       * always reports success. The checksums above are the real check. */
+      /* Bookkeeping only (releases slots for the next wave). An earlier draft
+       * checked the buffers here -- useless, since the check is itself an
+       * instrumented access that resolves whatever it looks at. The checksums
+       * above are the real check. */
       for (int i = 0; i < wave; i++)
         fasync_result(ids[i]);
       enqueued += wave;

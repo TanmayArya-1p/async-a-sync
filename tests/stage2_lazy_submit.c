@@ -1,16 +1,16 @@
 /*
- * stage2_lazy_resolution.c -- the core mechanism of idea.md section 1, tested.
+ * stage2_lazy_submit.c -- submission is implicit: never call fasync_submit().
  *
- *   1. SUBMISSION NEVER BLOCKS: after queueing and publishing N reads, the
- *      blocking-entry counter is still zero. Checked structurally, not by timing,
- *      so a fast machine cannot satisfy it.
- *   2. CORRECTNESS: every buffer reads back exactly the bytes written there.
- *   3. RESOLUTION IS LAZY AND CHEAP: the checked path spins against the
- *      completion ring and parks only if needed; idle resolves are one load.
+ * This is stage2 with the publish step removed: the workload is plain enqueue
+ * calls, exactly as a program would write them, and no submit appears after.
+ * Two things are asserted: (1) after enqueueing, nothing has reached the kernel
+ * -- writing SQEs is a memory operation; (2) the first genuine access to a
+ * pending buffer publishes the whole queue in one non-blocking enter, because a
+ * resolver cannot spin for a completion that was never submitted.
  *
- * The FASYNC_ACCESS() calls are exactly where the FilPizlonator patch will insert
- * filc_resolve_pending() automatically; they are written by hand here because the
- * patched compiler did not exist yet. See docs/ARCHITECTURE.md.
+ * The FASYNC_ACCESS() calls stand in for the points where the patched
+ * FilPizlonator will insert filc_resolve_pending() automatically; see
+ * docs/ARCHITECTURE.md.
  */
 
 #include <stdio.h>
@@ -25,8 +25,6 @@
 #define BLOCK_SIZE 262144 /* 256 KiB per read */
 #define FILE_SIZE (N_READS * BLOCK_SIZE)
 
-/* Fill the scratch file so each block is distinguishable: every byte of block
- * i is the value (i + 1) & 0xFF. */
 static int seed_file(const char* path) {
   unsigned char* block = malloc(BLOCK_SIZE);
   if (!block)
@@ -53,7 +51,6 @@ static int seed_file(const char* path) {
   return 0;
 }
 
-/* Verify one block: every byte must equal (block_index + 1) & 0xFF. */
 static int block_is_correct(const unsigned char* buf, size_t len, int index) {
   unsigned char expected = (unsigned char)((index + 1) & 0xFF);
   for (size_t i = 0; i < len; i++) {
@@ -67,7 +64,7 @@ static int block_is_correct(const unsigned char* buf, size_t len, int index) {
 }
 
 int main(void) {
-  const char* path = "/tmp/async-a-sync_stage2_payload.bin";
+  const char* path = "/tmp/async-a-sync_stage2lazy_payload.bin";
   if (seed_file(path) != 0) {
     fprintf(stderr, "cannot seed %s\n", path);
     return 1;
@@ -79,14 +76,13 @@ int main(void) {
     return 1;
   }
 
-  /* Heap buffers, one per read. They become the pending ranges. */
   unsigned char* bufs[N_READS];
   fasync_id ids[N_READS];
 
   fasync_reset_stats();
 
   /* ------------------------------------------------------------------ */
-  /* Claim 1: submission never blocks.                                   */
+  /* Phase 1: enqueue only. No submit, no access.                        */
   /* ------------------------------------------------------------------ */
   for (int i = 0; i < N_READS; i++) {
     bufs[i] = malloc(BLOCK_SIZE);
@@ -103,40 +99,29 @@ int main(void) {
     }
   }
 
-  if (fasync_submit() != N_READS) {
-    fprintf(stderr, "fasync_submit did not hand over all %d requests\n", N_READS);
-    return 1;
-  }
-
   struct fasync_stats s;
   fasync_get_stats(&s);
 
-  printf("after submitting %d reads (%d KiB each):\n", N_READS,
+  printf("enqueued %d reads (%d KiB each), submitted nothing:\n", N_READS,
          BLOCK_SIZE / 1024);
   printf("  sqes_queued          = %lu\n", s.sqes_queued);
-  printf("  kernel_submit_entries= %lu  (non-blocking publishes)\n",
+  printf("  kernel_submit_entries= %lu  (must be 0: enqueue is a memory op)\n",
          s.kernel_submit_entries);
-  printf("  kernel_wait_entries  = %lu  (blocking entries)\n",
-         s.kernel_wait_entries);
 
   int ok = 1;
-  if (s.kernel_wait_entries != 0) {
-    printf("  FAIL: submission path entered the kernel to wait\n");
+  if (s.kernel_submit_entries != 0) {
+    printf("  FAIL: something reached the kernel during plain enqueue\n");
     ok = 0;
   } else {
-    printf("  OK: no blocking kernel entry during submission\n");
+    printf("  OK: submission is fully implicit so far\n");
   }
 
-  /*
-   * Claims 2 and 3: resolution on genuine access. Nothing has touched bufs[]
-   * yet; the FASYNC_ACCESS calls below are where the patch inserts
-   * filc_resolve_pending(). */
+  /* ------------------------------------------------------------------ */
+  /* Phase 2: first genuine access publishes the whole batch lazily.     */
+  /* ------------------------------------------------------------------ */
   for (int i = 0; i < N_READS; i++) {
-    /* First genuine access to the pending range: this is the resolution
-     * point. */
     FASYNC_ACCESS(bufs[i], 1);
 
-    /* The byte count is itself an async value; reading it resolves too. */
     long n = fasync_result(ids[i]);
     if (n != BLOCK_SIZE) {
       fprintf(stderr, "read %d returned %ld, expected %d\n", i, n, BLOCK_SIZE);
@@ -144,8 +129,6 @@ int main(void) {
       continue;
     }
 
-    /* Second access to the same range: the request is retired, so this must
-     * take the fast path (no table scan, no completion poll). */
     FASYNC_ACCESS(bufs[i], BLOCK_SIZE);
 
     if (!block_is_correct(bufs[i], BLOCK_SIZE, i)) {
@@ -154,16 +137,19 @@ int main(void) {
   }
 
   fasync_get_stats(&s);
-  printf("\nafter resolving every range:\n");
-  printf("  fast_path_hits       = %lu  (resolve calls served by one load)\n",
-         s.fast_path_hits);
-  printf("  resolve_calls        = %lu  (resolve calls that had to look)\n",
-         s.resolve_calls);
-  printf("  userspace_cq_polls   = %lu  (completion-ring reads, no syscall)\n",
-         s.userspace_cq_polls);
-  printf("  spin_rounds          = %lu\n", s.spin_rounds);
-  printf("  parks                = %lu  (times we actually slept)\n", s.parks);
+  printf("\nafter resolving every range (no submit was ever called):\n");
+  printf("  kernel_submit_entries= %lu  (must be 1: one publish, one enter)\n",
+         s.kernel_submit_entries);
+  printf("  kernel_wait_entries  = %lu  (blocking entries)\n",
+         s.kernel_wait_entries);
   printf("  completions_reaped   = %lu\n", s.completions_reaped);
+
+  if (s.kernel_submit_entries != 1) {
+    printf("  FAIL: expected the whole batch to publish in a single enter\n");
+    ok = 0;
+  } else {
+    printf("  OK: first access published every queued SQE at once\n");
+  }
 
   if (s.completions_reaped != N_READS) {
     printf("  FAIL: reaped %lu completions, expected %d\n",
@@ -178,6 +164,6 @@ int main(void) {
   close(fd);
   unlink(path);
 
-  printf("\nSTAGE2 %s\n", ok ? "PASS" : "FAIL");
+  printf("\nSTAGE2-LAZY %s\n", ok ? "PASS" : "FAIL");
   return ok ? 0 : 1;
 }

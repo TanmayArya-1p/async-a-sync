@@ -5,7 +5,7 @@ synchronous-looking C executes as an overlapped `io_uring` workload, with no asy
 syntax anywhere in the program. Instead of await-style annotations, the resolution
 check is injected into `FilPizlonator`, the capability-instrumentation pass of
 [Fil-C](https://github.com/pizlonator/fil-c), where it is emitted alongside the
-bounds check the compiler already places on every access — no markers, no `unsafe`,
+bounds check the compiler already places on every access - no markers, no `unsafe`,
 no escape hatch. The runtime adds zero-context-switch submission, provenance that
 survives pointer arithmetic, lazy spin-then-park resolution, and an effect-set
 dependency DAG that proves non-conflict from capability extents alone. The
@@ -21,8 +21,8 @@ Implementation of the design in `idea.md` (§6 phase 1, plus the dependency work
 
 You write ordinary blocking-looking code. Underneath, the I/O is submitted to an
 `io_uring` ring without ever waiting, the value the syscall produced carries a tag
-naming its pending request, and the first real access through that value — or
-anything derived from it — resolves it transparently.
+naming its pending request, and the first real access through that value - or
+anything derived from it - resolves it transparently.
 
 ```c
 fasync_id id = fasync_pread(fd, buf, len, offset);  /* returns immediately */
@@ -47,15 +47,15 @@ kernel entries to submit: 1      <- one batch for 64 requests
 resolving all 64: 6.39 ms  (281832 userspace completion-ring polls, 0 parks)
 ```
 
-`tests/stage7_throughput.c` pushes on the other end of the range — 20 000 reads
-of 64 bytes, where the syscall is nearly all of the cost — and reaches the same
+`tests/stage7_throughput.c` pushes on the other end of the range - 20 000 reads
+of 64 bytes, where the syscall is nearly all of the cost - and reaches the same
 conclusion: 30x fewer kernel entries, wall clock unchanged.
 
 `demos/demo_plain_io.c` is the ergonomic half, and the clearest evidence for the
 claim in the abstract: a `count_words()` that has never heard of `io_uring`, reading
 four buffers that are still in flight, with no marker anywhere in the program.
 
-`demos/demo_wordcount.c` is both halves in one program — the same word count
+`demos/demo_wordcount.c` is both halves in one program - the same word count
 written twice, once blocking and once implicit, over 512 files with the page cache
 dropped. 27.4 ms against 13.3 ms, one kernel submit for 512 files and no wait
 written anywhere. That is 2.1x, and it is bounded by how much parallelism the disk
@@ -95,7 +95,7 @@ Point `FILC_ROOT` / `FILC_SRC` elsewhere if your checkout lives somewhere else.
 | Path | What it is |
 |---|---|
 | `runtime/` | the Fil-C runtime extension: rings, resolution, provenance, dependencies |
-| `compiler/` | the FilPizlonator patch that automates the resolution hook |
+| `compiler/` | the modified FilPizlonator pass that automates the resolution hook |
 | `tests/` | the test suite (`./tests/run.sh`) |
 | `demos/` | the showcase |
 | `docs/ARCHITECTURE.md` | design, findings, measurements, limitations |
@@ -104,9 +104,11 @@ Point `FILC_ROOT` / `FILC_SRC` elsewhere if your checkout lives somewhere else.
 ## The compiler half
 
 The hook that resolves a pending value needs to be inserted by the compiler, and
-that compiler now exists: `compiler/patches/` holds the FilPizlonator change, and
-`compiler/build.sh` builds clang from it. A program compiled that way resolves
-async results with no explicit call at the access site anywhere in its source —
+that compiler now exists: `compiler/upstream-overrides/FilPizlonator.cpp` is this
+repo's modified copy of the pass (installed over the vendor source by
+`compiler/build.sh`), which inserts the resolution call automatically. A program
+compiled that way resolves async results with no explicit call at the access site
+anywhere in its source -
 `FASYNC_ACCESS()` compiles to nothing under `-DFASYNC_COMPILER_INSERTS_CHECKS`,
 and `tests/stage4_compiler_hook.c` checks that the resolution really does happen.
 
@@ -114,14 +116,14 @@ Without the patched compiler, programs mark the same points with the
 `FASYNC_ACCESS()` macro, which expands to exactly the call the compiler emits. The
 runtime is identical either way.
 
-Getting there turned up a genuine constraint — the emitted call has to land on
+Getting there turned up a genuine constraint - the emitted call has to land on
 *native* runtime code, because a `pizlonated_*` entry point is a descriptor stub
-rather than the function — which is why the resolution policy lives in the trusted
+rather than the function - which is why the resolution policy lives in the trusted
 half. `docs/ARCHITECTURE.md` §2.5 explains it.
 
 ## Reading order
 
 `docs/ARCHITECTURE.md` is the substantive document. Its §2 covers the four things
-the survey of Fil-C established — including one that closes a risk `idea.md` §5
-lists as open, and two that forced genuine design changes — and §7 lists what does
+the survey of Fil-C established - including one that closes a risk `idea.md` §5
+lists as open, and two that forced genuine design changes - and §7 lists what does
 not work.

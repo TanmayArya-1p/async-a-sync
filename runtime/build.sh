@@ -8,7 +8,8 @@
 # private copy of the distributed libpizlo.a:
 #
 #   pas-pizlo-release-filc_native_forwarders.o
-#       REGENERATED from libpas's own generator after adding the io_uring
+#       REGENERATED from libpas's own generator, run with this repo's generator
+#       override (runtime/upstream-overrides/) which adds the io_uring
 #       signatures. This replaces the distributed member of the same name. It is
 #       what makes zsys_io_uring_* callable from memory-safe code.
 #       Built by: host clang, against libpas's internal headers.
@@ -18,8 +19,13 @@
 #       Built by: host clang. This is the only place raw syscalls happen.
 #
 #   fil-pizlo-async.o          <-- fasync.c
-#       The memory-safe runtime: rings, pending-request table, resolution,
+#       The memory-safe core: rings, pending-request table, resolution,
 #       provenance. Built by: filcc, so it is fully capability-checked.
+#
+#   fil-pizlo-syscalls.o       <-- fasync_syscalls.c
+#   fil-pizlo-token.o          <-- fasync_token.c
+#   fil-pizlo-dep.o            <-- fasync_dep.c
+#       The rest of the memory-safe runtime, split per docs/RUNTIME.md.
 #
 # Note what is NOT rebuilt: the rest of libpizlo (libpas, filc_runtime, the GC).
 # The extension is additive, so the distributed objects are reused as-is. The
@@ -54,7 +60,7 @@ if [ ! -d "$FILC_SRC/libpas" ]; then
 fi
 
 GENERATOR=$FILC_SRC/libpas/src/libpas/generate_pizlonated_forwarders.rb
-PATCH=$HERE/patches/0001-libpas-io_uring-forwarders.patch
+OVERRIDE=$HERE/upstream-overrides/generate_pizlonated_forwarders.rb
 
 BUILD=$HERE/build
 OBJ=$BUILD/obj
@@ -86,14 +92,15 @@ if [ ! -e "$HERE/os-include/linux" ]; then
 fi
 
 # ---------------------------------------------------------------------
-# 1. Make sure the io_uring signatures are present in the generator.
+# 1. Install our override of the forwarders generator.
+#
+# The upstream generator has no io_uring signatures. This repo tracks the
+# generator with them added (runtime/upstream-overrides/); install it over the
+# fetched source checkout so the regeneration below produces the
+# zsys_io_uring_* forwarders.
 # ---------------------------------------------------------------------
-if grep -q "zsys_io_uring_setup" "$GENERATOR"; then
-  echo "== generator already carries the io_uring signatures"
-else
-  echo "== applying $PATCH"
-  ( cd "$FILC_SRC" && git apply "$PATCH" )
-fi
+echo "== installing the forwarders-generator override"
+cp "$OVERRIDE" "$GENERATOR"
 
 # ---------------------------------------------------------------------
 # Include setup for compiling libpas-side code.
@@ -139,6 +146,10 @@ echo "== compiling async runtime (filcc, memory-safe, capability-checked)"
 "$FILCC" -O3 -g -W -Werror -I"$HERE/src" \
   -c -o "$OBJ/fil-pizlo-async.o" "$HERE/src/fasync.c"
 "$FILCC" -O3 -g -W -Werror -I"$HERE/src" \
+  -c -o "$OBJ/fil-pizlo-syscalls.o" "$HERE/src/fasync_syscalls.c"
+"$FILCC" -O3 -g -W -Werror -I"$HERE/src" \
+  -c -o "$OBJ/fil-pizlo-token.o" "$HERE/src/fasync_token.c"
+"$FILCC" -O3 -g -W -Werror -I"$HERE/src" \
   -c -o "$OBJ/fil-pizlo-dep.o" "$HERE/src/fasync_dep.c"
 
 # ---------------------------------------------------------------------
@@ -153,6 +164,8 @@ cp "$FILC_ROOT/pizfix/lib/libpizlo.a" "$LIB/libpizlo.a"
     "$OBJ/pas-pizlo-release-filc_native_forwarders.o" \
     "$OBJ/fil-pizlo-async-native.o" \
     "$OBJ/fil-pizlo-async.o" \
+    "$OBJ/fil-pizlo-syscalls.o" \
+    "$OBJ/fil-pizlo-token.o" \
     "$OBJ/fil-pizlo-dep.o" >/dev/null && ranlib libpizlo.a )
 
 echo "== done"

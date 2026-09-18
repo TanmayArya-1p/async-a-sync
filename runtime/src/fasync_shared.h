@@ -2,67 +2,41 @@
  * fasync_shared.h -- the state the compiler-emitted hook needs, in a form the
  * trusted runtime can reach.
  *
- * WHY THIS EXISTS
- * ---------------
- * The patched FilPizlonator emits a direct call to `filc_resolve_pending` before
- * each access through an escaping pointer. That call has to land on *native*
- * runtime code, for a reason that took a while to pin down:
+ * The patched FilPizlonator emits a direct call to `filc_resolve_pending`
+ * before each access through an escaping pointer. That call must land on
+ * *native* runtime code: a function defined in filcc-compiled code has a
+ * `pizlonated_*` entry point that is an 8-byte descriptor stub, so calling it
+ * directly returns a function object instead of running the body. Fil-C's own
+ * compiler-emitted calls (filc_check_function_call_fail and friends) are all
+ * native for the same reason. So the resolution policy is native, and the state
+ * it consults is described here in a layout both halves agree on.
  *
- *   - Fil-C references names beginning with `filc_` unprefixed and calls them
- *     directly, which is exactly what the pass needs.
- *   - But a function *defined* in filcc-compiled code has a `pizlonated_*` entry
- *     point that is an 8-byte descriptor stub: calling it directly returns a
- *     function object rather than running the body. Reaching the body requires
- *     the closure/calling-convention protocol that the frontend emits.
- *   - So compiler-emitted hooks must be native. That is why Fil-C's own
- *     compiler-emitted runtime calls -- filc_check_function_call_fail,
- *     filc_cc_rets_check_failure, and the rest -- are all implemented natively.
- *
- * Since the hook is native, the resolution logic it needs must be native too, and
- * the state that logic consults has to be described in a layout both halves
- * agree on. That is this header.
- *
- * WHAT CROSSES
- * ------------
- * Only addresses and scalars. The memory itself stays owned by the memory-safe
- * half (the ring is GC memory, the request table is a static array there), and the
- * native half holds raw pointers into it. This is sound because that memory does
- * not move: tests/stage2c_gc_pin_probe.c checks exactly that.
+ * Only addresses and scalars cross this boundary. The memory itself stays owned
+ * by the memory-safe half (the ring is GC memory, the request table a static
+ * array there), and the native half holds raw pointers into it. That is sound
+ * because that memory does not move: stage2c_gc_pin_probe.c checks it.
  */
-
-#ifndef FASYNC_SHARED_H
-#define FASYNC_SHARED_H
+#pragma once
 
 #include <stddef.h>
 
-/* Request lifecycle. Must match the enum in fasync.c. */
+/* Request lifecycle. */
 #define FASYNC_REQ_FREE 0
 #define FASYNC_REQ_PENDING 1
 #define FASYNC_REQ_DONE 2
 #define FASYNC_REQ_FAILED 3
 
-/*
- * Slots in the request table.
- *
- * Part of the shared contract rather than a private detail of fasync.c, because
- * the native resolver walks this table and the allocation bitmap below is sized
- * from it.
- *
- * Sized so a whole workload fits in flight at once: the point of the design is
- * that a program with a few hundred independent operations submits all of them
- * before consuming any, and a table smaller than the workload forces it into
- * waves, which is exactly the serialisation it is trying to remove. It costs a
- * 40 KB table and 16 bitmap words.
- */
+/* Request table size (the native resolver walks it, and the bitmap below is
+ * sized from it). Sized so a whole workload fits in flight at once: a table
+ * smaller than the workload would force it into waves, which is exactly the
+ * serialisation the design removes. Costs a 40 KB table and 16 bitmap words. */
 #define FASYNC_MAX_INFLIGHT 1024
 
 /* One bit per request slot, set while that slot is allocated. */
 #define FASYNC_ALLOC_WORDS (FASYNC_MAX_INFLIGHT / 64)
 
-/*
- * One in-flight request, as the native resolver sees it. Must match
- * `struct fasync_req` in fasync.c field for field.
- */
+/* One in-flight request, as the native resolver sees it. Must match the layout
+ * the memory-safe half initializes in fasync.c. */
 struct fasync_req_shared {
   unsigned long id;     /* handle handed to the caller                    */
   unsigned long gen;    /* generation, so a recycled slot cannot alias    */
@@ -76,49 +50,27 @@ struct fasync_req_shared {
   long result;          /* bytes transferred, or -errno                   */
 };
 
-/*
- * Everything the native resolver needs. Every field is a raw pointer into memory
- * the memory-safe half owns.
- */
+/* Everything the native resolver needs. Every field is a raw pointer into
+ * memory the memory-safe half owns. */
 struct fasync_shared {
   volatile unsigned long* inflight; /* the fast-path gate                 */
   struct fasync_req_shared* reqs;   /* request table                      */
   unsigned long n_reqs;             /* number of slots in that table      */
   int ring_fd;                      /* io_uring ring, for the blocking enter */
 
-  /*
-   * Which slots are worth looking at.
-   *
-   * The resolver's job on the slow path is "is this address inside a pending
-   * result buffer?", which is a walk of the request table. Walking all 256 slots
-   * on an access that is inside none of them is the expensive case, and it is
-   * the common one: a program scanning a buffer pays it once per byte. Most
-   * slots are free, so a word-at-a-time bitmap lets the walk skip 64 slots per
-   * load and only touch the handful that are actually allocated.
-   */
+  /* Which slots are worth looking at: the slow-path answer "is this address
+   * inside a pending result buffer?" is a walk of the table, and most slots are
+   * free, so a word-at-a-time bitmap lets the walk skip 64 slots per load. */
   unsigned long alloc_bits[FASYNC_ALLOC_WORDS];
 
-  /*
-   * The allocation epoch, bumped by the memory-safe half every time a request is
-   * allocated. It exists to invalidate the memo below.
-   */
+  /* Allocation epoch, bumped every time a request is allocated. Invalidates the
+   * memo below: a freed buffer's address can be handed out again. */
   unsigned long alloc_epoch;
 
-  /*
-   * A range known to contain no pending result buffer.
-   *
-   * The slow path exists to answer "is this address inside a buffer somebody is
-   * still filling?", and for a program scanning a buffer that is not itself
-   * pending the answer is "no" once per byte. Proving that by walking the table
-   * costs more than the scan does (demos/demo_plain_io.c measures it), so a miss
-   * is remembered: start/end is a range proved empty of pending buffers, and
-   * `epoch` is the allocation epoch it was proved at.
-   *
-   * Any allocation invalidates it, because a freed buffer's address can be handed
-   * out again. Completions do not: a request that finishes only ever shrinks
-   * pending coverage. `end == 0` means no upper bound, which is the usual case --
-   * any buffer at all would have to start above the scan to bound it.
-   */
+  /* A range known to contain no pending result buffer. A miss in the table walk
+   * is remembered so a sequential scan through a non-pending buffer costs one
+   * walk, not one per byte. `epoch` is the allocation epoch it was proved at;
+   * `end == 0` means no upper bound (any buffer would start above the scan). */
   struct fasync_memo {
     unsigned long epoch;
     const char* start;
@@ -132,6 +84,16 @@ struct fasync_shared {
   unsigned int* cq_mask;
   unsigned int* local_cq_head;
 
+  /* Submission-ring state, for the lazy batch auto-submit: nothing forces the
+   * caller to submit; the first resolution that genuinely needs a completion
+   * publishes the whole queued batch in one non-blocking enter. */
+  unsigned int* sq_tail;  /* kernel's SQ tail word, written to publish       */
+  unsigned int* sq_mask;  /* ring size mask                                  */
+  unsigned int* sq_array; /* the SQ index array                              */
+  unsigned int* sqe_head; /* next SQE slot to publish (safe-side value)      */
+  unsigned int* sqe_tail; /* next SQE slot to write (safe-side value)        */
+  unsigned int* queued;   /* SQEs written but not yet published              */
+
   /* Counters, so native resolution is visible in the same stats as everything
    * else. Pointers rather than values because both halves increment them. */
   unsigned long* userspace_cq_polls;
@@ -140,6 +102,7 @@ struct fasync_shared {
   unsigned long* spin_rounds;
   unsigned long* parks;
   unsigned long* kernel_wait_entries;
+  unsigned long* kernel_submit_entries; /* non-blocking publishes */
   unsigned long* completions_reaped;
   unsigned long* memo_hits;
 };
@@ -156,17 +119,13 @@ static inline int fasync_memo_covers(const struct fasync_shared* sh, const char*
   return 1;
 }
 
-/*
- * The pending request covering [ptr, ptr+size), or 0 if there is none.
+/* The pending request covering [ptr, ptr+size), or 0 if there is none.
  *
- * ONE implementation, used by both halves. The two used to carry a copy each --
- * they are compiled by different toolchains and only share this header -- which
- * meant the memo below would have had to be written twice and kept in step by
- * hand. It is a walk of a table and a comparison of addresses, so it belongs in
- * the header where both halves see the same code.
- *
- * A completed request is skipped, which is the self-healing step: once a request
- * resolves, its range stops being reported as pending.
+ * ONE implementation, used by both halves: they are compiled by different
+ * toolchains and used to carry a copy each, which meant the memo had to be kept
+ * in step by hand. It is a walk of a table and some address comparisons, so it
+ * belongs where both sees the same code. A completed request is skipped, which
+ * is the self-healing step: once resolved, a range stops reporting as pending.
  */
 static inline struct fasync_req_shared* fasync_shared_find(struct fasync_shared* sh,
                                                            const void* ptr,
@@ -209,17 +168,12 @@ static inline struct fasync_req_shared* fasync_shared_find(struct fasync_shared*
   if (found)
     return found;
 
-  /*
-   * Nothing covers this address, and `limit` is the nearest buffer above it. No
-   * pending buffer can cover anything in [p, limit): one either starts at or
-   * above limit, or ends at or below p, and the latter cannot reach past p. So
-   * the range can be remembered, and a sequential scan through a buffer that is
-   * not pending hits this memo for every remaining byte.
-   */
+  /* Nothing covers this address, and `limit` is the nearest buffer above it, so
+   * nothing pending can cover [p, limit): one either starts at or above limit,
+   * or ends at or below p. A sequential scan through a non-pending buffer hits
+   * this memo for every remaining byte. */
   sh->memo.epoch = sh->alloc_epoch;
   sh->memo.start = p;
   sh->memo.end = limit;
   return 0;
 }
-
-#endif /* FASYNC_SHARED_H */

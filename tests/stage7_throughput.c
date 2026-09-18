@@ -1,30 +1,13 @@
 /*
- * stage7_throughput.c -- where io_uring actually pays.
+ * stage7_throughput.c -- where io_uring actually pays: many small reads.
  *
- * The other measurements in this suite use 256 KiB reads from a warm page cache,
- * and there the two paths are memcpy-bound and come out level. That is a fair
- * result and an unflattering one, but it is the wrong shape of workload to
- * measure the thing io_uring is for.
- *
- * This one uses *many small reads*. At 64 bytes the cost of a read is almost
- * entirely the syscall -- entry, exit, and the per-request bookkeeping in the
- * kernel and libc -- not the copy. That is the regime batching is supposed to
- * win in, and it is the FlexSC argument idea.md section 4 cites: don't pay a
- * context transition per operation, pay one per batch.
- *
- * The two paths do identical work:
- *
- *   blocking:  N preads, each one a syscall that completes inline
- *   async:     N SQEs published in batches, completions reaped from shared memory
- *
- * What is counted is kernel entries, taken from the runtime's own counters rather
- * than inferred from timing, so the structural claim does not depend on the
- * machine being fast or slow. Wall clock is reported alongside and is expected to
- * vary.
- *
- * Build:
- *   filcc -O2 -static -Iruntime/src -Lruntime/build/lib -o stage7 \
- *         tests/stage7_throughput.c
+ * 256 KiB warm-cache reads are memcpy-bound and come out level -- unflattering
+ * but the wrong shape of workload. At 64 bytes a read is almost entirely syscall
+ * cost (entry, exit, per-request bookkeeping), not copy: the regime batching
+ * wins in, the FlexSC argument idea.md section 4 cites. Both paths do identical
+ * work; what is counted is kernel entries, from the runtime's own counters, so
+ * the structural claim owes nothing to the machine. Wall clock is reported
+ * alongside and is expected to vary.
  */
 
 #include <stdio.h>

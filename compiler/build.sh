@@ -4,10 +4,10 @@
 #
 # WHAT THIS DOES
 # --------------
-# Applies compiler/patches/0001-FilPizlonator-resolve-pending.patch to
-# FilPizlonator.cpp and builds clang, producing a compiler that emits a call to
-# filc_resolve_pending() alongside the capability check it already emits for
-# every access through an escaping pointer.
+# Installs compiler/upstream-overrides/FilPizlonator.cpp (this repo's modified
+# copy of upstream's pass -- it emits a call to filc_resolve_pending() alongside
+# the capability check the pass already emits for every access through an
+# escaping pointer) and builds clang.
 #
 # Until this binary exists, programs have to mark the same points by hand with
 # the FASYNC_ACCESS() macro (see runtime/src/fasync.h). Once it exists, the macro
@@ -48,7 +48,7 @@ BUILD_DIR=${BUILD_DIR:-$FILC_SRC/build}
 JOBS=${JOBS:-$(nproc)}
 BUILD_TYPE=${BUILD_TYPE:-Release}
 
-PATCH=$HERE/patches/0001-FilPizlonator-resolve-pending.patch
+OVERRIDE=$HERE/upstream-overrides/FilPizlonator.cpp
 PASS=$FILC_SRC/llvm/lib/Transforms/Instrumentation/FilPizlonator.cpp
 
 if [ ! -f "$PASS" ]; then
@@ -58,13 +58,17 @@ if [ ! -f "$PASS" ]; then
 fi
 
 # ---------------------------------------------------------------------
-# 1. Apply the patch, idempotently.
+# 1. Install our override of the FilPizlonator pass, idempotently.
+#
+# The hook must be emitted by the pass, so the pass itself has to change. This
+# repo tracks the modified FilPizlonator.cpp (compiler/upstream-overrides/);
+# install it over the fetched source checkout so the build below carries it.
 # ---------------------------------------------------------------------
-if grep -q "ResolvePending" "$PASS"; then
-  echo "== FilPizlonator patch already applied"
+if diff -q "$OVERRIDE" "$PASS" >/dev/null 2>&1; then
+  echo "== FilPizlonator override already installed"
 else
-  echo "== applying $PATCH"
-  ( cd "$FILC_SRC" && git apply "$PATCH" )
+  echo "== installing the FilPizlonator override"
+  cp "$OVERRIDE" "$PASS"
 fi
 
 # ---------------------------------------------------------------------

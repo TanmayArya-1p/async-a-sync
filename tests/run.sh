@@ -10,6 +10,8 @@
 #            handed a pointer to it (Fil-C)
 #   stage2   lazy resolution: submission never blocks, resolution happens on
 #            first genuine access (Fil-C)
+#   stage2l  lazy submit: no submit call at all -- the first access publishes
+#            the whole queue (Fil-C)
 #   stage6b  kernel probe: whether an fd can be chained to a not-yet-open file
 #            (plain C; documents a kernel limitation the runtime is built around)
 #   stage3   dependencies: declared effect sets, capability-range disjointness,
@@ -105,6 +107,8 @@ run_host_test stage2b_mmap_probe
 run_host_test stage6b_fd_chain_probe
 run_filc_test stage2c_gc_pin_probe
 run_filc_test stage2_lazy_resolution
+run_filc_test stage2_lazy_submit
+run_filc_test stage_token_ordering
 run_filc_test stage3_dependency
 run_filc_test stage5_trackers
 run_filc_test stage6_fd_provenance
@@ -118,19 +122,31 @@ run_filc_test stage7_throughput
 # a separate, expensive step.
 PATCHED_CC=$REPO/vendor/fil-c-src/build/bin/filcc
 PATCHED_READY=0
+if [ -x "$PATCHED_CC" ]; then
+  # The source-built clang looks for its Fil-C runtime at
+  # <binary>/../../../pizfix (i.e. $REPO/vendor/pizfix). Point that at the
+  # distribution's pizfix so the patched compiler can find crt1.o, yolort, etc.
+  PATCHED_PIZFIX=$(cd "$(dirname "$PATCHED_CC")/../../.." && pwd)/pizfix
+  if [ ! -e "$PATCHED_PIZFIX" ]; then
+    ln -sfn "$FILC_ROOT/pizfix" "$PATCHED_PIZFIX"
+  fi
+fi
 if [ -x "$PATCHED_CC" ] && grep -q "filc_resolve_pending" \
      "$REPO/vendor/fil-c-src/llvm/lib/Transforms/Instrumentation/FilPizlonator.cpp" 2>/dev/null; then
   PATCHED_READY=1
 fi
 
 # run_patched <name> <source> [program args...]
+# Set RUN_PATCHED_FLAGS to add extra -D flags to the build.
 run_patched() {
   name=$1
   src=$2
   shift 2
   echo
   echo "### $name (patched compiler)"
+  # shellcheck disable=SC2086
   if "$PATCHED_CC" -O2 -static -DFASYNC_COMPILER_INSERTS_CHECKS \
+       $RUN_PATCHED_FLAGS \
        -I"$REPO/runtime/src" -L"$REPO/runtime/build/lib" \
        -o "$OUT/$name" "$src"; then
     if "$OUT/$name" "$@"; then
@@ -152,11 +168,31 @@ run_patched() {
 if [ "$PATCHED_READY" -eq 1 ]; then
   run_patched stage4_compiler_hook "$HERE/stage4_compiler_hook.c"
   run_patched stage8_latency "$HERE/stage8_latency.c" "$OUT"
-  run_patched demo_plain_io "$REPO/demos/demo_plain_io.c"
-  run_patched demo_wordcount "$REPO/demos/demo_wordcount.c" "$OUT"
+  RUN_PATCHED_FLAGS="-DFASYNC_IMPLICIT" run_patched demo_plain_io \
+    "$REPO/demos/demo_plain_io.c" "$OUT"
+  RUN_PATCHED_FLAGS="-DFASYNC_IMPLICIT" run_patched demo_async_io \
+    "$REPO/demos/demo_async_io.c" "$OUT"
+  RUN_PATCHED_FLAGS="-DFASYNC_IMPLICIT" run_patched demo_provenance \
+    "$REPO/demos/demo_provenance.c" "$OUT"
+  RUN_PATCHED_FLAGS="-DFASYNC_IMPLICIT" run_patched demo_wordcount \
+    "$REPO/demos/demo_wordcount.c" "$OUT"
+
+  # The two-backend comparison, as a standalone script: the same word-count
+  # source built one way with plain Fil-C and one way with the patched
+  # compiler + io_uring, run on a real filesystem, and reported as two
+  # timings plus a ratio.
+  echo
+  echo "### wordcount: the same code, sync and implicit (run_wordcount.sh)"
+  if "$REPO/demos/run_wordcount.sh" "$OUT"; then
+    PASSED=$((PASSED + 1))
+  else
+    echo "!!! run_wordcount.sh exited non-zero"
+    FAILED=$((FAILED + 1))
+  fi
 else
   echo
-  echo "### stage4_compiler_hook, stage8_latency, demo_plain_io, demo_wordcount:"
+  echo "### stage4_compiler_hook, stage8_latency, demo_plain_io, demo_async_io,"
+  echo "    demo_provenance, demo_wordcount, run_wordcount.sh:"
   echo "    SKIPPED (patched compiler not built)"
   echo "    build it with: ./compiler/build.sh"
 fi
@@ -166,14 +202,6 @@ fi
 run_host_test_pthread stage9_device_parallelism
 
 echo
-echo "### demo_async_io (Fil-C, showcase)"
-if "$FILCC" -O2 -static -I"$REPO/runtime/src" -L"$REPO/runtime/build/lib" \
-     -o "$OUT/demo_async_io" "$REPO/demos/demo_async_io.c"; then
-  "$OUT/demo_async_io" || FAILED=$((FAILED + 1))
-else
-  echo "!!! demo failed to build"
-  FAILED=$((FAILED + 1))
-fi
 
 echo
 echo "==============================================="

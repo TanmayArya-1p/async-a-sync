@@ -1,8 +1,8 @@
 # Architecture
 
 Transparent async syscalls on Fil-C, via pointer provenance tracking and lazy
-resolution. This document describes what was built, how it works, and — at least
-as importantly — what was measured and what did not work the way `idea.md`
+resolution. This document describes what was built, how it works, and - at least
+as importantly - what was measured and what did not work the way `idea.md`
 expected.
 
 The goal, from `idea.md` §1: make syscalls asynchronous **without changing
@@ -45,7 +45,7 @@ reason in §2.5.
 (`idea.md` §6 phase 2) turned up four facts that shaped everything downstream.
 Three of them were verified by experiment rather than by reading documentation.
 
-### 2.1 There is genuinely no escape hatch — verified
+### 2.1 There is genuinely no escape hatch - verified
 
 Fil-C's headline claim is that no unsafe code can be linked outside a small
 trusted runtime core. That is enforced by the compiler, not just by convention.
@@ -57,7 +57,7 @@ safe inline asm: syscall)
 filc panic: thwarted a futile attempt to violate memory safety.
 ```
 
-And routing around it via `syscall(2)` does not help either — `zsys_syscall`
+And routing around it via `syscall(2)` does not help either - `zsys_syscall`
 dispatches through an allowlist and rejects anything it does not know:
 
 ```
@@ -84,13 +84,13 @@ if (!expect_true(ptr_below_upper)) goto RangeFailB;   // inline, on every access
 RangeFailB: call filc_*_check_fail();                 // out-of-line, aborts
 ```
 
-Only the *failure* path is a callable symbol. The success path — the one that
-fires on every ordinary access — is inline machine code with nothing to
+Only the *failure* path is a callable symbol. The success path - the one that
+fires on every ordinary access - is inline machine code with nothing to
 interpose on. So `idea.md` §2.6's "reuse the check FilPizlonator already inserts"
 is correct in spirit but does require modifying the pass; it cannot be done from
 `libpizlo` alone.
 
-### 2.3 `mmap` cannot map an io_uring ring — and why that is structural
+### 2.3 `mmap` cannot map an io_uring ring - and why that is structural
 
 The natural way to build a ring is: let the kernel create it, `mmap` the SQ/CQ
 rings and the SQE array. That cannot work here, and the reason is not a bug on
@@ -112,7 +112,7 @@ The consequence is sharp: **a ring mapping can never carry a Fil-C capability**,
 so memory-safe code could never read the completion queue out of one. The
 architecture has to account for that, and §3 below is the answer.
 
-### 2.4 Large GC allocations do not move — verified
+### 2.4 Large GC allocations do not move - verified
 
 Because of 2.3, the runtime supplies the ring memory itself out of ordinary GC
 memory (see §4). That is only sound if the collector never relocates it, since
@@ -120,7 +120,7 @@ the kernel caches the address. `tests/stage2c_gc_pin_probe.c` checks this
 directly: allocate page-aligned, force collection cycles and explicit
 scavenges, verify the address and contents are unchanged. They are.
 
-### 2.5 Compiler-emitted hooks must be *native* — verified the hard way
+### 2.5 Compiler-emitted hooks must be *native* - verified the hard way
 
 This one cost real debugging time and shaped the final architecture, so it is
 worth stating precisely.
@@ -150,7 +150,7 @@ fails is instructive rather than obvious:
 
 * What does work is what Fil-C already does for its own compiler-emitted calls.
   Names beginning with `filc_` are referenced *unprefixed* and called directly,
-  which is exactly what a pass can emit — and every function the pass already
+  which is exactly what a pass can emit - and every function the pass already
   calls (`filc_check_function_call_fail`, `filc_cc_rets_check_failure`, and the
   rest) is **native**.
 
@@ -204,7 +204,7 @@ itself. It adds object files to a private copy of the distributed `libpizlo.a`.
 
 Resolution sits on the right-hand side, and §2.5 is why: the compiler emits a
 call to `filc_resolve_pending`, so that function has to be native. The memory-safe
-half still *owns* the state — the ring and the request table are its memory — and
+half still *owns* the state - the ring and the request table are its memory - and
 publishes raw addresses into it through `fasync_shared.h`, so both halves see one
 request table and one ring. Its own explicit-access path calls into the same
 native policy, so there is exactly one implementation of resolution and the two
@@ -213,15 +213,16 @@ paths cannot diverge.
 Two halves, because Fil-C forces it. Anything that issues a syscall the runtime
 does not already expose must live in the trusted core, and anything that touches
 program memory must be capability-checked, which only the safe half can do. The
-boundary between them carries only scalars and addresses — never a Fil-C pointer
+boundary between them carries only scalars and addresses - never a Fil-C pointer
 that the trusted half would have to dereference.
 
 **How `zsys_io_uring_*` becomes callable.** Fil-C's own mechanism for bridging a
 new syscall is
 `libpas/src/libpas/generate_pizlonated_forwarders.rb`, which holds a
 hand-maintained signature list and generates the `pizlonated_*` wrapper that
-memory-safe code calls into. The extension adds three signatures
-(`runtime/patches/0001-libpas-io_uring-forwarders.patch`), regenerates the
+memory-safe code calls into. The extension carries the generator with three added
+signatures (`runtime/upstream-overrides/`, installed by
+`runtime/build.sh`), regenerates the
 forwarder table, and implements the `filc_native_*` bodies in `fasync_native.c`.
 That is the sanctioned extension point for this layer, and it is where `idea.md`
 §2.6's "hook in libpizlo where syscalls are already recognized as a checked
@@ -236,7 +237,7 @@ boundary" actually lands.
 `fasync_pread` and friends write an SQE into shared memory and return a handle.
 They do not wait and they do not enter the kernel. Publication happens once per
 batch in `fasync_submit()`, with a single `io_uring_enter(to_submit, min_complete
-= 0)` — which does not block.
+= 0)` - which does not block.
 
 Measured, from `demos/demo_async_io.c`: 64 reads across 16 MiB enqueued *and*
 published in **0.049 ms**, with **zero** blocking kernel entries. The blocking
@@ -281,7 +282,7 @@ was already told where to write, so the buffer address never changes. This is on
 of the two options `idea.md` §2.6 offers ("swap the capability to point at the
 real buffer, or flip the pending bit in place"), and choosing it has a payoff
 beyond simplicity: because the pointer's value is unchanged, the compiler patch
-in §6 does not have to rebind anything — it only has to guarantee resolution
+in §6 does not have to rebind anything - it only has to guarantee resolution
 happened first, which is a much smaller and safer change.
 
 ### 4.4 A blocking enter must ask for events
@@ -308,7 +309,7 @@ Because of §2.3, the runtime does not mmap the ring. It sets
 itself with `zgc_aligned_alloc`. Two consequences:
 
 - The completion queue is ordinary capability-carrying memory, so the poll stays
-  a direct load from the safe half — no copy, no syscall, and no uncapabilitied
+  a direct load from the safe half - no copy, no syscall, and no uncapabilitied
   pointer anywhere in the design.
 - The allocation must be stable, which §2.4 established experimentally.
 
@@ -350,7 +351,7 @@ conflict.
 
 The Fil-C-specific part is what keeps annotations rare. Before falling back to the
 declarations, the analyser asks the runtime for the true extent of the object
-behind each pointer (`zgetlower`/`zgetupper` — the InvisiCap bounds) and discharges
+behind each pointer (`zgetlower`/`zgetupper` - the InvisiCap bounds) and discharges
 any pair whose ranges are provably disjoint:
 
 ```
@@ -411,7 +412,7 @@ a token for the opaque part.
 `idea.md` §3.1 flags it precisely: sometimes the dependency is not "code touches
 the buffer" but "the *kernel* needs `a`'s bytes as the content of `b`'s SQE". A
 `write` whose source buffer is a not-yet-filled async read is exactly that case,
-and it cannot be deferred — the kernel reads those bytes when it executes the
+and it cannot be deferred - the kernel reads those bytes when it executes the
 request, whatever is there.
 
 The current implementation resolves the source eagerly in `fasync_pwrite`, which
@@ -421,14 +422,16 @@ write only executes after the read completes. That work is **not done**; see §7
 
 ---
 
-## 6. The compiler patch
+## 6. The compiler change
 
-`compiler/patches/0001-FilPizlonator-resolve-pending.patch` adds a call to
-`filc_resolve_pending` immediately alongside the capability check FilPizlonator
-already emits for each access through an escaping pointer.
+This repo carries a modified copy of `FilPizlonator.cpp`
+(`compiler/upstream-overrides/FilPizlonator.cpp`, installed by
+`compiler/build.sh`) that adds a call to `filc_resolve_pending` immediately
+alongside the capability check FilPizlonator already emits for each access
+through an escaping pointer.
 
 It is small, and §4.3 is why. Because resolution does not change the pointer's
-value, the patch does not rebind pointers, rewrite `Place` projections, or touch
+value, the change does not rebind pointers, rewrite `Place` projections, or touch
 the address computation. It inserts one side-effecting call before the existing
 check and changes nothing else:
 
@@ -458,18 +461,18 @@ buffer contents correct:     yes
 
 Read the two counters together, because they are the whole design in miniature:
 one access resolved a pending request, and the other 4095 went through the
-one-load fast path. That program contains no explicit resolution call anywhere —
+one-load fast path. That program contains no explicit resolution call anywhere -
 `FASYNC_ACCESS()` is compiled to nothing under
-`-DFASYNC_COMPILER_INSERTS_CHECKS` — so the only thing that could have resolved it
+`-DFASYNC_COMPILER_INSERTS_CHECKS` - so the only thing that could have resolved it
 is the compiler's own instrumentation.
 
 **Honest note on performance.** This is the simple form: an unconditional call per
 escaping-pointer access. The runtime makes it cheap (one load, one predicted
 branch, no table touch when nothing is in flight), and restricting it to escaping
 pointers keeps it off stack accesses entirely. But the fuller version described in
-`idea.md` §2.6 would fold the test into the existing bounds compare — one extra
-compare instead of a call — by widening the InvisiCap to carry the pending tag.
-That is a better design and it is not what this patch does.
+`idea.md` §2.6 would fold the test into the existing bounds compare - one extra
+compare instead of a call - by widening the InvisiCap to carry the pending tag.
+That is a better design and it is not what this change does.
 
 ## 7. Known limitations
 
@@ -487,8 +490,8 @@ These are real and are worth stating plainly.
    be detected. That is an unusual access pattern, but it is a gap.
 
 3. **Aliasing writes are not tracked.** Resolution is driven by the checked access
-   path. A write to a pending buffer through a path that does not go through it —
-   for instance a raw `memcpy` that the pass does not instrument — would race with
+   path. A write to a pending buffer through a path that does not go through it -
+   for instance a raw `memcpy` that the pass does not instrument - would race with
    the kernel. §2.4 of `idea.md` anticipated this class of leak.
 
 4. **One ring, one lock.** The runtime keeps a single global ring guarded by
@@ -509,7 +512,7 @@ These are real and are worth stating plainly.
    program.** `filc_resolve_pending` short-circuits on exactly one question: is
    *anything* in flight. While any request is pending, every instrumented access
    takes the slow path, which walks the request table for a request covering the
-   address. For an access inside no pending buffer — most of them — that is a walk
+   address. For an access inside no pending buffer - most of them - that is a walk
    to answer "no", and a program scanning a buffer pays it once per byte.
 
    `demos/demo_plain_io.c` is the reproduction and §8 has the numbers: 524288
@@ -518,7 +521,7 @@ These are real and are worth stating plainly.
    ranges proved to hold no pending buffer answers the repeats without walking at
    all, which brought that case from 42 ms to parity with a 7.4 ms blocking
    baseline. What is left is the per-access call into the resolver, which no table
-   layout removes. The real fix is the one `idea.md` §2.6 proposes — fold the
+   layout removes. The real fix is the one `idea.md` §2.6 proposes - fold the
    pending test into the bounds compare the pass already emits, so it costs a
    compare instead of a call. This is the strongest evidence in the project that
    that change is worth making.
@@ -533,7 +536,7 @@ These are real and are worth stating plainly.
    The likely cause is `io-wq`: buffered reads that would block get punted to its
    worker pool, whose size is bounded and grown lazily.
    `IORING_REGISTER_IOWQ_MAX_WORKERS` is the standard lever and has not been
-   tried — it needs a new entry in the runtime's syscall surface, which is the
+   tried - it needs a new entry in the runtime's syscall surface, which is the
    only reason it is not already in. Until then, quote the overlap numbers as
    device-parallelism-limited, which is what §8 does.
 
@@ -553,8 +556,8 @@ observed: 1.00x
 
 **The async path is not faster here, and that is the honest reading.** With a warm
 page cache the bytes are already in kernel memory, so both paths are memcpy-bound
-and the async path's machinery — shared rings, bookkeeping per request, one pass
-through the completion queue — is pure overhead. What it removes is the per-request
+and the async path's machinery - shared rings, bookkeeping per request, one pass
+through the completion queue - is pure overhead. What it removes is the per-request
 round trip, and on this workload the round trip was already cheap: it went from 64
 entries to 1, and the wall clock did not care.
 
@@ -564,14 +567,14 @@ the rest cost a load. That ratio holds because that test arranges for exactly on
 request to be in flight and retires it at the first access, after which nothing is
 pending and every later access takes the one-load fast path. With a *batch* in
 flight that never happens until the batch drains, and the ratio changes completely
-— see below.
+- see below.
 
 What the numbers *do* establish is structural: submission is effectively free
 (0.049 ms to enqueue and publish 64 requests), it never blocks (0 blocking entries,
 verifiable by counter rather than by timing), and resolution is lazy and cheap
 while nothing is in flight. Whether those properties turn into throughput depends
 on per-request latency being high enough that having everything in flight at once
-matters — cold cache, real devices, network filesystems. That is measured below,
+matters - cold cache, real devices, network filesystems. That is measured below,
 on an uncached device, and it comes out at 2.2x, with the runtime currently
 leaving about a third of the device's demonstrable parallelism unused. The
 comparison against `tokio-uring`/`monoio` that `idea.md` §6 phase 6 asks for is
@@ -585,12 +588,12 @@ substrate rather than the ergonomics.
 ordinary `count_words()` that has never heard of io_uring, reading buffers that are
 still in flight. It is also the first measurement here that leaves a *batch*
 outstanding while it touches the data, which is what makes the resolve fast path
-unavailable for the whole of the first file — all 524288 of its byte accesses take
+unavailable for the whole of the first file - all 524288 of its byte accesses take
 the slow path:
 
 ```
                                        slow-path accesses   wall clock
-blocking: read + count per file        —                    7.7 ms
+blocking: read + count per file        -                    7.7 ms
 async: full-table walk                 524288 of 524288     0.3 + 42.5 ms
 async: walk skipping free slots        524288 of 524288     0.3 + 18 ms
 async: + negative-range memo           524288 of 524288     0.3 + 7.3 ms
@@ -604,8 +607,8 @@ What remained cost 10 ms, and the fix for that is the negative-range memo in
 `fasync_shared.h`: a miss proves that no pending buffer starts above this address
 until the next one that does, that range is remembered against the allocation
 epoch, and every subsequent byte of the scan is answered by three comparisons with
-no walk at all. It takes 524286 of the 524288 slow-path entries — the counter
-prints it — and brings the arm level with blocking. What is still paid per byte is
+no walk at all. It takes 524286 of the 524288 slow-path entries - the counter
+prints it - and brings the arm level with blocking. What is still paid per byte is
 the call into the resolver, which is precisely the cost `idea.md` §2.6's
 in-capability pending bit would remove.
 
@@ -635,7 +638,7 @@ kernel submits for 512 files: 1 (both B and C)
 ```
 
 Two results, and the second is the one that matters more. Overlapping the reads is
-worth **2.2x** here. And being *implicit* costs **nothing** — C is within noise of
+worth **2.2x** here. And being *implicit* costs **nothing** - C is within noise of
 B, which is the same program written the way a hand-written io_uring client would
 write it: submit everything, then wait on each handle explicitly. That is the
 claim the project has to be able to make, and it holds at 1.00x on 2048 files.
@@ -650,7 +653,7 @@ us/file     38.2   15.1    9.3    5.4    5.4    5.9
 kIOPS         26     66    108    184    184    171
 ```
 
-The device sustains 184 kIOPS (5.4 us/read) at 16 threads — 3.5x better than the
+The device sustains 184 kIOPS (5.4 us/read) at 16 threads - 3.5x better than the
 async arms manage. So the async path is **not** reaching the concurrency the kernel
 can clearly sustain for this workload, and the gap is in the plumbing rather than
 the design. The obvious suspect is `io-wq`: buffered reads that would block are
@@ -662,15 +665,15 @@ The scaling law the numbers imply: for independent operations the win is
 `min(outstanding ops, parallelism the device sustains)`, so it grows with device
 latency and with parallel throughput. On this NVMe, with 42 us serial reads and a
 device that can do 5.4 us in parallel, the ceiling is about 8x and the runtime
-currently gets 2.2x of it. On a slower device — spinning disk, a network
-filesystem, a cold object store — both terms grow and the ratio with them.
+currently gets 2.2x of it. On a slower device - spinning disk, a network
+filesystem, a cold object store - both terms grow and the ratio with them.
 
 ### The workload where batching is supposed to pay
 
 The demo's 256 KiB reads are the wrong shape for this question: at that size both
 paths are memcpy-bound and the round trip is not what costs. From
 `tests/stage7_throughput.c`, 20 000 reads of 64 bytes, where a read is almost
-entirely syscall — the regime `idea.md` §4 cites FlexSC for:
+entirely syscall - the regime `idea.md` §4 cites FlexSC for:
 
 ```
 blocking:    14.41 ms for 20000 reads   (0.72 us/read, 20000 syscalls)
@@ -684,7 +687,7 @@ observed: 0.93x
 The structural claim holds and the wall clock still does not. 20 000
 one-per-request round trips become 658 `enter` calls, roughly 100 SQEs published
 per submit, and the completion ring is drained in userspace with no syscall at
-all — but 200 batched requests cost about what 200 sequential ones cost. Saving
+all - but 200 batched requests cost about what 200 sequential ones cost. Saving
 entries buys throughput only when an entry is expensive; here the cost is the
 kernel's per-request work, and batching does not reduce that.
 
@@ -695,8 +698,8 @@ blocking one. The counters above are after moving allocation to a free list.
 
 So both workloads land in the same place: round trips are removed, resolution is
 lazy and cheap, and neither turns into speed on cache-resident data. What would is
-per-request latency that dominates the copy — cold cache, a real device, a network
-filesystem — and that remains `idea.md` §6 phase 6's comparison against
+per-request latency that dominates the copy - cold cache, a real device, a network
+filesystem - and that remains `idea.md` §6 phase 6's comparison against
 `tokio-uring`/`monoio`.
 
 ---
@@ -706,23 +709,31 @@ filesystem — and that remains `idea.md` §6 phase 6's comparison against
 ```
 runtime/
   src/fasync.h             public API (demos link against this)
-  src/fasync.c             memory-safe half: rings, request table, ops, provenance
+  src/fasync.c             memory-safe half: ring/request-table state, submission,
+                           resolution policy, wait_all, provenance
+  src/fasync_syscalls.c    the public syscalls (pread/pwrite/fsync/close/open),
+                           results, pending-descriptor slots
+  src/fasync_token.c       token-ordered calls (fasync_tagged_pread/pwrite)
+  src/fasync_internal.h    private surface shared by those three
   src/fasync_dep.c/.h      effect sets, disjointness proof, DAG + scheduler
-  src/fasync_native.c      trusted half: io_uring syscalls + resolution policy
+  src/fasync_native.c      trusted half: io_uring syscalls + the resolution hook
   src/fasync_io_uring.h    the kernel ABI, shared by both halves
   src/fasync_shared.h      the request/ring layout both halves agree on
   src/fasync_syscalls.h    declarations of the added runtime surface
-  patches/                 the libpas forwarder-generator patch
+  upstream-overrides/       the forwarders generator with the io_uring signatures,
+                           installed over the vendored copy by build.sh
   os-include/              kernel headers for compiling the trusted half
   build.sh                 builds the extension and splices libpizlo.a
+  (file-by-file ownership and invariants: docs/RUNTIME.md)
 compiler/
-  patches/                 the FilPizlonator patch
+  upstream-overrides/       the modified FilPizlonator pass (installed by build.sh)
   build.sh                 builds a patched clang (long; see README)
 tests/
   run.sh                   builds everything and runs the suite
   stage2b_mmap_probe.c     kernel: which mmaps of a ring are allowed
   stage2c_gc_pin_probe.c   Fil-C: GC memory must not move
   stage2_lazy_resolution.c Fil-C: submission never blocks; resolution is lazy
+  stage2_lazy_submit.c     Fil-C: no submit call at all; first access publishes
   stage3_dependency.c      Fil-C: effect sets, disjointness, DAG execution
   stage4_compiler_hook.c   Fil-C: the compiler inserts the hook (needs the
                            patched compiler; skipped when it is not built)
@@ -735,13 +746,19 @@ tests/
   stage9_device_parallelism.c
                            plain C: how much parallelism this device sustains,
                            so stage8's numbers can be read against it
+  stage_token_ordering.c   Fil-C: a provenance tag orders calls that share no
+                           dataflow
 demos/
-  demo_async_io.c          the showcase
-  demo_plain_io.c          Fil-C: sync-looking code with no markers, run async
+  demo_async_io.c/.hh      the showcase
+  demo_plain_io.c/.hh      Fil-C: sync-looking code with no markers, run async
                            (needs the patched compiler, like stage4)
-  demo_wordcount.c         Fil-C: one word count written twice, blocking and
-                           implicit; the ergonomics and the win in one program
+  demo_wordcount.c/.hh     Fil-C: one word count written twice, blocking and
+                           implicit; run_wordcount.sh builds both backends
+  demo_provenance.c/.hh    Fil-C: the tagged-read demo (author/plain/tagged)
+  utils.hh                 the plumbing the demos share (two-compilation header)
 docs/ARCHITECTURE.md       this file
+docs/RUNTIME.md            source-level reference for runtime/src
+idea.md                    the underlying proposal
 vendor/                    Fil-C distribution and source checkout
 ```
 

@@ -1,15 +1,11 @@
 /*
  * fasync_dep.c -- dependency construction from declared effect sets.
  *
- * See fasync_dep.h for the design rationale. The short version: an operation
- * declares what it reads and writes, and the dependency DAG falls out of those
- * declarations. Before falling back to the declarations, though, the analyser
- * tries to *prove* two operands disjoint using Fil-C's capability bounds, which
- * is what keeps the annotation burden low.
- *
- * Compiled by filcc, so it runs under the full capability model -- including
- * zgetlower/zgetupper, which is precisely the machinery the disjointness proof
- * is built on.
+ * Operations declare what they read and write; the dependency DAG falls out of
+ * those declarations. Before falling back to them, the analysis tries to prove
+ * two operands disjoint using Fil-C's capability bounds -- zgetlower/zgetupper
+ * is exactly the machinery the proof is built on, and this file runs under the
+ * full capability model. Compiled by filcc.
  */
 
 #include <stdfil.h>
@@ -19,23 +15,15 @@
 
 #include "fasync_dep.h"
 
-/* ------------------------------------------------------------------ */
-/* Ranges                                                              */
-/* ------------------------------------------------------------------ */
-
 struct fasync_range {
   const char* lo;
   const char* hi;
 };
 
-/*
- * The true extent of the object a pointer points into.
- *
- * This is the capability doing real work: Fil-C stores bounds out-of-band from
- * the pointer's bits, so the analyser can recover them for a pointer that a
- * declaration only described loosely. `len` widens the range if the declared
- * access extends past the object, which keeps the proof conservative.
- */
+/* The true extent of the object a pointer points into. Fil-C stores bounds
+ * out-of-band from the pointer's bits, so the analyser can recover them for a
+ * pointer a declaration only described loosely; `len` widens the range when the
+ * declared access extends past the object, keeping the proof conservative. */
 static struct fasync_range fasync_capability_range(const void* buf, size_t len) {
   struct fasync_range r;
   const char* lower = (const char*)zgetlower((void*)buf);
@@ -63,31 +51,16 @@ static int fasync_kind_reads(unsigned kind) {
   return kind == FASYNC_IN || kind == FASYNC_INOUT;
 }
 
-/* ------------------------------------------------------------------ */
-/* Conflict analysis                                                   */
-/* ------------------------------------------------------------------ */
-
-/*
- * Classify a single access pair.
- *
- * Returns 0 for no conflict, or one of the edge kinds (1..3) when `b` must
- * follow `a`:
- *
- *   1  a writes, b reads    (true dependency)
- *   2  a reads, b writes    (anti-dependency)
- *   3  a writes, b writes   (output dependency)
- *
- * Reads against reads never conflict, which is what makes reader-parallel
- * workloads stay parallel.
- */
+/* Classify a single access pair: 0 for no conflict, else an edge kind when `b`
+ * must follow `a` -- 1 a writes/b reads (true dependency), 2 a reads/b writes
+ * (anti), 3 a writes/b writes (output). Reads never conflict with reads, which
+ * is what keeps reader-parallel workloads parallel. */
 static int fasync_access_conflict(const struct fasync_access* a,
-                                 const struct fasync_access* b,
-                                 int* auto_disjoint) {
-  /*
-   * Resource accesses first. Two operations touching *different* resources are
-   * independent no matter what kinds they declare -- the same kind of proof the
-   * capability ranges give below, but for things that have no address.
-   */
+                                  const struct fasync_access* b,
+                                  int* auto_disjoint) {
+  /* Resource accesses first: two ops touching *different* resources are
+   * independent no matter their kinds (the same proof the ranges give, for
+   * things that have no address). */
   if (!a->buf || !b->buf) {
     if (a->buf || b->buf)
       return 0; /* a resource access and a buffer access are unrelated */
@@ -101,11 +74,9 @@ static int fasync_access_conflict(const struct fasync_access* a,
     struct fasync_range rb = fasync_capability_range(b->buf, b->len);
 
     if (fasync_ranges_disjoint(&ra, &rb)) {
-    /*
-     * The declared kinds may well have conflicted, but the ranges provably do
-     * not overlap -- so no edge is needed. Count it, because this is annotation
-     * the programmer did not have to write.
-     */
+      /* The declared kinds may have conflicted, but the ranges provably do not
+       * overlap, so no edge is needed. Count it: this is annotation the
+       * programmer did not have to write. */
       if (auto_disjoint)
         *auto_disjoint = 1;
       return 0;
@@ -126,13 +97,8 @@ static int fasync_access_conflict(const struct fasync_access* a,
   return 0;
 }
 
-/*
- * Do operations `a` and `b` conflict?
- *
- * The strongest conflict across all access pairs wins, and `*auto_disjoint` is
- * set only when every pair that could have conflicted was dissolved by the
- * range proof.
- */
+/* The strongest conflict across all access pairs wins; *auto_disjoint is set
+ * only when every pair that could have conflicted was dissolved by the proof. */
 int fasync_ops_conflict(const struct fasync_op* a, const struct fasync_op* b,
                         int* auto_disjoint) {
   int strongest = 0;
@@ -169,10 +135,6 @@ int fasync_ops_conflict(const struct fasync_op* a, const struct fasync_op* b,
   return strongest != 0;
 }
 
-/* ------------------------------------------------------------------ */
-/* DAG construction                                                    */
-/* ------------------------------------------------------------------ */
-
 unsigned fasync_build_dag(const struct fasync_op* ops, unsigned n_ops,
                           unsigned* edges, unsigned max_edges,
                           struct fasync_dag_stats* stats) {
@@ -182,7 +144,7 @@ unsigned fasync_build_dag(const struct fasync_op* ops, unsigned n_ops,
 
   unsigned n_edges = 0;
 
-  /* O(n^2) over operations: fine for a syscall batch, and it makes the
+  /* O(n^2) over operations: fine for a syscall batch, and it keeps the
    * dependency structure explicit rather than hidden behind an index. */
   for (unsigned i = 0; i < n_ops; i++) {
     for (unsigned j = i + 1; j < n_ops; j++) {
@@ -230,16 +192,10 @@ unsigned fasync_build_dag(const struct fasync_op* ops, unsigned n_ops,
   return n_edges;
 }
 
-/* ------------------------------------------------------------------ */
-/* Serialization tokens (async-a-sync.pdf)                             */
-/* ------------------------------------------------------------------ */
-
-/*
- * A token is just a named resource that everyone sharing it claims INOUT. That
- * is the whole implementation, which is the point: async-a-sync.pdf presents the
- * token as its own mechanism, but it is a special case of a declared effect set
- * over a non-address resource.
- */
+/* Serialization tokens: a token is just a named resource that everyone sharing
+ * it claims INOUT -- the whole implementation. The PDF presents the token as its
+ * own mechanism, but it is a special case of a declared effect set over a
+ * non-address resource. */
 static unsigned long fasync_next_resource = 1;
 
 fasync_tracker* fasync_tracker_new(void) {
@@ -262,18 +218,9 @@ struct fasync_access fasync_tracker_access(const fasync_tracker* tracker,
   return a;
 }
 
-/* ------------------------------------------------------------------ */
-/* Execution                                                           */
-/* ------------------------------------------------------------------ */
-
-/*
- * Run the DAG.
- *
- * The scheduler's only job is to notice when an operation becomes ready and
- * start it immediately, without waiting for anything that is still running.
- * `max_concurrent` is the measurement that matters: it is how much parallelism
- * the declarations actually exposed.
- */
+/* Run the DAG: notice when an operation becomes ready and start it immediately,
+ * without waiting for anything still running. `max_concurrent` is how much
+ * parallelism the declarations actually exposed. */
 int fasync_run_dag(const struct fasync_op* ops, unsigned n_ops,
                    const unsigned* edges, unsigned n_edges,
                    fasync_submit_fn submit, void* ctx,
@@ -311,7 +258,7 @@ int fasync_run_dag(const struct fasync_op* ops, unsigned n_ops,
   unsigned in_flight = 0;
 
   while (finished < n_ops) {
-    /* Start everything that is ready. Nothing here waits on the I/O. */
+    /* Start everything that is ready; nothing here waits on the I/O. */
     int started_any = 0;
     for (unsigned i = 0; i < n_ops; i++) {
       if (started[i] || in_degree[i] != 0)
@@ -330,12 +277,9 @@ int fasync_run_dag(const struct fasync_op* ops, unsigned n_ops,
 
     if (started_any) {
       run.waves++;
-      /*
-       * Publish the wave. This is the only place the kernel is told about the
-       * work, and it is a single non-blocking submission for the whole wave --
-       * the batching that zero-context-switch submission is supposed to buy.
-       * Without it the SQEs sit in shared memory and never execute.
-       */
+      /* Publish the wave: the only place the kernel is told about the work, as
+       * a single non-blocking submission -- the batching that
+       * zero-context-switch submission is supposed to buy. */
       if (fasync_submit() < 0) {
         free(in_degree);
         free(handles);
@@ -353,10 +297,8 @@ int fasync_run_dag(const struct fasync_op* ops, unsigned n_ops,
       continue;
     }
 
-    /*
-     * Wait for the first operation to finish. Only its completion is waited
-     * for; everything still running stays running.
-     */
+    /* Wait for the first completed operation. Only its completion is waited on;
+     * everything still running stays running. */
     for (unsigned i = 0; i < n_ops; i++) {
       if (!started[i] || done[i])
         continue;
