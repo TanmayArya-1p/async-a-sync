@@ -1,12 +1,21 @@
 # async-a-sync
 
-Transparent async syscalls on [Fil-C](https://github.com/pizlonator/fil-c): make
-syscalls asynchronous **without changing call-site syntax**, using `io_uring`
-underneath, pointer provenance tracking for derived pointers, and lazy resolution
-on first genuine access.
+**async-a-sync** is an LLVM-based toolkit for transparent asynchronous I/O:
+synchronous-looking C executes as an overlapped `io_uring` workload, with no async
+syntax anywhere in the program. Instead of await-style annotations, the resolution
+check is injected into `FilPizlonator`, the capability-instrumentation pass of
+[Fil-C](https://github.com/pizlonator/fil-c), where it is emitted alongside the
+bounds check the compiler already places on every access — no markers, no `unsafe`,
+no escape hatch. The runtime adds zero-context-switch submission, provenance that
+survives pointer arithmetic, lazy spin-then-park resolution, and an effect-set
+dependency DAG that proves non-conflict from capability extents alone. The
+completion layer is backend-agnostic by construction: any queue the resolver can
+poll drives the same mechanism, so sockets, timers and RDMA share one resolution
+path.
 
-Implementation of the design in `idea.md` (§6 phase 1, plus the dependency work
-from §3).
+Implementation of the design in `idea.md` (§6 phase 1, plus the dependency work from
+§3). What is built, what is measured, and what does not work are all in
+`docs/ARCHITECTURE.md`.
 
 ## What it does
 
@@ -18,11 +27,13 @@ anything derived from it — resolves it transparently.
 ```c
 fasync_id id = fasync_pread(fd, buf, len, offset);  /* returns immediately */
 ...
-FASYNC_ACCESS(buf + 4096, 4);   /* first genuine access: resolves here */
-int field = *(int*)(buf + 4096);
+int field = *(int*)(buf + 4096);   /* first genuine access: resolves here */
 ```
 
-`FASYNC_ACCESS` is a placeholder for an instruction the compiler will emit. See
+The only line there that is not ordinary C is the one that *submits*; every access
+is a plain load, and with the patched compiler there is no marker anywhere in the
+program. Without it, the same points are marked by hand with `FASYNC_ACCESS()`,
+which expands to exactly the call `FilPizlonator` emits. See "The compiler half"
 below.
 
 ## Results
@@ -39,6 +50,12 @@ resolving all 64: 6.39 ms  (281832 userspace completion-ring polls, 0 parks)
 `tests/stage7_throughput.c` pushes on the other end of the range — 20 000 reads
 of 64 bytes, where the syscall is nearly all of the cost — and reaches the same
 conclusion: 30x fewer kernel entries, wall clock unchanged.
+
+`demos/demo_plain_io.c` is the ergonomic half, and the clearest evidence for the
+claim in the abstract: a `count_words()` that has never heard of `io_uring`, reading
+four buffers that are still in flight, with no marker anywhere in the program. It
+also exposes the cost of the current resolution fast path, which is written up as a
+limitation — `docs/ARCHITECTURE.md` §7 item 7.
 
 The mechanism works and the counters prove it. The honest reading of the timing is
 in `docs/ARCHITECTURE.md` §8: on cache-resident data this is **not** faster, and
