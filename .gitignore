@@ -5,3 +5,5 @@ runtime/os-include/
 .commandcode/
 slides
 docs
+idea.md
+.cache
