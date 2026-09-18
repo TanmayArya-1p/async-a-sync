@@ -540,6 +540,40 @@ measured here, and `idea.md` §6 phase 6 explicitly asks for it** (comparison
 against `tokio-uring`/`monoio`). Until that exists, the honest claim is about
 mechanism, not about speed.
 
+### The workload where batching is supposed to pay
+
+The demo's 256 KiB reads are the wrong shape for this question: at that size both
+paths are memcpy-bound and the round trip is not what costs. From
+`tests/stage7_throughput.c`, 20 000 reads of 64 bytes, where a read is almost
+entirely syscall — the regime `idea.md` §4 cites FlexSC for:
+
+```
+blocking:    14.41 ms for 20000 reads   (0.72 us/read, 20000 syscalls)
+async:       15.42 ms for 20000 reads   (0.77 us/read)
+kernel entries: 658 vs 20000            (30x fewer: 200 submits + 458 waits)
+SQEs published per submit: 100
+completion ring polled in userspace: 933 times, 0 syscalls
+observed: 0.93x
+```
+
+The structural claim holds and the wall clock still does not. 20 000
+one-per-request round trips become 658 `enter` calls, roughly 100 SQEs published
+per submit, and the completion ring is drained in userspace with no syscall at
+all — but 200 batched requests cost about what 200 sequential ones cost. Saving
+entries buys throughput only when an entry is expensive; here the cost is the
+kernel's per-request work, and batching does not reduce that.
+
+This is also where a latent cost surfaced instead of being reasoned about. Slot
+allocation used to scan the request table linearly, so at a queue depth of 200 the
+scan alone ate the entry savings and the async path came out *slower* than the
+blocking one. The counters above are after moving allocation to a free list.
+
+So both workloads land in the same place: round trips are removed, resolution is
+lazy and cheap, and neither turns into speed on cache-resident data. What would is
+per-request latency that dominates the copy — cold cache, a real device, a network
+filesystem — and that remains `idea.md` §6 phase 6's comparison against
+`tokio-uring`/`monoio`.
+
 ---
 
 ## 9. Layout
@@ -570,6 +604,7 @@ tests/
   stage5_trackers.c        Fil-C: serialization tokens vs effect sets, measured
   stage6_fd_provenance.c   Fil-C: operations against a not-yet-open descriptor
   stage6b_fd_chain_probe.c kernel probe: what direct descriptors support here
+  stage7_throughput.c      Fil-C: many small reads, batched vs one syscall each
 demos/
   demo_async_io.c          the showcase
 docs/ARCHITECTURE.md       this file

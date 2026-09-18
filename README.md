@@ -36,6 +36,10 @@ kernel entries to submit: 1      <- one batch for 64 requests
 resolving all 64: 6.39 ms  (281832 userspace completion-ring polls, 0 parks)
 ```
 
+`tests/stage7_throughput.c` pushes on the other end of the range — 20 000 reads
+of 64 bytes, where the syscall is nearly all of the cost — and reaches the same
+conclusion: 30x fewer kernel entries, wall clock unchanged.
+
 The mechanism works and the counters prove it. The honest reading of the timing is
 in `docs/ARCHITECTURE.md` §8: on cache-resident data this is **not** faster, and
 the reason is explained there rather than glossed over.
