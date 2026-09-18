@@ -114,6 +114,26 @@ else
   echo "    build it with: ./compiler/build.sh"
 fi
 
+# The marker-free demo needs the patched compiler for the same reason stage4
+# does: the resolution at its access sites has to come from the compiler, because
+# the source deliberately contains no FASYNC_ACCESS() marker to fall back on.
+if [ -x "$PATCHED_CC" ] && grep -q "filc_resolve_pending" \
+     "$REPO/vendor/fil-c-src/llvm/lib/Transforms/Instrumentation/FilPizlonator.cpp" 2>/dev/null; then
+  echo
+  echo "### demo_plain_io (patched compiler, no markers in the source)"
+  if "$PATCHED_CC" -O2 -static -DFASYNC_COMPILER_INSERTS_CHECKS \
+       -I"$REPO/runtime/src" -L"$REPO/runtime/build/lib" \
+       -o "$OUT/demo_plain_io" "$REPO/demos/demo_plain_io.c"; then
+    "$OUT/demo_plain_io" || FAILED=$((FAILED + 1))
+  else
+    echo "!!! demo_plain_io failed to build"
+    FAILED=$((FAILED + 1))
+  fi
+else
+  echo
+  echo "### demo_plain_io: SKIPPED (patched compiler not built)"
+fi
+
 echo
 echo "### demo_async_io (Fil-C, showcase)"
 if "$FILCC" -O2 -static -I"$REPO/runtime/src" -L"$REPO/runtime/build/lib" \
