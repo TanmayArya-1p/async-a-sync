@@ -313,6 +313,7 @@ static int fasync_ring_init(void) {
   g_shared.parks = &g_stats.parks;
   g_shared.kernel_wait_entries = &g_stats.kernel_wait_entries;
   g_shared.completions_reaped = &g_stats.completions_reaped;
+  g_shared.memo_hits = &g_stats.memo_hits;
 
   fasync_publish_state(&g_shared);
   return 0;
@@ -353,6 +354,9 @@ static void fasync_slot_mark(unsigned int index, int allocated) {
 
 static void fasync_req_table_init(void) {
   memset(g_shared.alloc_bits, 0, sizeof(g_shared.alloc_bits));
+  g_shared.memo.epoch = 0;
+  g_shared.memo.start = 0;
+  g_shared.memo.end = 0;
   for (unsigned int i = 0; i < FASYNC_MAX_INFLIGHT; i++) {
     req_slots[i].state = FASYNC_REQ_FREE;
     /* Indices are stored one-based, so the link to slot i+1 is i+2. Getting
@@ -407,44 +411,17 @@ static struct fasync_req_shared* fasync_req_lookup(fasync_id id) {
 /*
  * Find the pending request (if any) whose result buffer covers [ptr, ptr+size).
  *
- * Only pending requests are considered: a completed request is no longer a
- * hazard, and excluding it is the "self-healing" step -- once resolved, the
- * range stops being reported as pending, so subsequent accesses fall straight
- * through to the fast path.
- *
- * The walk skips whole words of free slots, which matters more than it looks.
- * This runs on every instrumented access while anything is in flight, and the
- * access that is inside *no* pending buffer is the common one -- a program
- * scanning a buffer walks its bytes. Touching all 256 slots for each of those
- * cost demos/demo_plain_io.c about 40 ms over a 512 KiB loop, against a
- * blocking baseline of 9 ms: 256 slots x 32 bytes x 524288 accesses is roughly
- * 4 GB of L1 traffic to answer "no" 524288 times.
+ * The walk itself lives in fasync_shared.h, because the native resolver needs the
+ * same one and the memo that makes it cheap has to be shared by both. See the
+ * comments there; demos/demo_plain_io.c is what motivated it.
  */
 static struct fasync_req_shared* fasync_find_covering(const void* ptr, size_t size) {
-  const char* p = (const char*)ptr;
-  for (unsigned int w = 0; w < FASYNC_ALLOC_WORDS; w++) {
-    unsigned long bits = g_shared.alloc_bits[w];
-    if (!bits)
-      continue;
-    for (unsigned int b = 0; b < 64; b++) {
-      if (!(bits & (1UL << b)))
-        continue;
-      unsigned int i = w * 64 + b;
-      if (i >= FASYNC_MAX_INFLIGHT)
-        break;
-      struct fasync_req_shared* r = &req_slots[i];
-      if (r->state != FASYNC_REQ_PENDING || !r->buf)
-        continue;
-      const char* start = (const char*)r->buf;
-      const char* end = start + r->len;
-      if (p < start)
-        continue;
-      if (p + size > end)
-        continue;
-      return r;
-    }
-  }
-  return 0;
+  /* Before the ring exists nothing can be pending, and g_shared's counter
+   * pointers are not published yet; fasync_provenance() is documented as callable
+   * at any point. */
+  if (!g_ring.ready)
+    return 0;
+  return fasync_shared_find(&g_shared, ptr, size);
 }
 
 /* ------------------------------------------------------------------ */
@@ -518,7 +495,10 @@ static fasync_id fasync_push_sqe(unsigned char op, int fd, unsigned long addr,
 
   /* Publish the pending state before the count becomes visible, so a resolver
    * that observes a non-zero in-flight count is guaranteed to see this
-   * request. */
+   * request. The allocation epoch moves with it, which is what invalidates the
+   * resolver's negative-range memo: this buffer may well sit inside a range some
+   * earlier access proved empty. */
+  g_shared.alloc_epoch++;
   __atomic_add_fetch(&g_inflight, 1, __ATOMIC_RELEASE);
   return r->id;
 }

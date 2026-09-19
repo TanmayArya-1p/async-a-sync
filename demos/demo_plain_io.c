@@ -10,12 +10,14 @@
  * The only async-looking lines in this file are the four fasync_pread() calls. After
  * that, every access is a plain array index.
  *
- * This is not a performance demo, and it is worth running anyway, because it is the
- * measurement that found a real cost in the resolve fast path. The fast path is a
- * check that nothing at all is in flight, so with a batch outstanding every
- * instrumented access takes the slow path instead -- and this program walks bytes,
- * so it takes it once per byte. The output prints that count, and the wall clock it
- * adds up to. docs/ARCHITECTURE.md section 8 has the breakdown.
+ * This is not a performance demo, but it is the measurement that found a real
+ * cost in the resolve fast path and then showed it fixed. The fast path is a check
+ * that nothing at all is in flight, so with a batch outstanding every instrumented
+ * access enters the slow path instead -- and this program walks bytes, so it enters
+ * it once per byte. The first version of this demo measured 42 ms against an 8 ms
+ * blocking baseline; a memo of ranges proved empty of pending buffers brought it
+ * level, and the output prints both the slow-path count and how many of those the
+ * memo answered. docs/ARCHITECTURE.md sections 7 and 8 carry the numbers.
  *
  * Build (needs the patched compiler -- see tests/run.sh, which skips this when that
  * compiler has not been built):
@@ -236,11 +238,15 @@ int main(void) {
 
     /*
      * Every byte of the loop above is an instrumented access, so this is how many
-     * of those accesses had to take the resolve slow path. It is the number that
-     * decides what this demo costs, and it is not the number one would hope for.
+     * of them had to enter the resolve slow path, and how many of those the range
+     * memo answered without walking the request table. It is the number that
+     * decides what this demo costs.
      */
-    printf("      %lu of %d accesses took the slow path\n",
-           after.resolve_calls - before.resolve_calls, FILE_BYTES);
+    unsigned long slow = after.resolve_calls - before.resolve_calls;
+    unsigned long memo = after.memo_hits - before.memo_hits;
+    printf("      %lu of %d accesses entered the slow path; %lu of those were "
+           "answered by the range memo\n",
+           slow, FILE_BYTES, memo);
   }
 
   double count_ms = now_ms() - t_count;
@@ -283,13 +289,13 @@ int main(void) {
   printf("\n  The ergonomics are the point, and they work: count_words() had no way to\n"
          "  tell that those buffers were in flight, and never had to say so.\n"
          "\n"
-         "  The cost is the other half of this demo, and it is not pretty. The fast\n"
-         "  path is a check that *nothing at all* is in flight, so a single pending\n"
-         "  request sends every instrumented access in the program down the slow\n"
-         "  path -- and the slow path scans the request table. File 0's loop pays\n"
-         "  256 slots x 32 bytes, 524288 times: about 4 GB of L1 traffic, which is\n"
-         "  where the difference above comes from. docs/ARCHITECTURE.md has the\n"
-         "  writeup; this demo is what found it.\n\n");
+         "  The cost is the other half. The resolve fast path is a check that nothing\n"
+         "  at all is in flight, so with a batch outstanding every access enters the\n"
+         "  slow path -- and the slow path walked the request table. When this demo was\n"
+         "  first written that was 42 ms against an 8 ms blocking baseline, one walk\n"
+         "  per byte. A memo of the ranges proved to hold no pending buffer answers the\n"
+         "  repeats without the walk, and the two columns above are now level.\n"
+         "  docs/ARCHITECTURE.md sections 7 and 8 have the before and after.\n\n");
 
   check("the async path read the right bytes", all_correct);
   check("the blocking path agrees with it", blocking_correct);

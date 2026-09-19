@@ -33,6 +33,8 @@
 #ifndef FASYNC_SHARED_H
 #define FASYNC_SHARED_H
 
+#include <stddef.h>
+
 /* Request lifecycle. Must match the enum in fasync.c. */
 #define FASYNC_REQ_FREE 0
 #define FASYNC_REQ_PENDING 1
@@ -96,6 +98,33 @@ struct fasync_shared {
    */
   unsigned long alloc_bits[FASYNC_ALLOC_WORDS];
 
+  /*
+   * The allocation epoch, bumped by the memory-safe half every time a request is
+   * allocated. It exists to invalidate the memo below.
+   */
+  unsigned long alloc_epoch;
+
+  /*
+   * A range known to contain no pending result buffer.
+   *
+   * The slow path exists to answer "is this address inside a buffer somebody is
+   * still filling?", and for a program scanning a buffer that is not itself
+   * pending the answer is "no" once per byte. Proving that by walking the table
+   * costs more than the scan does (demos/demo_plain_io.c measures it), so a miss
+   * is remembered: start/end is a range proved empty of pending buffers, and
+   * `epoch` is the allocation epoch it was proved at.
+   *
+   * Any allocation invalidates it, because a freed buffer's address can be handed
+   * out again. Completions do not: a request that finishes only ever shrinks
+   * pending coverage. `end == 0` means no upper bound, which is the usual case --
+   * any buffer at all would have to start above the scan to bound it.
+   */
+  struct fasync_memo {
+    unsigned long epoch;
+    const char* start;
+    const char* end;
+  } memo;
+
   /* Completion ring, so the resolver can poll without a syscall. */
   struct fasync_cqe* cqes;
   unsigned int* cq_head;
@@ -112,6 +141,85 @@ struct fasync_shared {
   unsigned long* parks;
   unsigned long* kernel_wait_entries;
   unsigned long* completions_reaped;
+  unsigned long* memo_hits;
 };
+
+/* Has the memo already proved that nothing pending covers [p, p + size)? */
+static inline int fasync_memo_covers(const struct fasync_shared* sh, const char* p,
+                                     size_t size) {
+  if (sh->memo.epoch != sh->alloc_epoch || !sh->memo.start)
+    return 0;
+  if (p < sh->memo.start)
+    return 0;
+  if (sh->memo.end && p + size > sh->memo.end)
+    return 0;
+  return 1;
+}
+
+/*
+ * The pending request covering [ptr, ptr+size), or 0 if there is none.
+ *
+ * ONE implementation, used by both halves. The two used to carry a copy each --
+ * they are compiled by different toolchains and only share this header -- which
+ * meant the memo below would have had to be written twice and kept in step by
+ * hand. It is a walk of a table and a comparison of addresses, so it belongs in
+ * the header where both halves see the same code.
+ *
+ * A completed request is skipped, which is the self-healing step: once a request
+ * resolves, its range stops being reported as pending.
+ */
+static inline struct fasync_req_shared* fasync_shared_find(struct fasync_shared* sh,
+                                                           const void* ptr,
+                                                           size_t size) {
+  const char* p = (const char*)ptr;
+  if (fasync_memo_covers(sh, p, size)) {
+    (*sh->memo_hits)++;
+    return 0;
+  }
+
+  const char* limit = 0; /* nearest pending buffer that starts above p */
+  struct fasync_req_shared* found = 0;
+
+  for (unsigned long w = 0; w < FASYNC_ALLOC_WORDS; w++) {
+    unsigned long bits = sh->alloc_bits[w];
+    if (!bits)
+      continue;
+    for (unsigned long b = 0; b < 64; b++) {
+      if (!(bits & (1UL << b)))
+        continue;
+      unsigned long i = w * 64 + b;
+      if (i >= sh->n_reqs)
+        break;
+      struct fasync_req_shared* r = &sh->reqs[i];
+      if (r->state != FASYNC_REQ_PENDING || !r->buf)
+        continue;
+      const char* start = (const char*)r->buf;
+      const char* end = start + r->len;
+      if (p >= start && p + size <= end) {
+        found = r;
+        break;
+      }
+      if (start > p && (!limit || start < limit))
+        limit = start;
+    }
+    if (found)
+      break;
+  }
+
+  if (found)
+    return found;
+
+  /*
+   * Nothing covers this address, and `limit` is the nearest buffer above it. No
+   * pending buffer can cover anything in [p, limit): one either starts at or
+   * above limit, or ends at or below p, and the latter cannot reach past p. So
+   * the range can be remembered, and a sequential scan through a buffer that is
+   * not pending hits this memo for every remaining byte.
+   */
+  sh->memo.epoch = sh->alloc_epoch;
+  sh->memo.start = p;
+  sh->memo.end = limit;
+  return 0;
+}
 
 #endif /* FASYNC_SHARED_H */

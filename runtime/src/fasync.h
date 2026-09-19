@@ -203,6 +203,9 @@ struct fasync_stats {
   unsigned long spin_rounds;         /* userspace spin iterations          */
   unsigned long parks;               /* times we actually slept            */
   unsigned long completions_reaped;  /* CQEs consumed                      */
+  unsigned long memo_hits;           /* slow-path entries answered from the
+                                      * negative-range memo, i.e. without
+                                      * walking the request table          */
 };
 
 void fasync_get_stats(struct fasync_stats* out);
