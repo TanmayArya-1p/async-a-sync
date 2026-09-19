@@ -63,8 +63,11 @@
  * the native half walks the same table and the bitmap that lets that walk skip
  * free slots is sized from it, so the two halves have to agree on it. */
 
-/* Ring depth: how many SQEs may be queued before the kernel must be told. */
-#define FASYNC_RING_ENTRIES 128
+/* Ring depth: how many SQEs may be queued before the kernel must be told.
+ *
+ * Matched to the request table, so a full workload is published in a single
+ * non-blocking enter rather than being cut into batches by a full SQ ring. */
+#define FASYNC_RING_ENTRIES 1024
 
 /* Userspace spin budget before we agree to sleep in the kernel. Polling the
  * completion queue is a plain memory read of a shared ring, so spinning is

@@ -45,8 +45,14 @@
  * Part of the shared contract rather than a private detail of fasync.c, because
  * the native resolver walks this table and the allocation bitmap below is sized
  * from it.
+ *
+ * Sized so a whole workload fits in flight at once: the point of the design is
+ * that a program with a few hundred independent operations submits all of them
+ * before consuming any, and a table smaller than the workload forces it into
+ * waves, which is exactly the serialisation it is trying to remove. It costs a
+ * 40 KB table and 16 bitmap words.
  */
-#define FASYNC_MAX_INFLIGHT 256
+#define FASYNC_MAX_INFLIGHT 1024
 
 /* One bit per request slot, set while that slot is allocated. */
 #define FASYNC_ALLOC_WORDS (FASYNC_MAX_INFLIGHT / 64)
