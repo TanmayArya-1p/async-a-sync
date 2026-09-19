@@ -1,0 +1,200 @@
+% async-a-sync -- beamer slides
+% Compile:  pdflatex presentation.tex
+% The numbers are the real ones from tests/run.sh on this repo's NVMe.
+
+\documentclass[aspectratio=169]{beamer}
+
+\usetheme{Madrid}
+\usecolortheme{default}
+\setbeamertemplate{navigation symbols}{}
+\setbeamertemplate{footline}{\hfill\insertframenumber/\inserttotalframenumber\kern1em}
+
+\usepackage[T1]{fontenc}
+\usepackage{listings}
+\usepackage{booktabs}
+\usepackage{graphicx}
+
+\lstset{
+  language=C,
+  basicstyle=\ttfamily\scriptsize,
+  keywordstyle=\color{blue!70!black}\bfseries,
+  commentstyle=\color{green!40!black},
+  stringstyle=\color{red!70!black},
+  numbers=none,
+  frame=single,
+  rulecolor=\color{black!20},
+  columns=fullflexible,
+  keepspaces,
+  showstringspaces=false,
+  aboveskip=4pt,
+  belowskip=4pt,
+}
+
+\title{async-a-sync}
+\subtitle{Transparent async syscalls on Fil-C}
+\author{implicit futures: write blocking code, run it overlapped}
+\date{}
+
+\begin{document}
+
+\begin{frame}
+  \titlepage
+\end{frame}
+
+% ------------------------------------------------------------------
+\begin{frame}{The basic idea}
+  Make syscalls asynchronous \textbf{without changing the call site}.
+
+  \begin{block}{Three mechanisms working together}
+    \begin{enumerate}
+      \item \textbf{Zero-context-switch submission.}\\
+        A syscall becomes an \texttt{io\_uring} entry; nothing blocks where it is called.
+      \item \textbf{Provenance-tracked results.}\\
+        The value carries a tag naming its pending request; anything derived from it inherits the tag.
+      \item \textbf{Lazy resolution on first genuine access.}\\
+        The moment code actually uses the value, a check fires: completed? proceed. Not yet? wait.
+    \end{enumerate}
+  \end{block}
+
+  The point: \textbf{no \texttt{.await}, no futures, no explicit yield points} anywhere in the source.
+\end{frame}
+
+% ------------------------------------------------------------------
+\begin{frame}{Where the hook goes: Fil-C already checks every access}
+  Fil-C gives us most of the machinery for free.
+
+  \begin{itemize}
+    \item Every pointer carries an \textbf{invisible capability}: bounds + type, out of band.
+    \item \texttt{FilPizlonator} transforms every pointer operation into a dynamic capability check.
+    \item \textbf{No escape hatch}: no \texttt{unsafe}, and no linking unsafe code outside a small trusted core.
+    \item Syscalls are already a checked boundary, all routed through \texttt{libpizlo}.
+  \end{itemize}
+
+  \vspace{4pt}
+  So we do \textbf{not} add a second instrumentation pass. We extend the check that is already on every access.
+\end{frame}
+
+% ------------------------------------------------------------------
+\begin{frame}{Provenance $\rightarrow$ lazy values}
+  A pending value carries a \textbf{request id} (and offset). It is not ready until its request completes.
+
+  \begin{block}{What ``using'' it means}
+    \begin{itemize}
+      \item Dereference, field access, indexing --- all go through the capability check Fil-C already emits.
+      \item That check calls \texttt{filc\_resolve\_pending} first.
+      \item Resolution flips the \textbf{pending bit in place}: the buffer address never changes, because the kernel was already told where to write.
+    \end{itemize}
+  \end{block}
+
+  \begin{itemize}
+    \item Fast path: \textbf{one acquire load}, nothing in flight $\Rightarrow$ return.
+    \item Slow path: find the covering request, \textbf{spin} against the completion ring in userspace, \textbf{park} only if it has not landed.
+  \end{itemize}
+
+  \small Same shape as Brooks forwarding pointers and GHC thunk blackholing: check before access, self-heal.
+\end{frame}
+
+% ------------------------------------------------------------------
+\begin{frame}{The goal: abuse \texttt{io\_uring}}
+  The FlexSC argument: \textbf{don't pay a context switch per operation; pay one per batch.}
+
+  \begin{block}{The properties we lean on}
+    \begin{itemize}
+      \item \textbf{Batched submission} --- many operations in one non-blocking \texttt{io\_uring\_enter}.
+      \item \textbf{Completion in shared memory} --- the CQ is read from userspace, zero syscalls to reap.
+      \item \texttt{SQPOLL} --- submission becomes a plain store, no kernel entry at all.
+    \end{itemize}
+  \end{block}
+
+  \vspace{4pt}
+  One structural discovery: the ring must be \textbf{\texttt{NO\_MMAP}} --- Fil-C's \texttt{mmap} cannot map an \texttt{io\_uring} ring (it forces \texttt{MAP\_FIXED}), so the caller supplies the ring memory.
+\end{frame}
+
+% ------------------------------------------------------------------
+\begin{frame}{The two versions of the same program}
+
+  \begin{columns}[T]
+    \begin{column}{0.48\textwidth}
+      \textbf{Synchronous}
+      \begin{lstlisting}
+for (i = 0; i < N; i++) {
+    pread(fd[i], buf[i], SZ, 0);
+    words += count_words(buf[i], SZ);
+}
+      \end{lstlisting}
+    \end{column}
+    \begin{column}{0.48\textwidth}
+      \textbf{Implicit}
+      \begin{lstlisting}
+for (i = 0; i < N; i++)
+    fasync_pread(fd[i], buf[i], SZ, 0);
+fasync_submit();
+
+for (i = 0; i < N; i++)
+    words += count_words(buf[i], SZ); /* the wait */
+      \end{lstlisting}
+    \end{column}
+  \end{columns}
+
+  \vspace{6pt}
+  \begin{center}
+    \texttt{count\_words()} is the \textbf{same function} in both:\\
+    no async call, no marker, no \texttt{.await}.\\
+    The wait moved out from \emph{between} the counts.
+  \end{center}
+\end{frame}
+
+% ------------------------------------------------------------------
+\begin{frame}{What it buys: performance}
+  Word count over \textbf{512 files $\times$ 4 KiB}, page cache dropped before each pass.
+
+  \begin{center}
+    \begin{tabular}{lrr}
+      \toprule
+      & time & \\
+      \midrule
+      synchronous & 23.4 ms & \\
+      implicit    & 11.7 ms & \textbf{2.0$\times$} \\
+      \bottomrule
+    \end{tabular}
+  \end{center}
+
+  \begin{itemize}
+    \item \textbf{1 kernel submit for 512 files, 0 waits.}
+    \item Being implicit costs nothing: \texttt{implicit/explicit = 0.96$\times$} --- it matches the hand-written wait-per-handle version.
+    \item The win is overlap, not faster work: the device stalls become one batch instead of 512 serial ones.
+  \end{itemize}
+\end{frame}
+
+% ------------------------------------------------------------------
+\begin{frame}{What it buys: ergonomics}
+  The claim is not ``faster than \texttt{io\_uring}'' --- it is ``\texttt{io\_uring}'s overlap, from code that never mentions it.''
+
+  \begin{itemize}
+    \item No state machine, no callback, no poll loop written by the programmer.
+    \item Ordinary sequential C executes as an overlapped workload.
+    \item The only visible change is \emph{which function submits} the I/O.
+  \end{itemize}
+
+  \vspace{4pt}
+  \begin{block}{Honest limits}
+    Warm cache: no win (there is nothing to overlap).\\
+    This disk sustains 184 kIOPS; the runtime currently reaches 52 kIOPS --- the rest is an \texttt{io-wq} concurrency gap, not the design.
+  \end{block}
+\end{frame}
+
+% ------------------------------------------------------------------
+\begin{frame}{Recap}
+  \begin{enumerate}
+    \item Fil-C's per-access capability check is the hook point; no separate instrumentation.
+    \item A pending value resolves at first use --- provenance made lazy.
+    \item \texttt{io\_uring} supplies the overlap; the compiler supplies the transparency.
+    \item Same code, same function, \textbf{2.0$\times$} on uncached I/O, \textbf{1.0$\times$} against hand-written async.
+  \end{enumerate}
+
+  \vspace{4pt}
+  \centering
+  \texttt{no .await. no futures. no markers.}
+\end{frame}
+
+\end{document}
