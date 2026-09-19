@@ -1,14 +1,7 @@
 /*
- * utils.hh -- the dull shared machinery behind the demos.
- *
- * A clock, a word list, a corpus generator, and the word counter the demos exist
- * to show being handed a buffer that is still being filled. None of it knows
- * anything about io_uring, which is the point: this is what the demos' own code
- * looks like too.
- *
- * Header-only and static, so each demo gets its own copy and there is nothing to
- * build or link separately. The unused attributes keep whichever helper a given
- * demo does not need from warning about itself.
+ * utils.hh -- the small shared helpers the demos use.
+ * A clock, a word list, a corpus, and the word counter the demos are about.
+ * Header-only, nothing to link.
  */
 #ifndef DEMO_UTILS_HH
 #define DEMO_UTILS_HH
@@ -26,23 +19,20 @@ static const char* const demo_words[] __attribute__((unused)) = {
     "alpha", "beta", "gamma", "delta", "epsilon"};
 #define DEMO_NWORDS ((int)(sizeof(demo_words) / sizeof(demo_words[0])))
 
-/* Milliseconds on a monotonic clock. */
+/* Wall clock, in milliseconds. */
 static inline double demo_now_ms(void) {
   struct timespec ts;
   clock_gettime(CLOCK_MONOTONIC, &ts);
   return (double)ts.tv_sec * 1000.0 + (double)ts.tv_nsec / 1e6;
 }
 
-/* A deterministic generator, so every run builds the same corpus. */
+/* Deterministic random numbers, so every run makes the same corpus. */
 static inline unsigned int demo_rand(unsigned int* state) {
   *state = *state * 1103515245u + 12345u;
   return *state >> 16;
 }
 
-/*
- * Fill a buffer with words separated by spaces and newlines, and return how many
- * words went in, so a caller can check a count without trusting it.
- */
+/* Fill a buffer with words separated by spaces and newlines; return how many. */
 static inline size_t demo_fill_words(unsigned char* p, size_t cap,
                                      unsigned int* state) {
   size_t n = 0;
@@ -63,11 +53,11 @@ static inline size_t demo_fill_words(unsigned char* p, size_t cap,
 }
 
 /*
- * The ordinary word counter.
+ * Counts words in p[0..n); a word is a run of non-space characters.
  *
- * noinline on purpose: inlined into main it would sit next to the submission, and
- * the demos would stop showing what they are about -- an ordinary callee being
- * handed a buffer the kernel has not finished filling.
+ * noinline on purpose: the demos hand it a buffer the kernel is still filling,
+ * which is only a real demo if this load stays in an ordinary function instead
+ * of being inlined back into main.
  */
 __attribute__((noinline))
 static size_t demo_count_words(const char* p, size_t n) {
@@ -82,14 +72,7 @@ static size_t demo_count_words(const char* p, size_t n) {
   return words;
 }
 
-/*
- * Write `files` files of `bytes` each under `dir`, named <prefix>_0000.txt, and
- * record their paths. Each one is fsynced, so the reads the demos then do are real
- * device reads rather than hits on the writer's dirty cache.
- *
- * `words_out`, if given, gets the number of words each file was built from -- the
- * count a reader should arrive at, known without having to trust the reader.
- */
+/* Make `files` files of `bytes` under dir; record their paths and word counts. */
 static inline int demo_make_corpus(const char* dir, const char* prefix, int files,
                                    size_t bytes, char paths[][DEMO_PATH_MAX],
                                    size_t* words_out) {
@@ -116,22 +99,20 @@ static inline int demo_make_corpus(const char* dir, const char* prefix, int file
   return 0;
 }
 
-/* Drop these files from the page cache, so the next read costs a device trip. */
+/* Drop these files from the page cache, so the next read hits the device. */
 static inline void demo_drop_caches(int* fd, int files, size_t bytes) {
   for (int i = 0; i < files; i++)
     posix_fadvise(fd[i], 0, bytes, POSIX_FADV_DONTNEED);
 }
 
+/* Delete the corpus files. */
 static inline void demo_remove_corpus(char paths[][DEMO_PATH_MAX], int files) {
   for (int i = 0; i < files; i++)
     unlink(paths[i]);
 }
 
-/*
- * One blocking read pass over every file, timed. Used by a demo to find out
- * whether this filesystem has any device latency to overlap at all -- on tmpfs it
- * has none, and a comparison between the two ways of reading is meaningless.
- */
+/* One blocking read pass, timed. Used to check this filesystem has device latency
+ * to overlap at all (tmpfs has none). */
 static inline double demo_read_pass(int* fd, unsigned char** buf, int files,
                                     size_t bytes) {
   double t = demo_now_ms();
