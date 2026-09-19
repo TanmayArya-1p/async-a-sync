@@ -514,12 +514,28 @@ These are real and are worth stating plainly.
 
    `demos/demo_plain_io.c` is the reproduction and §8 has the numbers: 524288
    accesses taking the slow path, once per byte of a 512 KiB buffer. An
-   allocation bitmap now lets the walk skip 64 free slots per load, which cut the
-   overhead by more than half; what is left is the per-access call itself. The
-   real fix is the one `idea.md` §2.6 proposes — fold the pending test into the
-   bounds compare the pass already emits, so it costs a compare instead of a
-   call. This is the strongest evidence in the project that that change is worth
-   making.
+   allocation bitmap lets the walk skip 64 free slots per load, and a memo of the
+   ranges proved to hold no pending buffer answers the repeats without walking at
+   all, which brought that case from 42 ms to parity with a 7.4 ms blocking
+   baseline. What is left is the per-access call into the resolver, which no table
+   layout removes. The real fix is the one `idea.md` §2.6 proposes — fold the
+   pending test into the bounds compare the pass already emits, so it costs a
+   compare instead of a call. This is the strongest evidence in the project that
+   that change is worth making.
+
+8. **The async path does not reach the device's parallelism.** On the uncached
+   workload in §8 the implicit and explicit arms both run at about 19 us per read,
+   where the same 512 reads issued from plain blocking threads reach 5.4 us at 16
+   threads. So the kernel can clearly sustain 3.5x more concurrency than the
+   runtime gets, and the ceiling on the overlap win is being set by the plumbing
+   rather than by the disk or by the design.
+
+   The likely cause is `io-wq`: buffered reads that would block get punted to its
+   worker pool, whose size is bounded and grown lazily.
+   `IORING_REGISTER_IOWQ_MAX_WORKERS` is the standard lever and has not been
+   tried — it needs a new entry in the runtime's syscall surface, which is the
+   only reason it is not already in. Until then, quote the overlap numbers as
+   device-parallelism-limited, which is what §8 does.
 
 ---
 
@@ -555,10 +571,13 @@ What the numbers *do* establish is structural: submission is effectively free
 verifiable by counter rather than by timing), and resolution is lazy and cheap
 while nothing is in flight. Whether those properties turn into throughput depends
 on per-request latency being high enough that having everything in flight at once
-matters — cold cache, real devices, network filesystems. **That has not been
-measured here, and `idea.md` §6 phase 6 explicitly asks for it** (comparison
-against `tokio-uring`/`monoio`). Until that exists, the honest claim is about
-mechanism, not about speed.
+matters — cold cache, real devices, network filesystems. That is measured below,
+on an uncached device, and it comes out at 2.2x, with the runtime currently
+leaving about a third of the device's demonstrable parallelism unused. The
+comparison against `tokio-uring`/`monoio` that `idea.md` §6 phase 6 asks for is
+still not done; the three arms below are the substitute, and they are the
+better-controlled experiment, because comparing across toolchains would measure the
+substrate rather than the ergonomics.
 
 ### What a batch in flight costs an access
 
@@ -570,23 +589,81 @@ unavailable for the whole of the first file — all 524288 of its byte accesses 
 the slow path:
 
 ```
-                                    slow-path accesses    wall clock
-blocking: read + count per file     —                     8.1 ms
-async: full-table walk              524288 of 524288      0.3 + 42.5 ms
-async: bitmap walk                  524288 of 524288      0.3 + 18 ms
+                                       slow-path accesses   wall clock
+blocking: read + count per file        —                    7.7 ms
+async: full-table walk                 524288 of 524288     0.3 + 42.5 ms
+async: walk skipping free slots        524288 of 524288     0.3 + 18 ms
+async: + negative-range memo           524288 of 524288     0.3 + 7.3 ms
 ```
 
 The 42 ms was the slow path walking all 256 slots, 32 bytes each, to answer "no"
 for an address inside no pending buffer: roughly 4 GB of L1 traffic to say no half
-a million times. Skipping free slots a word at a time removes most of it. The
-remaining 10 ms over the blocking baseline is the per-access *call* into the native
-resolver and its gate load — precisely the cost `idea.md` §2.6's in-capability
-pending bit would remove, since it replaces the call with a compare the pass is
-already emitting.
+a million times. Skipping free slots a word at a time removes most of it.
+
+What remained cost 10 ms, and the fix for that is the negative-range memo in
+`fasync_shared.h`: a miss proves that no pending buffer starts above this address
+until the next one that does, that range is remembered against the allocation
+epoch, and every subsequent byte of the scan is answered by three comparisons with
+no walk at all. It takes 524286 of the 524288 slow-path entries — the counter
+prints it — and brings the arm level with blocking. What is still paid per byte is
+the call into the resolver, which is precisely the cost `idea.md` §2.6's
+in-capability pending bit would remove.
 
 The later files show the gate recovering: file 1 takes 1 slow access of 524288
 (its first access drains every completion that has landed, after which nothing is
 in flight), and files 2 and 3 take none at all.
+
+### The regime where overlap pays
+
+Everything above measures cache-resident data, where there is nothing to overlap
+and the honest answer is that this is not faster. `tests/stage8_latency.c` measures
+the shape the design is for: 512 files of 4 KiB, page cache dropped before each
+pass, so every read costs a device round trip. A serial program pays 512 of them;
+an overlapped one pays about one for the batch.
+
+Three arms, on the same runtime and the same substrate:
+
+```
+                                  ms     us/file
+A blocking                       21.4      41.8
+B explicit (wait per handle)      9.2      18.0
+C implicit (no wait written)      9.6      18.8
+
+C vs A   the ergonomic win                2.2x
+C vs B   what being implicit costs        0.96x
+kernel submits for 512 files: 1 (both B and C)
+```
+
+Two results, and the second is the one that matters more. Overlapping the reads is
+worth **2.2x** here. And being *implicit* costs **nothing** — C is within noise of
+B, which is the same program written the way a hand-written io_uring client would
+write it: submit everything, then wait on each handle explicitly. That is the
+claim the project has to be able to make, and it holds at 1.00x on 2048 files.
+
+The 2.2x is smaller than the 42 us per read suggests, and the reason is not the
+device. `tests/stage9_device_parallelism.c` reads the same 512 files with plain
+blocking threads, no io_uring, no Fil-C:
+
+```
+threads        1      4      8     16     32     64
+us/file     38.2   15.1    9.3    5.4    5.4    5.9
+kIOPS         26     66    108    184    184    171
+```
+
+The device sustains 184 kIOPS (5.4 us/read) at 16 threads — 3.5x better than the
+async arms manage. So the async path is **not** reaching the concurrency the kernel
+can clearly sustain for this workload, and the gap is in the plumbing rather than
+the design. The obvious suspect is `io-wq`: buffered reads that would block are
+punted to the io-wq worker pool, whose size is bounded and grown lazily, and
+`IORING_REGISTER_IOWQ_MAX_WORKERS` is the standard way to raise it. That has not
+been tried; it is limitation 8 below.
+
+The scaling law the numbers imply: for independent operations the win is
+`min(outstanding ops, parallelism the device sustains)`, so it grows with device
+latency and with parallel throughput. On this NVMe, with 42 us serial reads and a
+device that can do 5.4 us in parallel, the ceiling is about 8x and the runtime
+currently gets 2.2x of it. On a slower device — spinning disk, a network
+filesystem, a cold object store — both terms grow and the ratio with them.
 
 ### The workload where batching is supposed to pay
 
@@ -653,10 +730,17 @@ tests/
   stage6_fd_provenance.c   Fil-C: operations against a not-yet-open descriptor
   stage6b_fd_chain_probe.c kernel probe: what direct descriptors support here
   stage7_throughput.c      Fil-C: many small reads, batched vs one syscall each
+  stage8_latency.c         Fil-C: the uncached regime, blocking vs explicit wait
+                           vs implicit (needs the patched compiler)
+  stage9_device_parallelism.c
+                           plain C: how much parallelism this device sustains,
+                           so stage8's numbers can be read against it
 demos/
   demo_async_io.c          the showcase
   demo_plain_io.c          Fil-C: sync-looking code with no markers, run async
                            (needs the patched compiler, like stage4)
+  demo_wordcount.c         Fil-C: one word count written twice, blocking and
+                           implicit; the ergonomics and the win in one program
 docs/ARCHITECTURE.md       this file
 vendor/                    Fil-C distribution and source checkout
 ```

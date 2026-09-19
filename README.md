@@ -53,9 +53,14 @@ conclusion: 30x fewer kernel entries, wall clock unchanged.
 
 `demos/demo_plain_io.c` is the ergonomic half, and the clearest evidence for the
 claim in the abstract: a `count_words()` that has never heard of `io_uring`, reading
-four buffers that are still in flight, with no marker anywhere in the program. It
-also exposes the cost of the current resolution fast path, which is written up as a
-limitation — `docs/ARCHITECTURE.md` §7 item 7.
+four buffers that are still in flight, with no marker anywhere in the program.
+
+`demos/demo_wordcount.c` is both halves in one program — the same word count
+written twice, once blocking and once implicit, over 512 files with the page cache
+dropped. 27.4 ms against 13.3 ms, one kernel submit for 512 files and no wait
+written anywhere. That is 2.1x, and it is bounded by how much parallelism the disk
+offers rather than by the software: `tests/stage9_device_parallelism.c` measures
+the ceiling and §8 says where the rest of it is going.
 
 The mechanism works and the counters prove it. The honest reading of the timing is
 in `docs/ARCHITECTURE.md` §8: on cache-resident data this is **not** faster, and
