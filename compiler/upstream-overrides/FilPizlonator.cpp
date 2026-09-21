@@ -140,7 +140,7 @@ struct ConstantTarget {
   }
 
   explicit operator bool() const { return !!Target; }
-  
+
   ConstantKind Kind { ConstantKind::Global };
   GlobalValue* Target { nullptr }; // Getter for globals (including functions), constexpr node for constexprs
 };
@@ -153,7 +153,7 @@ struct ConstantRelocation {
     , Kind(Kind)
     , Target(Target) {
   }
-  
+
   size_t Offset { 0 };
   ConstantKind Kind { ConstantKind::Global };
   GlobalValue* Target { nullptr }; // Getter for globals (including functions), constexpr node for constexprs
@@ -407,7 +407,7 @@ class MATokenizer {
     while (Idx < MA.size() && isdigit(MA[Idx]))
       Idx++;
   }
-  
+
 public:
   MATokenizer(Module& M, const std::string& MA): M(M), MA(MA) {}
 
@@ -634,7 +634,7 @@ struct CombinedDI {
   std::unordered_set<DILocation*> Locations; // This set may contain null.
 
   CombinedDI() = default;
-  
+
   CombinedDI(DILocation* Location) {
     Locations.insert(Location);
   }
@@ -683,7 +683,7 @@ struct AccessCheck {
   CheckKind CK { CheckKind::ValidObject };
 
   AccessCheck() = default;
-  
+
   AccessCheck(Value* CanonicalPtr, int64_t Offset, int64_t Size, CheckKind CK):
     CanonicalPtr(CanonicalPtr), Offset(Offset), Size(Size), CK(CK) {
     assert(CanonicalPtr);
@@ -1053,7 +1053,7 @@ struct InferredCapability {
   bool merge(const InferredCapability& Other) {
     if (*this == Other)
       return false;
-    
+
     switch (State) {
     case CapabilityInferenceState::Bottom:
       *this = Other;
@@ -1265,10 +1265,10 @@ struct LifetimeMarker {
 enum class LifetimeState {
   // We haven't decided what the state of this thing is yet.
   Undetermined,
-  
+
   // We know it's live.
   Live,
-  
+
   // It could be dead, or maybe it could be live. We don't want to assume it's live. Better kill it.
   Zombie
 };
@@ -1475,7 +1475,7 @@ static int inferSizeFromSuffix(char suffix) {
 
 class Pizlonator {
   static constexpr unsigned TargetAS = 0;
-  
+
   LLVMContext& C;
   Module &M;
   const DataLayout DLBefore;
@@ -1612,7 +1612,7 @@ class Pizlonator {
   std::unordered_map<std::pair<const CombinedDI*, const CombinedDI*>,
                      const CombinedDI*> CombinedDIMaker;
   std::unordered_map<DILocation*, const CombinedDI*> BasicDIs;
-  
+
   std::unordered_map<std::string, GlobalVariable*> Strings;
   std::unordered_map<FunctionOriginKey, GlobalVariable*> FunctionOrigins;
   std::unordered_map<OriginKey, GlobalVariable*> Origins;
@@ -1664,7 +1664,7 @@ class Pizlonator {
   std::unordered_map<uint64_t, Function*> CallerEntrypointThunks;
   std::unordered_map<uint64_t, Function*> CalleeEntrypointThunks;
   std::unordered_map<NameAndSignature, Function*> KnownTargetCallsiteThunks;
-  
+
   BasicBlock* FirstRealBlock;
 
   BasicBlock* ReturnB;
@@ -1729,7 +1729,7 @@ class Pizlonator {
   // Lots of origins don't meet this definition!
   Constant* getFunctionOrigin(DIScope* Scope, bool CanCatch) {
     assert(OldF);
-    
+
     FunctionOriginKey FOK(OldF, Scope, CanCatch);
     auto iter = FunctionOrigins.find(FOK);
     if (iter != FunctionOrigins.end())
@@ -1740,7 +1740,7 @@ class Pizlonator {
       assert(GlobalToGetter.count(cast<Function>(OldF->getPersonalityFn())));
       Personality = GlobalToGetter[cast<Function>(OldF->getPersonalityFn())];
     }
-    
+
     bool CanThrow = !OldF->doesNotThrow();
 
     assert(FrameSize < UINT_MAX);
@@ -1751,7 +1751,7 @@ class Pizlonator {
       Filename = Scope->getFilename();
     if (Filename.empty() && OldF->getSubprogram())
       Filename = OldF->getSubprogram()->getFilename();
-    
+
     Constant* C = ConstantStruct::get(
       FunctionOriginTy,
       { ConstantStruct::get(
@@ -1837,7 +1837,7 @@ class Pizlonator {
     }
     if (LPI)
       assert(CanCatch);
-    
+
     DILocation* Impl = Loc.get();
     OriginKey OK(OldF, Impl, CanCatch, LPI);
     auto iter = Origins.find(OK);
@@ -1881,7 +1881,7 @@ class Pizlonator {
 
   Type* toFlightTypeImpl(Type* T) {
     assert(T != FlightPtrTy);
-    
+
     if (isa<FunctionType>(T))
       return PizlonatedFuncTy;
 
@@ -1909,10 +1909,10 @@ class Pizlonator {
       std::string NewName = ("pizlonated_" + ST->getName()).str();
       return StructType::create(C, Elements, NewName, ST->isPacked());
     }
-      
+
     if (ArrayType* AT = dyn_cast<ArrayType>(T))
       return ArrayType::get(toFlightType(AT->getElementType()), AT->getNumElements());
-      
+
     if (FixedVectorType* VT = dyn_cast<FixedVectorType>(T)) {
       assert(!hasPtrs(VT->getElementType())); // We don't support pointer vectors yet.
       return FixedVectorType::get(
@@ -1923,7 +1923,7 @@ class Pizlonator {
       llvm_unreachable("Shouldn't see scalable vector types");
       return nullptr;
     }
-    
+
     return T;
   }
 
@@ -1950,7 +1950,7 @@ class Pizlonator {
   Value* expectTrue(Value* Predicate, Instruction* InsertBefore) {
     return expectBool(Predicate, true, InsertBefore);
   }
-  
+
   Value* expectFalse(Value* Predicate, Instruction* InsertBefore) {
     return expectBool(Predicate, false, InsertBefore);
   }
@@ -2099,7 +2099,7 @@ class Pizlonator {
     Instruction* UpperPtr = GetElementPtrInst::Create(
       ObjectTy, Lower,
       { ConstantInt::get(IntPtrTy, -(intptr_t)1), ConstantInt::get(Int32Ty, 0) },
-      "filc_object_upper_ptr", InsertBefore); 
+      "filc_object_upper_ptr", InsertBefore);
     UpperPtr->setDebugLoc(InsertBefore->getDebugLoc());
     return UpperPtr;
   }
@@ -2251,7 +2251,7 @@ class Pizlonator {
       Result->setDebugLoc(InsertBefore->getDebugLoc());
       return Result;
     }
-    
+
     Value* BaseAuxPIsNull;
     BasicBlock* OriginalB = InsertBefore->getParent();
     if (MAD.MK == MemoryKind::Heap) {
@@ -2282,7 +2282,7 @@ class Pizlonator {
       RawPtrLoad->setDebugLoc(InsertBefore->getDebugLoc());
       return createFlightPtr(LowerToPtr, RawPtrLoad, Where);
     };
-    
+
     if (MAD.MK == MemoryKind::Heap) {
       assert(!isVolatile);
       assert(AO == AtomicOrdering::NotAtomic);
@@ -2341,11 +2341,11 @@ class Pizlonator {
     CallInst::Create(StoreBarrierForLowerSlow, { MyThread, Lower }, "", IsMarkingTerm)
       ->setDebugLoc(DL);
   }
-  
+
   void storeBarrierForValue(Value* V, Instruction* InsertBefore) {
     storeBarrierForLower(flightPtrLower(V, InsertBefore), InsertBefore);
   }
-  
+
   void storePtr(
     Value* V, MemoryAccessData MAD, bool isVolatile, Align A, AtomicOrdering AO,
     Instruction* InsertBefore) {
@@ -2374,7 +2374,7 @@ class Pizlonator {
         InsertBefore)->setDebugLoc(InsertBefore->getDebugLoc());
       return;
     }
-    
+
     if (MAD.MK == MemoryKind::Heap || MAD.MK == MemoryKind::ThreadLocalInit)
       storeBarrierForValue(V, InsertBefore);
 
@@ -2429,7 +2429,7 @@ class Pizlonator {
       }
       return false;
     }
-      
+
     if (ArrayType* AT = dyn_cast<ArrayType>(T))
       return hasPtrs(AT->getElementType());
 
@@ -2440,7 +2440,7 @@ class Pizlonator {
       llvm_unreachable("Shouldn't ever see scalable vectors in hasPtrs");
       return false;
     }
-    
+
     return false;
   }
 
@@ -2458,12 +2458,12 @@ class Pizlonator {
     Type* T, MemoryAccessData MAD, bool isVolatile, Align A, AtomicOrdering AO, SyncScope::ID SS,
     Instruction* InsertBefore) {
     A = std::min(DL.getABITypeAlign(T), A);
-    
+
     if (!hasPtrs(T)) {
       return new LoadInst(
         toFlightType(T), MAD.P, "filc_load", isVolatile, lowAlign(T, A, AO), AO, SS, InsertBefore);
     }
-    
+
     if (isa<FunctionType>(T)) {
       llvm_unreachable("shouldn't see function types in loadValueRecurseAfterCheck");
       return nullptr;
@@ -2499,7 +2499,7 @@ class Pizlonator {
       }
       return Result;
     }
-      
+
     if (ArrayType* AT = dyn_cast<ArrayType>(T)) {
       Value* Result = UndefValue::get(toFlightType(AT));
       assert(static_cast<unsigned>(AT->getNumElements()) == AT->getNumElements());
@@ -2518,7 +2518,7 @@ class Pizlonator {
       }
       return Result;
     }
-      
+
     if (FixedVectorType* VT = dyn_cast<FixedVectorType>(T)) {
       Value* Result = UndefValue::get(toFlightType(VT));
       Type* ET = VT->getElementType();
@@ -2551,12 +2551,12 @@ class Pizlonator {
     Type* T, Value* V, MemoryAccessData MAD, bool isVolatile, Align A, AtomicOrdering AO,
     SyncScope::ID SS, Instruction* InsertBefore) {
     A = std::min(DL.getABITypeAlign(T), A);
-    
+
     if (!hasPtrs(T)) {
       new StoreInst(V, MAD.P, isVolatile, lowAlign(T, A, AO), AO, SS, InsertBefore);
       return;
     }
-    
+
     if (isa<FunctionType>(T)) {
       llvm_unreachable("shouldn't see function types in storeValueRecurseAfterCheck");
       return;
@@ -2597,7 +2597,7 @@ class Pizlonator {
       }
       return;
     }
-      
+
     if (ArrayType* AT = dyn_cast<ArrayType>(T)) {
       assert(static_cast<unsigned>(AT->getNumElements()) == AT->getNumElements());
       Type* ET = AT->getElementType();
@@ -2617,7 +2617,7 @@ class Pizlonator {
       }
       return;
     }
-      
+
     if (FixedVectorType* VT = dyn_cast<FixedVectorType>(T)) {
       Type* ET = VT->getElementType();
       size_t ESize = DL.getTypeAllocSize(ET);
@@ -2805,7 +2805,7 @@ class Pizlonator {
   size_t countPtrsForAlloca(AllocaInst* AI) {
     return alignedAllocaSize(AI) / WordSize;
   }
-  
+
   size_t countPtrsForValue(Value* V) {
     // FIXME: We should not be dealing with GEPs here at all.
     Value* UP = underlyingPtr(V).P;
@@ -2858,7 +2858,7 @@ class Pizlonator {
   void computeFrameIndexMap(const std::vector<BasicBlock*>& Blocks) {
     assert(FrameSize == SIZE_MAX);
     assert(NumStackAuxes == SIZE_MAX);
-    
+
     FrameIndexMap.clear();
     FrameSize = NumSpecialFrameObjects;
     NumStackAuxes = 0;
@@ -2912,7 +2912,7 @@ class Pizlonator {
           }
 
           Live.erase(I);
-          
+
           if (PHINode* Phi = dyn_cast<PHINode>(I)) {
             for (unsigned Index = Phi->getNumIncomingValues(); Index--;) {
               Value* V = Phi->getIncomingValue(Index);
@@ -2966,7 +2966,7 @@ class Pizlonator {
     for (size_t BlockIndex = Blocks.size(); BlockIndex--;) {
       BasicBlock* BB = Blocks[BlockIndex];
       std::unordered_set<Value*> Live = LiveAtTail[BB];
-      
+
       for (auto It = BB->rbegin(); It != BB->rend(); ++It) {
         Instruction* I = &*It;
 
@@ -3116,10 +3116,10 @@ class Pizlonator {
         if (pointerKindDirect(V) == PointerKind::LocalExplicit)
           Live.insert(cast<AllocaInst>(V));
       }
-      
+
       for (auto It = BB->rbegin(); It != BB->rend(); ++It) {
         Instruction* I = &*It;
-        
+
         if (LifetimeMarker LM = analyzeLifetimeMarker(I)) {
           if (LM.LMK == LifetimeMarkerKind::Start) {
             Live.erase(LM.AI);
@@ -3139,7 +3139,7 @@ class Pizlonator {
 
     if (verbose)
       errs() << "Before explicit stack aux allocation, FrameSize = " << FrameSize << "\n";
-    
+
     std::vector<AllocaInst*> StackAuxOrder;
     for (BasicBlock* BB : Blocks) {
       for (Instruction& I : *BB) {
@@ -3249,7 +3249,7 @@ class Pizlonator {
       }
       return;
     }
-      
+
     if (ArrayType* AT = dyn_cast<ArrayType>(T)) {
       assert(static_cast<unsigned>(AT->getNumElements()) == AT->getNumElements());
       for (unsigned Index = static_cast<unsigned>(AT->getNumElements()); Index--;) {
@@ -3259,7 +3259,7 @@ class Pizlonator {
       }
       return;
     }
-      
+
     if (FixedVectorType* VT = dyn_cast<FixedVectorType>(T)) {
       for (unsigned Index = VT->getElementCount().getFixedValue(); Index--;) {
         Value* InnerV = ExtractElementInst::Create(
@@ -3294,7 +3294,7 @@ class Pizlonator {
              << ", alignment offset = " << AlignmentOffset << ", needs write = " << NeedsWrite
              << "\n";
     }
-    
+
     assert(static_cast<uint32_t>(Size) == Size);
     assert(static_cast<uint8_t>(Alignment) == Alignment);
     assert(static_cast<uint8_t>(AlignmentOffset) == AlignmentOffset);
@@ -3390,12 +3390,12 @@ class Pizlonator {
         if (!(exp)) \
           failAssert(__FILE__, __LINE__, #exp); \
       } while (false)
-    
+
       int64_t Alignment = 0;
       int64_t AlignmentOffset = 0;
       bool HasLowerBound = false;
       bool HasUpperBound = false;
-      
+
       size_t BeginIndex = Index;
       size_t EndIndex;
       for (EndIndex = BeginIndex;
@@ -3443,7 +3443,7 @@ class Pizlonator {
     Instruction* InsertBefore = &NewF->getEntryBlock().front();
     AllocaInst* Result = new AllocaInst(RawPtrTy, 0, nullptr, "filc_aux_base_var", InsertBefore);
     new StoreInst(RawNull, Result, InsertBefore);
-    
+
     CanonicalPtrAuxBaseVars[P] = Result;
     return Result;
   }
@@ -3535,7 +3535,7 @@ class Pizlonator {
       auto ptrWithOffset = [&] (int64_t Offset, Instruction* InsertBefore) {
         assert((int32_t)Offset == Offset);
         assert(FlightPtr);
-        
+
         return flightPtrWithOffset(FlightPtr, ConstantInt::get(IntPtrTy, Offset), InsertBefore);
       };
 
@@ -3570,7 +3570,7 @@ class Pizlonator {
           ResolvePending,
           { flightPtrPtr(FlightPtr, Inst), ConstantInt::get(IntPtrTy, 1) },
           "", Inst)->setDebugLoc(Inst->getDebugLoc());
-      
+
       int64_t Alignment = 0;
       int64_t AlignmentOffset = 0;
       bool AlignmentContradiction = false;
@@ -3821,7 +3821,7 @@ class Pizlonator {
             expectTrue(IsNotFree, Inst), Inst, false, nullptr, nullptr, nullptr, RangeFailB);
           break;
         }
-          
+
         case CheckKind::UpperBound: {
           assert(HasLowerBound);
           assert(HasUpperBound);
@@ -3956,7 +3956,7 @@ class Pizlonator {
 
   bool needToCheckAlignment(Type* T) {
     // FIXME: This is very X86-specific.
-    
+
     assert(T != FlightPtrTy);
 
     if (isa<FunctionType>(T))
@@ -4003,7 +4003,7 @@ class Pizlonator {
       buildCheck(DL.getTypeStoreSize(T), CheckedAlignment, HighP, Offset, AK, DI, Checks);
       return;
     }
-    
+
     if (isa<FunctionType>(T)) {
       llvm_unreachable("shouldn't see function types in buildChecksRecurse");
       return;
@@ -4037,7 +4037,7 @@ class Pizlonator {
       }
       return;
     }
-      
+
     if (ArrayType* AT = dyn_cast<ArrayType>(T)) {
       Type* ET = AT->getElementType();
       size_t ESize = DL.getTypeAllocSize(ET);
@@ -4045,7 +4045,7 @@ class Pizlonator {
         buildChecksRecurse(ET, HighP, Offset + Index * ESize, Alignment, AO, AK, DI, Checks);
       return;
     }
-      
+
     if (FixedVectorType* VT = dyn_cast<FixedVectorType>(T)) {
       Type* ET = VT->getElementType();
       size_t ESize = DL.getTypeAllocSize(ET);
@@ -4119,7 +4119,7 @@ class Pizlonator {
     // programs that use ginormous field offsets or ginormous constant array indices.
     if ((int32_t)Offset == Offset)
       return PtrAndOffset(HighP, Offset);
-    
+
     return PtrAndOffset(OriginalHighP, 0);
   }
 
@@ -4677,13 +4677,13 @@ class Pizlonator {
   Value* ptrOperandForAccess(Instruction* I) {
     if (LoadInst* LI = dyn_cast<LoadInst>(I))
       return LI->getPointerOperand();
-    
+
     if (StoreInst* SI = dyn_cast<StoreInst>(I))
       return SI->getPointerOperand();
-    
+
     if (AtomicCmpXchgInst* AI = dyn_cast<AtomicCmpXchgInst>(I))
       return AI->getPointerOperand();
-    
+
     AtomicRMWInst* AI = cast<AtomicRMWInst>(I);
     return AI->getPointerOperand();
   }
@@ -4834,7 +4834,7 @@ class Pizlonator {
   }
 
   bool functionMayFree(Function* F) {
-    return !functionWillReturn(F) || 
+    return !functionWillReturn(F) ||
       F->getName() == "zgc_realloc" ||
       F->getName() == "zgc_aligned_realloc" ||
       F->getName() == "zgc_realloc_preserving_alignment" ||
@@ -4853,7 +4853,7 @@ class Pizlonator {
       return callMayFree(CI);
     return false;
   }
-  
+
   template<typename FuncT>
   void forEachCheck(Instruction* I, const FuncT& Func) {
     if (LoadInst* LI = dyn_cast<LoadInst>(I)) {
@@ -4862,14 +4862,14 @@ class Pizlonator {
       Func(LI, T, HighP, LI->getAlign(), LI->getOrdering(), AccessKind::Read);
       return;
     }
-    
+
     if (StoreInst* SI = dyn_cast<StoreInst>(I)) {
       Type* T = SI->getValueOperand()->getType();
       Value* HighP = SI->getPointerOperand();
       Func(SI, T, HighP, SI->getAlign(), SI->getOrdering(), AccessKind::Write);
       return;
     }
-    
+
     if (AtomicCmpXchgInst* AI = dyn_cast<AtomicCmpXchgInst>(I)) {
       assert(AI->getMergedOrdering() != AtomicOrdering::NotAtomic);
       Type* T = AI->getNewValOperand()->getType();
@@ -4877,7 +4877,7 @@ class Pizlonator {
       Func(AI, T, HighP, AI->getAlign(), AI->getMergedOrdering(), AccessKind::Write);
       return;
     }
-    
+
     if (AtomicRMWInst* AI = dyn_cast<AtomicRMWInst>(I)) {
       assert(AI->getOrdering() != AtomicOrdering::NotAtomic);
       Type* T = AI->getValOperand()->getType();
@@ -4974,7 +4974,7 @@ class Pizlonator {
         DealWithPtr(canonicalizePtr(CI->getArgOperand(1)));
         continue;
       }
-      
+
       forEachCanonicalPtrOperand(I, DealWithPtr);
     }
     AuxBaseVarCreationAllowed = false;
@@ -5208,7 +5208,7 @@ class Pizlonator {
   template<typename CheckT>
   void canonicalizeAccessChecks(std::vector<CheckT>& Checks) {
     std::stable_sort(Checks.begin(), Checks.end());
-  
+
     size_t DstIndex = 0;
     size_t SrcIndex = 0;
     CheckT LastAC;
@@ -5229,7 +5229,7 @@ class Pizlonator {
           // For these, we really only need one of these for each CanonicalPtr.
           updateLastDI(Checks[DstIndex - 1], AC);
           continue;
-          
+
         case CheckKind::KnownLowerBound:
         case CheckKind::LowerBound:
         case CheckKind::UpperBound:
@@ -5243,7 +5243,7 @@ class Pizlonator {
           // function?
           updateLastDI(Checks[DstIndex - 1], AC);
           continue;
-  
+
         case CheckKind::KnownAlignment:
         case CheckKind::Alignment:
           assert(Alignment);
@@ -5272,12 +5272,12 @@ class Pizlonator {
         AlignmentOffset = AC.Offset;
       }
     }
-  
+
     Checks.resize(DstIndex);
 
     checkCanonicalizedAccessChecks(Checks);
   }
-  
+
   // Given two lists of checks, produces the set of checks that is the superset of the two. This is the
   // opposite of merging.
   template<typename ToCheckT, typename FromCheckT>
@@ -5289,12 +5289,12 @@ class Pizlonator {
 
   void mergeCheckDI(AccessCheck&, const AccessCheck&, const AccessCheck&) {
   }
-  
+
   void mergeCheckDI(AccessCheckWithDI& NewAC,
                     const AccessCheckWithDI& AC1, const AccessCheckWithDI& AC2) {
     NewAC.DI = combineDI(AC1.DI, AC2.DI);
   }
-  
+
   // Given two lists of canonicalized access checks, merges the second one into the first one. The
   // outcome may shrink ToChecks, or make some checks in ToChecks weaker. It will never grow ToChecks.
   //
@@ -5311,10 +5311,10 @@ class Pizlonator {
     while (SrcToIndex < ToChecks.size() && FromIndex < FromChecks.size()) {
       CheckT ToAC = ToChecks[SrcToIndex];
       CheckT FromAC = FromChecks[FromIndex];
-  
+
       assert(!IsKnownCheckKind(ToAC.CK));
       assert(!IsKnownCheckKind(FromAC.CK));
-      
+
       if (ToAC.CanonicalPtr == FromAC.CanonicalPtr &&
           FundamentalCheckKind(ToAC.CK) == FundamentalCheckKind(FromAC.CK)) {
 
@@ -5325,7 +5325,7 @@ class Pizlonator {
           SrcToIndex++;
           FromIndex++;
         };
-        
+
         auto mergeMaxAC = [&] () {
           CheckT NewAC = std::max(ToAC, FromAC);
           mergeCheckDI(NewAC, ToAC, FromAC);
@@ -5334,7 +5334,7 @@ class Pizlonator {
           SrcToIndex++;
           FromIndex++;
         };
-        
+
         switch (ToAC.CK) {
         case CheckKind::ValidObject:
         case CheckKind::CanWrite:
@@ -5401,16 +5401,16 @@ class Pizlonator {
           break;
         }
       }
-  
+
       if (ToAC < FromAC)
         SrcToIndex++;
       else
         FromIndex++;
     }
-  
+
     Result |= DstToIndex != ToChecks.size();
     ToChecks.resize(DstToIndex);
-  
+
     return Result;
   }
 
@@ -5425,10 +5425,10 @@ class Pizlonator {
     while (SrcToIndex < ToChecks.size() && FromIndex < FromChecks.size()) {
       ToCheckT ToAC = ToChecks[SrcToIndex];
       FromCheckT FromAC = FromChecks[FromIndex];
-  
+
       assert(!IsKnownCheckKind(ToAC.CK));
       assert(!IsKnownCheckKind(FromAC.CK));
-      
+
       if (ToAC.CanonicalPtr == FromAC.CanonicalPtr &&
           FundamentalCheckKind(ToAC.CK) == FundamentalCheckKind(FromAC.CK)) {
         switch (ToAC.CK) {
@@ -5440,7 +5440,7 @@ class Pizlonator {
           SrcToIndex++;
           FromIndex++;
           continue;
-  
+
         case CheckKind::LowerBound:
         case CheckKind::UpperBound:
           if (ToAC < FromAC)
@@ -5458,7 +5458,7 @@ class Pizlonator {
           SrcToIndex++;
           FromIndex++;
           continue;
-  
+
         case CheckKind::Alignment:
           if (CreateKnowns && FromAC.Size >= ToAC.Size
               && (FromAC.Offset % ToAC.Size) == ToAC.Offset) {
@@ -5469,14 +5469,14 @@ class Pizlonator {
           SrcToIndex++;
           FromIndex++;
           continue;
-          
+
         case CheckKind::KnownAlignment:
         case CheckKind::KnownLowerBound:
           llvm_unreachable("Should never see Known kinds in merging");
           break;
         }
       }
-  
+
       if (ToAC < FromAC) {
         ToChecks[DstToIndex++] = ToAC;
         SrcToIndex++;
@@ -5486,7 +5486,7 @@ class Pizlonator {
 
     while (SrcToIndex < ToChecks.size())
       ToChecks[DstToIndex++] = ToChecks[SrcToIndex++];
-  
+
     ToChecks.resize(DstToIndex);
     checkCanonicalizedAccessChecks(ToChecks);
   }
@@ -5496,7 +5496,7 @@ class Pizlonator {
                                     const std::vector<FromCheckT>& FromChecks) {
     subtractChecks(ToChecks, FromChecks, /*CreateKnowns=*/true);
   }
-  
+
   void removeRedundantChecksUsingForwardAI(
     const std::vector<BasicBlock*>& Blocks,
     const std::unordered_set<const BasicBlock*>& BackEdgePreds,
@@ -5515,7 +5515,7 @@ class Pizlonator {
       for (BasicBlock* BB : Blocks) {
         if (verbose)
           errs() << "Forward propagating in " << BB->getName() << "\n";
-        
+
         const ChecksOrBottom& COB = ForwardChecksAtHead[BB];
         if (COB.Bottom)
           continue;
@@ -5539,7 +5539,7 @@ class Pizlonator {
           auto Iter = ChecksForInst.find(&I);
           if (Iter != ChecksForInst.end())
             Checks.insert(Checks.end(), Iter->second.begin(), Iter->second.end());
-          
+
           // For now, just conservatively assume that all calls may free stuff.
           // FIXME: Could be a bit more precise here for memmoves, but it's probably not worth it
           if (isa<CallBase>(&I))
@@ -5583,29 +5583,29 @@ class Pizlonator {
     // from forward propagation.
 
     std::unordered_map<Instruction*, std::vector<AccessCheckWithDI>> NewChecksForInst;
-    
+
     for (BasicBlock* BB : Blocks) {
       if (verbose)
         errs() << "Optimizing " << BB->getName() << " using forward propagation results.\n";
       const ChecksOrBottom& StateWithBottom = ForwardChecksAtHead[BB];
-      
+
       // It's weird, but possible, that we have an unreachable block.
       if (StateWithBottom.Bottom)
         continue;
-      
+
       std::vector<AccessCheck> Checks = StateWithBottom.Checks;
       bool NeedToCanonicalize = false;
 
       if (verbose)
         errs() << "Checks at head: " << Checks << "\n";
-      
+
       for (Instruction& I : *BB) {
         auto HandleEffects = [&] () {
           EraseIf(Checks, [&] (const AccessCheck& AC) -> bool {
             return AC.CK == CheckKind::NotFree || AC.CK == CheckKind::GetAuxPtr;
           });
         };
-        
+
         if (&I == BB->getTerminator() && BackEdgePreds.count(BB)) {
           // Execute the pollcheck.
           HandleEffects();
@@ -5637,7 +5637,7 @@ class Pizlonator {
             }
           }
         }
-        
+
         // For now, just conservatively assume that all calls may free stuff.
         if (isa<CallBase>(&I))
           HandleEffects();
@@ -5647,7 +5647,7 @@ class Pizlonator {
             return AC.CK == CheckKind::GetAuxPtr && AC.CanonicalPtr != Ptr;
           });
         }
-        
+
         if (verbose)
           errs() << "Checks after " << I << ":\n    " << Checks << "\n";
       }
@@ -5655,7 +5655,7 @@ class Pizlonator {
 
     ChecksForInst = std::move(NewChecksForInst);
   }
-  
+
   void scheduleChecks(
     const std::vector<BasicBlock*>& Blocks,
     const std::unordered_set<const BasicBlock*>& BackEdgePreds) {
@@ -5664,7 +5664,7 @@ class Pizlonator {
       errs() << "Scheduling checks for " << OldF->getName() << "\n";
 
     ChecksForInst.clear();
-    
+
     for (BasicBlock* BB : Blocks) {
       for (Instruction& I : *BB) {
         std::vector<AccessCheckWithDI> Checks;
@@ -5677,20 +5677,20 @@ class Pizlonator {
         }
       }
     }
-    
+
     if (!optimizeChecks) {
       if (verbose)
         errs() << "Not optimizing the check schedule.\n";
       return;
     }
-    
+
     bool Changed;
-    
+
     // Liveness of canonical ptrs.
     //
     // We need this so that we can GC the abstract state. Without this, the abstract state is likely
     // to get very large, causing memory usage issues and long running times.
-    
+
     std::unordered_map<BasicBlock*, std::unordered_set<Value*>> CanonicalPtrLiveAtTail;
     Changed = true;
     while (Changed) {
@@ -5723,12 +5723,12 @@ class Pizlonator {
 
     if (verbose)
       errs() << "Liveness done, doing forward propagation.\n";
-    
+
     // Forward propagation
     //
     // This eliminates redundant checks and also shows us which checks are definitely performed along
     // which paths, which aids in making good choices during backward propagation.
-    
+
     std::unordered_map<BasicBlock*, ChecksOrBottom> ForwardChecksAtHead;
     std::unordered_map<BasicBlock*, std::vector<AccessCheck>> ForwardChecksAtTail;
 
@@ -5749,7 +5749,7 @@ class Pizlonator {
       for (AccessCheck& AC : Pair.second)
         AC.CK = FundamentalCheckKind(AC.CK);
     }
-    
+
     std::unordered_map<BasicBlock*, ChecksWithDIOrBottom> BackwardChecksAtTail;
     std::unordered_map<BasicBlock*, std::vector<AccessCheckWithDI>> BackwardChecksAtHead;
 
@@ -5785,7 +5785,7 @@ class Pizlonator {
 
         if (verbose)
           errs() << "Backwards propagation at " << BB->getName() << "\n";
-        
+
         ChecksWithDIOrBottom& COB = BackwardChecksAtTail[BB];
         if (COB.Bottom)
           continue;
@@ -5794,7 +5794,7 @@ class Pizlonator {
 
         if (verbose)
           errs() << "Starting with checks: " << Checks << "\n";
-        
+
         subtractChecks(Checks, ForwardChecksAtTail[BB]);
 
         if (verbose)
@@ -5835,7 +5835,7 @@ class Pizlonator {
           if (verbose)
             errs() << "Checks after " << *I << ":\n    " << Checks << "\n";
         }
-        
+
         if (pred_empty(BB))
           Checks.clear();
         else {
@@ -5882,7 +5882,7 @@ class Pizlonator {
     }
 
     std::unordered_map<Instruction*, std::vector<AccessCheckWithDI>> NewChecksForInst;
-    
+
     for (BasicBlock* BB : Blocks) {
       if (verbose) {
         errs() << "Scheduling checks in " << BB->getName()
@@ -5923,7 +5923,7 @@ class Pizlonator {
             return false;
           });
         }
-        
+
         auto Iter = ChecksForInst.find(I);
         if (Iter != ChecksForInst.end()) {
           std::vector<AccessCheckWithDI> ChecksForThisInst = Iter->second;
@@ -5960,7 +5960,7 @@ class Pizlonator {
             return false;
           });
         }
-        
+
         if (verbose)
           errs() << "Checks after " << *I << ":\n    " << Checks << "\n";
       }
@@ -6005,7 +6005,7 @@ class Pizlonator {
     removeRedundantChecksUsingForwardAI(
       Blocks, BackEdgePreds, CanonicalPtrLiveAtTail, ForwardChecksAtHead, ForwardChecksAtTail);
   }
-  
+
   template<typename FuncTy>
   size_t iterateArgs(const std::vector<ArgInfo>& Elements,
                      const FuncTy& Func) {
@@ -6440,7 +6440,7 @@ class Pizlonator {
           "filc_promote_stack", InsertBefore);
         break;
       }
-      
+
       Results.push_back(Result);
     });
     CallInst::Create(LifetimeEnd, { ConstantInt::get(IntPtrTy, TotalSize), PayloadAlloca }, "",
@@ -6644,7 +6644,7 @@ class Pizlonator {
       ResultT = toFlightType(C->getType());
     else
       ResultT = C->getType();
-    
+
     if (isa<UndefValue>(C)) {
       if (isa<IntegerType>(C->getType()))
         return ConstantInt::get(C->getType(), 0);
@@ -6654,7 +6654,7 @@ class Pizlonator {
         return needsFlight ? FlightNull : RawNull;
       return ConstantAggregateZero::get(ResultT);
     }
-    
+
     if (isa<ConstantPointerNull>(C))
       return needsFlight ? FlightNull : RawNull;
 
@@ -6723,7 +6723,7 @@ class Pizlonator {
         return ConstantInt::get(CE->getType(), 0);
       if (CE->getType() == RawPtrTy)
         return RawNull;
-      
+
       llvm_unreachable("wtf kind of CE is that");
       return nullptr;
     }
@@ -6740,7 +6740,7 @@ class Pizlonator {
 
   ConstantTarget constexprRecurse(Constant* C) {
     assert(C->getType() != FlightPtrTy);
-    
+
     if (GlobalValue* G = dyn_cast<GlobalValue>(C)) {
       assert(!shouldPassThrough(G));
       assert(!Getters.count(G));
@@ -6787,12 +6787,12 @@ class Pizlonator {
       Result.push_back(ConstantRelocation(Offset, CT.Kind, CT.Target));
       return true;
     }
-    
+
     assert(!isa<GlobalValue>(C)); // Should have been caught by constexprRecurse.
 
     if (isa<UndefValue>(C))
       return true;
-    
+
     if (isa<ConstantPointerNull>(C))
       return true;
 
@@ -6843,7 +6843,7 @@ class Pizlonator {
 
     if (Constant* LowC = tryConstantToFlightConstant(C))
       return LowC;
-    
+
     if (GlobalValue* G = dyn_cast<GlobalValue>(C)) {
       assert(!shouldPassThrough(G)); // This is a necessary safety check, at least for setjmp, probably for other things too.
       assert(!GlobalToGetter.count(nullptr));
@@ -7021,7 +7021,7 @@ class Pizlonator {
       if (ultraVerbose)
         errs() << "After Index = " << Index << ", I = " << *I << "\n";
     }
-    
+
     if (verbose)
       errs() << "After arg lowering: " << *I << "\n";
   }
@@ -7034,7 +7034,7 @@ class Pizlonator {
     Value* Ptr = IAD.Ptr;
     Value* Mask = IAD.Mask;
     assert(!hasPtrs(T));
-        
+
     // FIXME: We could query the abstract state to see if this is already above this lower bound.
     Instruction* IsBelowLowerFast = new ICmpInst(
       II, ICmpInst::ICMP_ULT, flightPtrPtr(Ptr, II), flightPtrLower(Ptr, II),
@@ -7043,7 +7043,7 @@ class Pizlonator {
     Instruction* BelowLowerTerm =
       SplitBlockAndInsertIfThen(expectFalse(IsBelowLowerFast, II), II, false);
     // NOTE: The codegen for BelowLowerTerm is further down below.
-        
+
     // FIXME: Could check the alignment that was passed in, and use that to make this more
     // efficient.
     Instruction* UpperMinus = GetElementPtrInst::Create(
@@ -7137,7 +7137,7 @@ class Pizlonator {
       MaskIntPhi = PHINode::Create(MaskIntTy, 2, "filc_mask_as_int_phi", FailTerm);
       MaskIntPhi->addIncoming(MaskInt, IsBelowLower->getParent());
     }
-        
+
     // First we identify the true Size of the access. Then we do:
     // Ptr <= Upper - Size
     //
@@ -7220,13 +7220,13 @@ class Pizlonator {
         "", FailTerm);
     }
   }
-  
+
   static constexpr unsigned InlineMemmoveDstSizeLimit = 40;
-  
+
   void emitOptMemmove(Value* Dst, Value* Src, size_t Count, Instruction* I) {
     FullMemoryAccessData DstFMAD = accessDataForOperand(Dst, I, 0, I);
     FullMemoryAccessData SrcFMAD = accessDataForOperand(Src, I, 1, I);
-    
+
     if (Count <= InlineMemmoveDstSizeLimit
         || DstFMAD.MAD.MK == MemoryKind::LocalNaked
         || SrcFMAD.MAD.MK == MemoryKind::LocalNaked) {
@@ -7822,7 +7822,7 @@ class Pizlonator {
       return;
     }
     assert(SrcFMAD.MAD.MK == MemoryKind::Heap);
-    
+
     CallInst::Create(
       Memmove,
       { MyThread, Dst, Src, makeIntPtr(Count, I), getOrigin(I->getDebugLoc()) },
@@ -7910,7 +7910,7 @@ class Pizlonator {
         II->eraseFromParent();
         return true;
       }
-        
+
       case Intrinsic::stacksave:
       case Intrinsic::stackrestore:
       case Intrinsic::assume:
@@ -7934,7 +7934,7 @@ class Pizlonator {
                  accessDataForOperand(II->getArgOperand(0), II, 0, II).MAD, II);
         II->eraseFromParent();
         return true;
-        
+
       case Intrinsic::vacopy: {
         lowerConstantOperand(II->getArgOperandUse(0), I);
         lowerConstantOperand(II->getArgOperandUse(1), I);
@@ -7943,7 +7943,7 @@ class Pizlonator {
         II->eraseFromParent();
         return true;
       }
-        
+
       case Intrinsic::vaend:
         II->eraseFromParent();
         return true;
@@ -8028,7 +8028,7 @@ class Pizlonator {
           lowerConstantOperand(U, I);
 
         IntrinsicAccessDetails IAD = analyzeIntrinsicLoadStore(II);
-        
+
         if (!IAD
             && !II->getCalledFunction()->doesNotAccessMemory()
             && !isa<ConstrainedFPIntrinsic>(II)
@@ -8052,13 +8052,13 @@ class Pizlonator {
 
         if (IAD)
           lowerIntrinsicAccess(II, IAD);
-        
+
         if (hasPtrs(II->getType()))
           hackRAUW(II, [&] () { return badFlightPtr(II, II->getNextNode()); });
         return true;
       } }
     }
-    
+
     if (CallBase* CI = dyn_cast<CallBase>(I)) {
       if (verbose) {
         errs() << "It's a call!\n";
@@ -8077,13 +8077,13 @@ class Pizlonator {
           }
           CI->eraseFromParent();
         };
-        
+
         if (F->isIntrinsic() &&
             F->getIntrinsicID() == Intrinsic::donothing) {
           llvm_unreachable("Should not see donothing intrinsic here.");
           return true;
         }
-        
+
         if (isSetjmp(F)) {
           if (verbose)
             errs() << "Lowering some kind of setjmp\n";
@@ -8305,7 +8305,7 @@ class Pizlonator {
           Erasify();
           return true;
         }
-        
+
         if (F->getName() == "zthread_self_id" &&
             FT->getNumParams() == 0 &&
             !FT->isVarArg() &&
@@ -8403,7 +8403,7 @@ class Pizlonator {
           Erasify();
           return true;
         }
-        
+
         if (shouldPassThrough(F)) {
           for (Use& Arg : CI->args())
             lowerConstantOperand(Arg, CI);
@@ -8411,7 +8411,7 @@ class Pizlonator {
         }
       }
     }
-    
+
     if (isa<LandingPadInst>(I)) {
       CallInst* CI = CallInst::Create(LandingPad, { MyThread }, "filc_landing_pad", I);
       CI->setDebugLoc(I->getDebugLoc());
@@ -13078,7 +13078,7 @@ class Pizlonator {
     // more complex ones and this parser rejects the ones we cannot handle.
 
     std::vector<Type*> OutputTypes;
-    
+
     auto checkType = [&] (Type* T) {
       if (T->isIntegerTy() || T->isFloatTy() || T->isPointerTy() || T->isVectorTy())
         return true;
@@ -13088,7 +13088,7 @@ class Pizlonator {
       Reason = str;
       return false;
     };
-    
+
     if (!CI->getType()->isVoidTy()) {
       if (StructType* ST = dyn_cast<StructType>(CI->getType())) {
         for (unsigned Index = 0; Index < ST->getNumElements(); ++Index) {
@@ -13155,7 +13155,7 @@ class Pizlonator {
       bool isOutput = false;
       bool isOutputLogically = false;
       bool isPtr = false;
-      
+
       if (Constraints[Index] == '=') {
         Index++;
         if (Index >= EndIndex) {
@@ -13402,7 +13402,7 @@ class Pizlonator {
 
     if (hasPtrs(NewRetT)) {
       assert(NewOutputTypes.size() >= Outputs.size());
-      
+
       auto GetReturnValue = [&] (size_t Index) -> Value* {
         assert(static_cast<unsigned>(Index) == Index);
         assert(NewOutputTypes.size());
@@ -13601,7 +13601,7 @@ class Pizlonator {
     MyThread = Result->getArg(0);
     OldF = nullptr;
     NewF = Result;
-    
+
     Value* CalleeLower = Result->getArg(1);
 
     BasicBlock* RootB = BasicBlock::Create(C, "filc_caller_entrypoint_thunk_root", Result);
@@ -13609,15 +13609,15 @@ class Pizlonator {
 
     Return->getOperandUse(0) =
       callGenericFromFastThunk(CalleeLower, Result, AIs, NormalizedRetType, Return);
-    
+
     MyThread = OldMyThread;
     OldF = OldOldF;
     NewF = OldNewF;
-    
+
     CallerEntrypointThunks[Signature] = Result;
     return Result;
   }
-  
+
   Function* calleeEntrypointThunk(uint64_t Signature, const std::vector<ArgInfo>& AIs,
                                   Type* NormalizedRetType) {
     assert(Signature != GenericSignature);
@@ -13644,7 +13644,7 @@ class Pizlonator {
     MyThread = Result->getArg(0);
     OldF = nullptr;
     NewF = Result;
-    
+
     Value* CalleeLower = Result->getArg(1);
     Value* ArgSize = Result->getArg(2);
 
@@ -13686,11 +13686,11 @@ class Pizlonator {
     GenericResultPHI->addIncoming(GenericResult, GenericResult->getParent());
     GenericResultPHI->addIncoming(GenericValueResult, GenericValueResult->getParent());
     Return->getOperandUse(0) = GenericResultPHI;
-    
+
     MyThread = OldMyThread;
     OldF = OldOldF;
     NewF = OldNewF;
-    
+
     CalleeEntrypointThunks[Signature] = Result;
     return Result;
   }
@@ -13798,7 +13798,7 @@ class Pizlonator {
       }
       Result->addFnAttr(Attribute::NoInline);
       Result->addFnAttr(Attribute::NoUnwind);
-      
+
       Value* OldMyThread = MyThread;
       Function* OldOldF = OldF;
       Function* OldNewF = NewF;
@@ -13808,7 +13808,7 @@ class Pizlonator {
 
       BasicBlock* RootB = BasicBlock::Create(C, "filc_callee_entrypoint_thunk_root", Result);
       ReturnInst* Return = ReturnInst::Create(C, UndefValue::get(FuncTy->getReturnType()), RootB);
-      
+
       Value* Callee = constantToFlightValue(F, Return);
       Value* CalledLower = checkFunctionAndGetLower(Callee, Return);
       if (Signature == GenericSignature) {
@@ -13832,20 +13832,20 @@ class Pizlonator {
           fastEntrypointForFunctionPayload(CalledLower, ThenTerm),
           FastArgs, "filc_fast_call", ThenTerm);
         ReplaceInstWithInst(ThenTerm, ReturnInst::Create(C, FastCall));
-        
+
         Return->getOperandUse(0) =
           callGenericFromFastThunk(CalledLower, Result, AIs, NormalizedRetType, Return);
       }
-    
+
       MyThread = OldMyThread;
       OldF = OldOldF;
       NewF = OldNewF;
     }
-    
+
     KnownTargetCallsiteThunks[Key] = Result;
     return Result;
   }
-  
+
   // This lowers the instruction "in place", so all references to it are fixed up after this runs.
   void lowerInstruction(Instruction *I) {
     if (verbose)
@@ -13907,17 +13907,17 @@ class Pizlonator {
       // But this risks suboptimal codegen if the implementation isn't inlined. Yuck! The trick is that
       // we want the Fil-C CC shenanigans to happen with the frame already set up, so we can't simply
       // have the Fil-C CC version wrap the direct version.
-      
+
       if (CI->isInlineAsm()) {
         std::string Reason = "";
-        
+
         lowerConstantOperands(CI);
-        
+
         if (handleInlineAsm(CI, Reason))
           return;
 
         assert(!Reason.empty());
-        
+
         assert(isa<CallInst>(CI));
         std::string str;
         raw_string_ostream outs(str);
@@ -13941,7 +13941,7 @@ class Pizlonator {
           continue;
         lowerConstantOperand(CI->getOperandUse(Index), CI);
       }
-      
+
       if (verbose)
         errs() << "Dealing with called operand: " << *CI->getCalledOperand() << "\n";
 
@@ -14013,12 +14013,12 @@ class Pizlonator {
           "filc_fast_call", CI);
         RetSize = nullptr;
       };
-      
+
       if (Function* F = dyn_cast<Function>(CI->getCalledOperand())) {
         assert(!shouldPassThrough(F));
 
         Value* Callee = knownTargetCallsiteThunk(F, Signature, AIs, NormalizedRetType, CI);
-        
+
         if (Signature == GenericSignature)
           CallGeneric(UndefValue::get(RawPtrTy), Callee);
         else
@@ -14046,7 +14046,7 @@ class Pizlonator {
           CallFast(CalledLower, Entrypoint);
         }
       }
-      
+
       TheCall->setDebugLoc(CI->getDebugLoc());
       Instruction* HasException = ExtractValueInst::Create(
         Int1Ty, TheCall, { 0 }, "filc_has_exception", CI);
@@ -14060,7 +14060,7 @@ class Pizlonator {
           II->getUnwindDest(), II->getNormalDest(), expectFalse(HasException, II), II)
           ->setDebugLoc(II->getDebugLoc());
       }
-      
+
       Instruction* PostInsertionPt;
       if (isa<CallInst>(CI))
         PostInsertionPt = CI;
@@ -14086,14 +14086,14 @@ class Pizlonator {
     }
 
     lowerConstantOperands(I);
-    
+
     if (AllocaInst* AI = dyn_cast<AllocaInst>(I)) {
       if (!AI->hasNUsesOrMore(1)) {
         // By this point we may have dead allocas, due to earlyLowerInstruction. Only happens for allocas
         // used as type hacks for stdfil API.
         return;
       }
-      
+
       Type* T = AI->getAllocatedType();
       Value* Size;
       std::optional<TypeSize> TSO = AI->getAllocationSize(DL);
@@ -14428,7 +14428,7 @@ class Pizlonator {
 
   void lowerIndirectBrForFunction(Function& F) {
     // Code taken from IndirectBrExpandPass and modified.
-    
+
     SmallVector<IndirectBrInst *, 1> IndirectBrs;
 
     // Set of all potential successors for indirectbr instructions.
@@ -14573,7 +14573,7 @@ class Pizlonator {
       BA->destroyConstant();
     }
   }
-  
+
   void lockDownLinkage() {
     for (GlobalVariable& G : M.globals()) {
       if (G.getLinkage() == GlobalValue::AvailableExternallyLinkage) {
@@ -14826,7 +14826,7 @@ class Pizlonator {
         InsertBefore = P->getIncomingBlock(Index)->getTerminator();
       else
         InsertBefore = I;
-      
+
       Use& U = I->getOperandUse(Index);
       if (ConstantExpr* CE = dyn_cast<ConstantExpr>(U)) {
         Instruction* NewI = getAsInstruction(CE);
@@ -14841,7 +14841,7 @@ class Pizlonator {
     for (Function& F : M.functions()) {
       if (F.isDeclaration())
         continue;
-      
+
       for (BasicBlock& BB : F) {
         std::vector<Instruction*> Insts;
         for (Instruction& I : BB)
@@ -14855,7 +14855,7 @@ class Pizlonator {
   void inferPointerAsIntLaunderingForFunction(Function& F) {
     if (verbose)
       errs() << "Inferring pointer-as-int laundering in:\n" << F << "\n";
-    
+
     // If an inttoptr's inputs unambiguously lead to a single ptrtoint, then we can take that
     // ptrtoint's capability.
     //
@@ -14936,7 +14936,7 @@ class Pizlonator {
         }
       }
     }
-    
+
     auto CapabilityOf = [&] (Value* Incoming) -> Value* {
       Instruction* I2 = dyn_cast<Instruction>(Incoming);
       if (!I2)
@@ -14949,7 +14949,7 @@ class Pizlonator {
       }
       return RawNull;
     };
-      
+
     for (auto& Pair : InferredCapabilities) {
       Instruction* I = Pair.first;
       InferredCapability ICap = Pair.second;
@@ -14978,7 +14978,7 @@ class Pizlonator {
       Value* Capability = CapabilityOf(IntToPtr->getOperand(0));
       if (Capability == RawNull)
         continue;
-      
+
       Instruction* PtrToInt = new PtrToIntInst(Capability, IntPtrTy, "filc_ptr_to_int", I);
       PtrToInt->setDebugLoc(I->getDebugLoc());
       Instruction* Neg = BinaryOperator::Create(
@@ -15003,7 +15003,7 @@ class Pizlonator {
 
   void makeEHDatas() {
     std::vector<LandingPadInst*> LPIs;
-    
+
     for (Function& F : M.functions()) {
       for (BasicBlock& BB : F) {
         LandingPadInst* LPI = BB.getLandingPadInst();
@@ -15014,7 +15014,7 @@ class Pizlonator {
 
     if (LPIs.empty())
       return;
-    
+
     std::vector<Constant*> LowTypesAndFilters;
     unsigned NumTypes = 0;
     unsigned NumFilters = 0;
@@ -15089,7 +15089,7 @@ class Pizlonator {
         assert(TypeOrFilterToAction.count(LPI->getClause(Idx)));
         Actions.push_back(TypeOrFilterToAction[LPI->getClause(Idx)]);
       }
-      
+
       if (LPI->isCleanup())
         Actions.push_back(0);
 
@@ -15403,7 +15403,7 @@ class Pizlonator {
           LifetimeAtTail[&BB][AI] = LS;
       }
     }
-    
+
     auto ExecuteLifetime = [&] (std::unordered_map<AllocaInst*, LifetimeState>& Lifetime,
                                 Instruction* I) {
       LifetimeMarker LM = analyzeLifetimeMarker(I);
@@ -15421,7 +15421,7 @@ class Pizlonator {
         break;
       }
     };
-    
+
     std::vector<BasicBlock*> Blocks;
     for (BasicBlock& BB : F)
       Blocks.push_back(&BB);
@@ -15491,12 +15491,12 @@ class Pizlonator {
         Instruction* I = &*It;
         if (verbose)
           errs() << "Escaping analysis considering " << *I << "\n";
-        
+
         if (isa<LifetimeIntrinsic>(I)) {
           ExecuteLifetime(Lifetime, I);
           continue;
         }
-        
+
         if (CallBase* CI = dyn_cast<CallBase>(I)) {
           if (Function* F = dyn_cast<Function>(CI->getCalledOperand())) {
             FunctionType* FT = CI->getFunctionType();
@@ -15521,7 +15521,7 @@ class Pizlonator {
             }
           }
         }
-        
+
         if (isa<GetElementPtrInst>(I))
           continue;
 
@@ -15545,7 +15545,7 @@ class Pizlonator {
           if (!LI->isVolatile())
             continue;
         }
-        
+
         if (StoreInst* SI = dyn_cast<StoreInst>(I)) {
           if (!SI->isVolatile()) {
             if (verbose)
@@ -15556,7 +15556,7 @@ class Pizlonator {
         }
 
         // FIXME: We could include AtomicRMW and CAS instructions here.
-        
+
         for (Value* V : I->operands()) {
           if (verbose)
             errs() << "Escaping " << V->getName() << " because it's used in a shady way.\n";
@@ -15695,7 +15695,7 @@ class Pizlonator {
   void lazifyAllocasInFunction(Function& F) {
     if (F.isDeclaration())
       return;
-    
+
     if (F.callsFunctionThatReturnsTwice()) {
       // If this function has a setjmp (or anything like it), then we cannot lazify the volatile
       // allocas. If we do lazify volatile allocas, then a variable that wasn't initialized at time of
@@ -15720,7 +15720,7 @@ class Pizlonator {
       if (AllocaInst* AI = dyn_cast<AllocaInst>(&I)) {
         if (AllocaKinds[AI] != PointerKind::Escaping)
           continue;
-        
+
         // For now, don't bother with AllocaInsts that flow into PHINodes. Pretty sure that doesn't
         // happen and it would be annoying to deal with.
         bool FoundPhi = false;
@@ -15789,7 +15789,7 @@ class Pizlonator {
     std::vector<Use*> MaybeInitialized;
     std::vector<Use*> Uninitialized;
     std::vector<Use*> NeedsLoad;
-    
+
     for (BasicBlock& BB : F) {
       std::unordered_map<AllocaInst*, AIState> State = AtHeadForBB[&BB];
       for (Instruction& I : BB) {
@@ -15866,7 +15866,7 @@ class Pizlonator {
     DominatorTree DT(F);
     PromoteMemToReg(LazyAllocas, DT);
   }
-  
+
   void lazifyAllocas() {
     for (Function& F : M.functions())
       lazifyAllocasInFunction(F);
@@ -15876,7 +15876,7 @@ class Pizlonator {
     GetElementPtrInst* GEP = dyn_cast<GetElementPtrInst>(I);
     if (!GEP)
       return;
-    
+
     unsigned ConstantOperandIndexStart = GEP->getNumOperands();
     for (unsigned Index = GEP->getNumOperands(); Index-- > 1;) {
       if (!isa<Constant>(GEP->getOperand(Index)))
@@ -16109,7 +16109,7 @@ public:
 
     if (verbose)
       errs() << "Module with indirectbr lowered:\n" << M << "\n";
-    
+
     lockDownLinkage();
     convertMisalignedAtomicsToLibcalls();
     removeIrrelevantIntrinsics();
@@ -16122,13 +16122,13 @@ public:
       errs() << "Module with irrelevant intrinsics removed, constexprs expanded, "
              << "and pointer laundering inferred:\n" << M << "\n";
     }
-    
+
     makeEHDatas();
     compileModuleAsm();
     lazifyAllocas();
     canonicalizeGEPs();
     dropUB();
-    
+
     if (verbose) {
       errs() << "Module with lowered EH data, lowered module asm, lazified allocas, and UB "
              << "dropped:\n" << M << "\n";
@@ -16139,12 +16139,12 @@ public:
     // FIXME: We could probably do this anywhere in the pass, and really all we're doing is turning
     // off the non-integralness of address space 0.
     M.setDataLayout(M.getDataLayoutAfterFilC());
-    
+
     if (verbose)
       errs() << "Prepared module:\n" << M << "\n";
 
     FunctionName = "<internal>";
-    
+
     FlightPtrTy = StructType::create({ RawPtrTy, RawPtrTy }, "filc_flight_ptr");
     OriginNodeTy = StructType::create({ RawPtrTy, RawPtrTy, Int32Ty }, "filc_origin_node");
     FunctionOriginTy = StructType::create(
@@ -16183,7 +16183,7 @@ public:
     ThreadTy = StructType::create(ThreadMembers, "filc_thread_ish");
     ThreadLayout = DL.getStructLayout(ThreadTy);
     assert(!(ThreadLayout->getElementOffset(8) & (CCAlignment - 1)));
-    
+
     ConstantRelocationTy = StructType::create(
       { IntPtrTy, Int32Ty, RawPtrTy }, "filc_constant_relocation");
     ConstexprNodeTy = StructType::create(
@@ -16233,7 +16233,7 @@ public:
         GlobalToComdat[&G] = NewComdat;
       }
     }
-    
+
     for (GlobalVariable &G : M.globals()) {
       if (shouldPassThrough(&G))
         continue;
@@ -16317,13 +16317,12 @@ public:
       "filc_comdat_link_fail", VoidTy, RawPtrTy, Int64Ty);
     OptimizedAlignmentContradiction = M.getOrInsertFunction(
       "filc_optimized_alignment_contradiction", VoidTy, FlightPtrTy, RawPtrTy);
-    /* Native, and deliberately unprefixed: the pass-emitted hook has to land on
-       trusted runtime code. A pizlonated_* entry point is a descriptor stub, so a
-       direct call to one yields a function object instead of running the body;
-       this is why every other compiler-emitted runtime call is native too. See
-       runtime/src/fasync_shared.h. */
+
+
     ResolvePending = M.getOrInsertFunction(
       "filc_resolve_pending", RawPtrTy, RawPtrTy, IntPtrTy);
+
+
     OptimizedAccessCheckFail = M.getOrInsertFunction(
       "filc_optimized_access_check_fail", VoidTy, FlightPtrTy, RawPtrTy);
     OptimizedStackAlignmentContradiction = M.getOrInsertFunction(
@@ -16489,7 +16488,7 @@ public:
       assert(NewG->getLinkage() == GlobalValue::InternalLinkage ||
              NewG->getLinkage() == GlobalValue::PrivateLinkage ||
              NewG->getLinkage() == OrigG->getLinkage());
-      
+
       if (!GlobalToComdat.count(OrigG))
         return;
 
@@ -16498,7 +16497,7 @@ public:
       NewG->setDSOLocal(OrigG->isDSOLocal());
       NewG->setComdat(GlobalToComdat[OrigG]);
     };
-    
+
     for (GlobalVariable* G : Globals)
       HandleGlobal(G);
     for (GlobalAlias* G : Aliases)
@@ -16605,7 +16604,7 @@ public:
       assert(Getter);
       return Getter;
     };
-    
+
     if (GlobalVariable* GlobalCtors = M.getGlobalVariable("llvm.global_ctors")) {
       ConstantArray* Array = cast<ConstantArray>(GlobalCtors->getInitializer());
       std::vector<Constant*> Args;
@@ -16673,7 +16672,7 @@ public:
       size_t Alignment = 0;
       if (!G->isDeclaration())
         Alignment = std::max(G->getAlignment(), DL.getABITypeAlign(G->getValueType()).value());
-      
+
       Function* NewF = GlobalToGetter[G];
       assert(NewF);
       assert(NewF->isDeclaration());
@@ -16685,7 +16684,7 @@ public:
         continue;
 
       assert(Alignment);
-      
+
       if (G->isThreadLocal()) {
         Function* SlowF = Function::Create(ThreadLocalEnsureTy, GlobalValue::PrivateLinkage,
                                            G->getAddressSpace(), "pizlonatedGS_" + G->getName(), &M);
@@ -16693,7 +16692,7 @@ public:
         SlowF->addFnAttr(Attribute::NoUnwind);
         PutImplIntoComdat(G, SlowF);
         SlowF->addFnAttr(Attribute::NoInline);
-      
+
         GlobalVariable* NewG = new GlobalVariable(
           M, RawPtrTy, false, G->getLinkage(), G->isDeclaration() ? nullptr : RawNull,
           "pizlonatedTP_" + G->getName(), nullptr, G->getThreadLocalMode());
@@ -16750,7 +16749,7 @@ public:
       SlowF->addFnAttr(Attribute::NoUnwind);
       SlowF->addFnAttr(Attribute::NoInline);
       PutImplIntoComdat(G, SlowF);
-      
+
       Constant* NewC = paddedConstant(
         constantToRestConstantWithPtrPlaceholders(G->getInitializer()));
       assert(NewC);
@@ -16821,16 +16820,16 @@ public:
 
       if (UnsafeExportGVs.count(G))
         UnsafeExports.push_back(UnsafeExport(G->getName().str(), NewDataPayloadC));
-      
+
       Constant* NewDataObjectC = ConstantExpr::getGetElementPtr(
         Int8Ty, NewDataG, ConstantInt::get(IntPtrTy, AlignmentOffset));
-      
+
       GlobalVariable* NewPtrG = new GlobalVariable(
         M, FlightPtrTy, false, GlobalValue::PrivateLinkage, FlightNull,
         "pizlonatedGP_" + G->getName());
       PutImplIntoComdat(G, NewPtrG);
       NewPtrG->setAlignment(Align(FlightPtrAlign));
-      
+
       BasicBlock* RootBB = BasicBlock::Create(C, "filc_global_getter_root", NewF);
       BasicBlock* OtherCheckBB = BasicBlock::Create(C, "filc_global_getter_other_check", NewF);
       BasicBlock* FastBB = BasicBlock::Create(C, "filc_global_getter_fast", NewF);
@@ -16842,7 +16841,7 @@ public:
       // We can load the NewPtrG in two 64-bit chunks and then check if either the lower or the
       // raw ptr as NULL. If either are NULL, then it's either not initialized yet, or we experienced
       // ptr tearing. This allows us to avoid an expensive 128-bit atomic.
-      
+
       Instruction* Branch = BranchInst::Create(SlowBB, OtherCheckBB, UndefValue::get(Int1Ty), RootBB);
       Value* LoadPtr = loadFlightPtr(NewPtrG, Branch);
       Branch->getOperandUse(0) = new ICmpInst(
@@ -16853,7 +16852,7 @@ public:
       OtherBranch->getOperandUse(0) = new ICmpInst(
         OtherBranch, ICmpInst::ICMP_EQ, flightPtrLower(LoadPtr, OtherBranch), RawNull,
         "filc_check_global");
-      
+
       ReturnInst::Create(C, LoadPtr, FastBB);
 
       ReturnInst::Create(
@@ -16907,14 +16906,14 @@ public:
           MemoryAccessData(nullptr, NewDataPayloadC, AuxPtr, AuxPtr, MemoryKind::GlobalInit), false,
           Align(Alignment), AtomicOrdering::NotAtomic, SyncScope::System, Return);
       }
-      
+
       CallInst::Create(GlobalInitializationEnd, { MyThread }, "", Return);
       MyThread = nullptr;
     }
     for (Function* F : Functions) {
       if (F->isIntrinsic())
         continue;
-      
+
       if (verbose)
         errs() << "Function before lowering: " << *F << "\n";
 
@@ -17079,7 +17078,7 @@ public:
           ReturnValue = InsertValueInst::Create(
             ReturnValue, RetSizePhi, { 1 }, "filc_insert_ret_size", ReallyReturnB);
           Return = ReturnInst::Create(C, ReturnValue, ReallyReturnB);
-          
+
           if (F->getReturnType() != VoidTy) {
             Type* T = F->getReturnType();
             RetSizePhi->addIncoming(storeCC(T, ReturnPhi, ReturnBranch, DebugLoc()), ReturnB);
@@ -17140,7 +17139,7 @@ public:
           LocalAllocaData LAD = LocalAllocaDatas[AI];
           initializeNonescapingAlloca(LAD, InsertionPoint);
         }
-        
+
         auto PopFrame = [&] (Instruction* Return) {
           new StoreInst(
             new LoadInst(
@@ -17245,7 +17244,7 @@ public:
               LAD.Payload, AI));
           AI->eraseFromParent();
         }
-        
+
         MyThread = nullptr;
 
         Function* GetterF = GlobalToGetter[OldF];
@@ -17257,7 +17256,7 @@ public:
 
         if (HasSetjmps)
           assert(NewF->callsFunctionThatReturnsTwice());
-        
+
         if (verbose)
           errs() << "New function: " << *NewF << "\n";
 
@@ -17269,7 +17268,7 @@ public:
         FrameSize = SIZE_MAX;
         NumStackAuxes = SIZE_MAX;
       }
-      
+
       FunctionName = "<internal>";
       OldF = nullptr;
       NewF = nullptr;
@@ -17312,7 +17311,7 @@ public:
         "pizlonatedGP_" + G->getName());
       PutImplIntoComdat(G, NewPtrG);
       NewPtrG->setAlignment(Align(FlightPtrAlign));
-      
+
       BasicBlock* RootBB = BasicBlock::Create(C, "filc_global_ifunc_getter_root", NewF);
       BasicBlock* OtherCheckBB = BasicBlock::Create(C, "filc_global_ifunc_getter_other_check", NewF);
       BasicBlock* FastBB = BasicBlock::Create(C, "filc_global_ifunc_getter_fast", NewF);
@@ -17321,7 +17320,7 @@ public:
       // We can load the NewPtrG in two 64-bit chunks and then check if either the lower or the
       // raw ptr as NULL. If either are NULL, then it's either not initialized yet, or we experienced
       // ptr tearing. This allows us to avoid an expensive 128-bit atomic.
-      
+
       Instruction* Branch = BranchInst::Create(SlowBB, OtherCheckBB, UndefValue::get(Int1Ty), RootBB);
       Value* LoadPtr = loadFlightPtr(NewPtrG, Branch);
       Branch->getOperandUse(0) = new ICmpInst(
@@ -17332,7 +17331,7 @@ public:
       OtherBranch->getOperandUse(0) = new ICmpInst(
         OtherBranch, ICmpInst::ICMP_EQ, flightPtrLower(LoadPtr, OtherBranch), RawNull,
         "filc_check_global_func");
-      
+
       ReturnInst::Create(C, LoadPtr, FastBB);
 
       ReturnInst* Return = ReturnInst::Create(C, UndefValue::get(FlightPtrTy), SlowBB);
@@ -17393,4 +17392,3 @@ PreservedAnalyses FilPizlonatorPass::run(Module &M, ModuleAnalysisManager&) {
   P.run();
   return PreservedAnalyses::none();
 }
-

@@ -162,7 +162,7 @@ static void fasync_native_submit(struct fasync_shared* sh) {
                   0L, 0L, 0L);
 }
 
-/* hot path runs on every access */
+// RUNS ON EVERY ACCESS
 PAS_API void* filc_resolve_pending(void* ptr, size_t size) {
   if (!ptr)
     return ptr;
@@ -182,7 +182,6 @@ PAS_API void* filc_resolve_pending(void* ptr, size_t size) {
   if (!r)
     return ptr;
 
-  /* lazy publish makes the batch visible */
   fasync_native_submit(sh);
 
   for (unsigned int spin = 0; spin < FASYNC_NATIVE_SPIN_LIMIT; spin++) {

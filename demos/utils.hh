@@ -128,24 +128,32 @@ static inline const char* read_file(int i) {
   return (const char*)demo_buf[i];
 }
 
-static inline void read_all_files(void) {
+
+
+
+
+void read_all_files() {
   for (int i = 0; i < demo_n; i++) {
 #ifdef FASYNC_IMPLICIT
     memset(demo_buf[i], 0, demo_bytes);
-    if (!fasync_pread(demo_fd[i], demo_buf[i], demo_bytes, 0))
-      exit(1);
+    if (!fasync_pread(demo_fd[i], demo_buf[i], demo_bytes, 0)) {
+        exit(1);
+    }
 #else
-    if (pread(demo_fd[i], demo_buf[i], demo_bytes, 0) != (ssize_t)demo_bytes)
-      exit(1);
+    if (pread(demo_fd[i], demo_buf[i], demo_bytes, 0) != (ssize_t)demo_bytes) {
+        exit(1);
+    }
 #endif
   }
 }
 
-static inline const char* file_data(int i) {
+const char* file_data(int i) {
   return (const char*)demo_buf[i];
 }
 
-/* Close and delete the files, free the buffers. */
+
+
+
 static inline void demo_finish(void) {
   for (int i = 0; i < demo_n; i++) {
     close(demo_fd[i]);
