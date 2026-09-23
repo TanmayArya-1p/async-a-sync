@@ -4,13 +4,11 @@
 #include "filc_async.h"
 #include "filc_async_alloc.h"
 
-/* Minimal link-level filc_async runtime. Everything this file exports let the
- * compiler-emitted symbols link and run into the pragma-async merge: submit
- * immediately fails every task with -EOPNOTSUPP, poll/wait resolve it from a
- * small identity registry, and startup validation accepts the op set that
- * Task 2's reader bakes into the meta descriptors. It is the SEED for the
- * io_uring backend (a later branch): do NOT build io_uring here, and do NOT
- * touch the fasync_* runtime.
+/* Minimal link-level filc_async runtime: lets every compiler-emitted symbol
+ * link and run. submit immediately fails each task with -EOPNOTSUPP, poll/wait
+ * resolve it from a small identity registry, and startup validation accepts
+ * the op set the compiler bakes into the descriptors. This is the seed for
+ * the io_uring backend (a later branch); nothing here touches fasync_*.
  */
 
 #define FASYNC_TASK_REGISTRY_CAPACITY 64
@@ -18,8 +16,8 @@
 static void* g_tasks[FASYNC_TASK_REGISTRY_CAPACITY];
 static size_t g_ntasks;
 
-/* Stat counters. Every task resolves instantly in this runtime, so a task
- * both completes and fails at submit time. */
+// Stat counters. Every task resolves instantly, so it completes and fails at
+// submit time.
 static unsigned long g_submitted;
 static unsigned long g_completed;
 static unsigned long g_failed;
@@ -32,8 +30,8 @@ struct filc_async_task {
     long result;
 };
 
-/* Rulings 4/5 op set: pread/pwrite -> READ/WRITE, openat, fsync, close, and
- * the `ignore` family (valid, never executed). */
+// Op set: pread/pwrite -> READ/WRITE, openat, fsync, close, and `ignore`
+// (valid, never executed).
 enum fasync_op {
     FASYNC_OP_UNKNOWN,
     FASYNC_OP_READ,
@@ -44,8 +42,6 @@ enum fasync_op {
     FASYNC_OP_IGNORE
 };
 
-/* Read the `op=<name>` token out of the null-terminated option-string array
- * the pass copied into meta->opts. Unknown -> FASYNC_OP_UNKNOWN. */
 static bool streq(const char* a, const char* b)
 {
     if (!a || !b)
@@ -59,6 +55,8 @@ static bool streq(const char* a, const char* b)
     return *a == *b;
 }
 
+// Read the `op=<name>` token out of the null-terminated option-string array
+// the pass copied into meta->opts. Unknown -> FASYNC_OP_UNKNOWN.
 static enum fasync_op opcode_from(const char* const* opts)
 {
     if (!opts)
@@ -85,11 +83,10 @@ static enum fasync_op opcode_from(const char* const* opts)
     return FASYNC_OP_UNKNOWN;
 }
 
-/* arg_kinds_ok: Ruling-5. noped_args is the number of fd=/buf= opts the pass
- * counted; the five real ops consume at least one of them. `ignore` is exempt
- * (noped_args may be 0 -- the immediate-fail family must still validate). An
- * unknown op is rejectable by this validator, but the compiler already made
- * unknown ops a compile-time fatal (Ruling-4). */
+/* arg_kinds_ok: noped_args is the number of fd=/buf= options the pass
+ * counted; the five real ops consume at least one of them. `ignore` is
+ * exempt (noped_args may be 0). An unknown op is invalid, though the
+ * compiler already makes unknown ops a compile-time fatal. */
 static bool arg_kinds_ok(const filc_async_meta* m)
 {
     if (!m)
@@ -97,8 +94,7 @@ static bool arg_kinds_ok(const filc_async_meta* m)
     if (m->noped_args > m->nargs)
         return false;
     if (m->nargs != 0) {
-        /* Flexible-array sanity: a descriptor for a real function must have a
-         * real args[] tail (the pass emits one {i32,i32} per param). */
+        // A descriptor for a real function must have a real args[] tail.
         const void* arg_array = m->args;
         if (arg_array == NULL)
             return false;
@@ -107,7 +103,7 @@ static bool arg_kinds_ok(const filc_async_meta* m)
     if (op == FASYNC_OP_UNKNOWN)
         return false;
     if (op == FASYNC_OP_IGNORE)
-        return true; /* Ruling-5: noped_args==0 is fine for ignore */
+        return true; /* noped_args==0 is fine for ignore */
     return m->noped_args >= 1;
 }
 
@@ -134,10 +130,9 @@ void* filc_async_submit(const filc_async_meta* meta, void* impl, void* opts,
     if (!meta || !staged_args || nargs != meta->nargs)
         filc_async_fatal("filc_async_submit: bad call");
 
-    /* Staged args, impl, opts are owned by the runtime from here; the list of
-     * things this runtime does NOT look at is deliberate -- it resolves
-     * instantly regardless of op. They are kept on the task record so a later
-     * real backend can reap them. */
+    // Staged args, impl, opts are owned by the runtime from here. This
+    // runtime analyses none of them -- it resolves instantly regardless of
+    // op -- but they are kept on the task record for a real backend to reap.
     struct filc_async_task* t = (struct filc_async_task*)filc_async_alloc(sizeof *t, 16);
     if (!t)
         filc_async_fatal("filc_async_submit: out of memory");
@@ -145,8 +140,7 @@ void* filc_async_submit(const filc_async_meta* meta, void* impl, void* opts,
     t->impl = impl;
     t->opts = opts;
     t->meta = meta;
-    /* Immediate-fail placeholder: the io_uring backend replaces this with real
-     * dispatch. Until then every task is born failed and resolves instantly. */
+    // Immediate-fail placeholder; the io_uring backend replaces the dispatch.
     t->state = 2;
     t->result = -EOPNOTSUPP;
 
@@ -220,11 +214,9 @@ void filc_async_validate_table(const filc_async_meta* const* metas)
 
 void filc_async_fatal(const char* msg)
 {
-    /* Runtime objects cannot reach pizlonated libc (fprintf/abort): the
-     * driver links `-lc` BEFORE `-lpizlo`, so a reference introduced inside a
-     * libpizlo.a member never resolves. Go through the zsys native thunks
-     * that our own archive exports instead (same as fasync.c's
-     * zsys_io_uring_* usage). */
+    // Runtime objects in libpizlo.a cannot reach pizlonated libc (fprintf/
+    // abort): the driver links `-lc` BEFORE `-lpizlo`. Go through the zsys
+    // native thunks our own archive exports instead, like fasync.c does.
     static const char prefix[] = "filc_async: fatal: ";
     zsys_write(2, prefix, sizeof(prefix) - 1);
     for (const char* p = msg; *p; ++p)
