@@ -160,6 +160,7 @@ if [ "$PATCHED_READY" -eq 1 ]; then
   # against the arena object alone; t_pragma_ignore needs the patched compiler
   # to rewrite its annotated call site into filc_async_submit.
   run_filc_test t_pragma_alloc
+  run_patched t_pragma_ignore "$HERE/t_pragma_ignore.c"
 
   # The two-backend comparison, as a standalone script: the same word-count
   # source built one way with plain Fil-C and one way with the patched
