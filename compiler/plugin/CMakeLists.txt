@@ -4,10 +4,10 @@ project(FilAsyncPlugin)
 find_package(LLVM REQUIRED CONFIG NO_MODULE)
 message(STATUS "Found LLVM ${LLVM_PACKAGE_VERSION} in ${LLVM_DIR}")
 
-add_library(FilAsync MODULE ../upstream-overrides/FilAsync.cpp)
+add_library(FilAsync MODULE ../upstream-overrides/llvm/lib/Transforms/Instrumentation/FilAsync.cpp)
 target_include_directories(FilAsync PRIVATE
   ${LLVM_INCLUDE_DIRS}
-  ${CMAKE_CURRENT_SOURCE_DIR}/../upstream-overrides
+  ${CMAKE_CURRENT_SOURCE_DIR}/../upstream-overrides/llvm/lib/Transforms/Instrumentation
   )
 target_compile_features(FilAsync PRIVATE cxx_std_17)
 # The LLVM 20 tree this is loaded into was built with -fno-rtti -fno-exceptions;
