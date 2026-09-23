@@ -33,6 +33,7 @@
 #include "FilAsync.h"
 
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/ADT/Twine.h"
@@ -44,10 +45,12 @@
 #include "llvm/IR/GlobalValue.h"
 #include "llvm/IR/GlobalVariable.h"
 #include "llvm/IR/IRBuilder.h"
+#include "llvm/IR/Instructions.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Type.h"
 #include "llvm/Passes/PassBuilder.h"
 #include "llvm/Passes/PassPlugin.h"
+#include "llvm/Support/CommandLine.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Transforms/Utils/ModuleUtils.h"
@@ -67,6 +70,16 @@ static const StringRef KnownOpcodes[] = {
 };
 
 bool isKnownOpcode(StringRef Op) { return is_contained(KnownOpcodes, Op); }
+
+// Ruling-2 (Task 4): the reader's "enrolled ..." lines print only under
+// `-filc-async-debug`, default OFF, so the future real clang driver (Task 5)
+// stays quiet. opt dlopens the plugin mid-parse (the `-load-pass-plugin`
+// callback fires while the command line is still being consumed), so this
+// file-local option is registered by the time a trailing `-filc-async-debug`
+// token is looked up.
+static cl::opt<bool> FilAsyncDebug(
+    "filc-async-debug", cl::init(false),
+    cl::desc("Print enrolled filc_async functions and their options"));
 
 // Ruling-4 kind constants (mirror FILC_ASYNC_ARG_* in the plan's runtime
 // header).
@@ -128,6 +141,18 @@ static Constant *findOrCreateStringGlobal(Module &M, StringRef S) {
   return new GlobalVariable(M, Init->getType(), /*isConstant=*/true,
                             GlobalValue::PrivateLinkage, Init,
                             ".filc_async.opt");
+}
+
+// The annotation graph's leaf scalars/int-pool constants (ConstantInt etc.) are
+// value-cached and must NOT be destroyed via Constant::destroyConstant (their
+// impls abort). Pool-owned ConstantDataSequential (string bytes) and
+// ConstantAggregateZero are likewise non-destroyable: destroyConstantImpl
+// erases the owning unique_ptr, so deleteConstant afterwards reads freed
+// memory. Only the container constants -- whose *operand-uses* pin orphaned
+// globals alive -- are destroyed; they are unlinked from FoldingSet pools
+// without being deleted, so the follow-up deleteConstant is safe.
+static bool isPoolConstant(Constant *C) {
+  return isa<ConstantArray, ConstantStruct, ConstantVector, ConstantExpr>(C);
 }
 
 } // anonymous namespace
@@ -280,6 +305,160 @@ void FilAsyncPass::emitMetaTableAndCtor(Module &M,
   appendToGlobalCtors(M, Ctor, /*Priority=*/65535);
 }
 
+void FilAsyncPass::rewriteCallSites(Module &M) {
+  LLVMContext &Ctx = M.getContext();
+  Type *Int64Ty = Type::getInt64Ty(Ctx);
+  PointerType *PtrTy = PointerType::getUnqual(Ctx);
+
+  // Ruling-6 signatures: alloc(size: i64, align: i64) -> ptr;
+  // submit(meta, impl, opts, staging, nargs) -> ptr.
+  FunctionCallee AllocCallee =
+      M.getOrInsertFunction("filc_async_alloc",
+                            FunctionType::get(PtrTy, {Int64Ty, Int64Ty}, false));
+  FunctionCallee SubmitCallee = M.getOrInsertFunction(
+      "filc_async_submit", FunctionType::get(
+                               PtrTy, {PtrTy, PtrTy, PtrTy, PtrTy, Int64Ty},
+                               /*isVarArg=*/false));
+
+  for (const auto &KV : Annotated) {
+    Function *F = const_cast<Function *>(KV.first);
+    auto DesIt = Emitted.find(F);
+    if (DesIt == Emitted.end()) {
+      // Task 3 always emitted descriptors for every enrolled entry, so this
+      // cannot happen; guard anyway so a reader/emitter divergence names the
+      // function instead of dereferencing a null meta.
+      errs() << "FilAsync: no descriptor emitted for " << F->getName() << "\n";
+      report_fatal_error("FilAsync: internal error: missing descriptor");
+    }
+    GlobalVariable *Meta = DesIt->second.Meta;
+    GlobalVariable *Opts = DesIt->second.Opts;
+
+    // Ruling-7: snapshot the direct CallBase users first. Rewriting a call
+    // does not erase F, but transforming while walking F->users() would be
+    // fragile; collect-then-transform keeps every rewrite on the same basis.
+    SmallVector<CallBase *, 8> DirectCalls;
+    for (User *U : F->users()) {
+      if (auto *CB = dyn_cast<CallBase>(U))
+        if (CB->getCalledOperand() == F)
+          DirectCalls.push_back(CB);
+    }
+
+    unsigned NArgs = F->getFunctionType()->getNumParams();
+    for (CallBase *CB : DirectCalls) {
+      IRBuilder<> Builder(CB);
+      // Staging: nargs filc_ptr slots x 16 bytes, 16-byte alignment (two i64
+      // words per slot: intval + capability lower word).
+      Value *Staging = Builder.CreateCall(
+          AllocCallee,
+          {ConstantInt::get(Int64Ty, NArgs * 16), ConstantInt::get(Int64Ty, 16)},
+          "staging");
+
+      // Ruling-4: per parameter i, store the intval at slot i*2 and the
+      // (explicit) capability zero-word at slot i*2+1. Pointers become
+      // ptrtoint i64; unsigned integers are zero-extended (i32 fd/flags/mode
+      // -> i64); anything unrepresentable is recorded as an ignored zero.
+      for (unsigned I = 0; I < NArgs; ++I) {
+        Value *Arg = CB->getArgOperand(I);
+        Type *ArgTy = Arg->getType();
+        Value *IntVal;
+        if (ArgTy->isPointerTy()) {
+          IntVal = Builder.CreatePtrToInt(Arg, Int64Ty);
+        } else if (ArgTy->isIntegerTy() && ArgTy->getIntegerBitWidth() < 64) {
+          IntVal = Builder.CreateZExt(Arg, Int64Ty);
+        } else if (ArgTy->isIntegerTy()) {
+          IntVal = Arg;
+        } else {
+          IntVal = ConstantInt::get(Int64Ty, 0);
+        }
+        Value *IntGEP = Builder.CreateGEP(
+            Int64Ty, Staging, {ConstantInt::get(Int64Ty, I * 2)});
+        Builder.CreateStore(IntVal, IntGEP);
+        Value *CapGEP = Builder.CreateGEP(
+            Int64Ty, Staging, {ConstantInt::get(Int64Ty, I * 2 + 1)});
+        Builder.CreateStore(ConstantInt::get(Int64Ty, 0), CapGEP);
+      }
+
+      // R3: opaque-pointer `ptr` operands -- no bitcasts, the globals and the
+      // renamed implementation pass straight through. The returned flight pair
+      // is the pending result pointer whose deref triggers the existing
+      // filc_resolve_pending hook; FilPizlonator pizlonates the return.
+      CallInst *Submit = Builder.CreateCall(
+          SubmitCallee,
+          {Meta, F, Opts, Staging, ConstantInt::get(Int64Ty, NArgs)},
+          "async_result");
+
+      if (CB->getType()->isVoidTy()) {
+        CB->eraseFromParent();
+      } else if (CB->getType() == Submit->getType()) {
+        // Ruling-5: the fixture's annotated functions return ptr, so result
+        // types match; replacement is a pure swap.
+        CB->replaceAllUsesWith(Submit);
+        CB->eraseFromParent();
+      } else {
+        // Non-ptr non-void result: submit's ptr result cannot stand in for it.
+        // Prototype scope has no such calls; leave the old call in place so
+        // the module stays valid and name the function.
+        errs() << "FilAsync: call to " << F->getName() << " returns "
+               << *CB->getType()
+               << " but filc_async_submit returns ptr; call left in place\n";
+      }
+    }
+  }
+}
+
+void FilAsyncPass::eraseAnnotations(Module &M) {
+  // R8: erase the consumed annotation infrastructure and nothing else.
+  //
+  // Erasing llvm.global.annotations alone is not enough: its initializer is a
+  // pool-uniqued ConstantArray whose operand uses (-> the per-entry struct
+  // constants -> the .args / .str / .str.1 globals) survive the GlobalVariable
+  // for as long as the enclosing constants are referenced by the constant
+  // pool, so those globals keep spurious users and would be left behind. We
+  // therefore sever GA from its initializer and destroy the whole annotation
+  // constant graph top-down (a destroying parent drops its children's use
+  // counts; each node is freed only once it is genuinely use_empty -- this
+  // keeps shared leaves alive: the opts arrays are live users of the option
+  // .str globals, so those stay). Only GlobalVariable leaves are erased from
+  // the module; Functions/aliases (including the enrolled impls) are left
+  // untouched, and special globals like llvm.global_ctors are unreachable
+  // from the annotation graph and are never considered.
+  GlobalVariable *GA = M.getNamedGlobal("llvm.global.annotations");
+  if (!GA || !GA->hasInitializer())
+    return;
+
+  Constant *Root = GA->getInitializer();
+  GA->setInitializer(nullptr);
+  GA->eraseFromParent();
+
+  // Pre-order worklist gives parents before children.
+  SmallVector<Constant *, 16> Worklist;
+  SmallPtrSet<Constant *, 16> Seen;
+  Seen.insert(Root);
+  Worklist.push_back(Root);
+  for (size_t I = 0; I < Worklist.size(); ++I) {
+    Constant *C = Worklist[I];
+    for (Use &U : C->operands()) {
+      if (auto *Child = dyn_cast<Constant>(U.get()))
+        if (Seen.insert(Child).second)
+          Worklist.push_back(Child);
+    }
+  }
+
+  for (Constant *C : Worklist) {
+    if (auto *GV = dyn_cast<GlobalValue>(C)) {
+      // GlobalVariables in the annotation graph (.args and the marker/source
+      // .str globals) become use-empty once the constants around them are
+      // destroyed. Functions (the enrolled impls) and GlobalAliases/IFuncs
+      // are never erased.
+      if (auto *GVar = dyn_cast<GlobalVariable>(GV))
+        if (GVar->use_empty())
+          GVar->eraseFromParent();
+    } else if (isPoolConstant(C) && C->use_empty()) {
+      C->destroyConstant();
+    }
+  }
+}
+
 bool FilAsyncPass::enrollAnnotatedFunctions(Module &M) {
   GlobalVariable *GA = M.getNamedGlobal("llvm.global.annotations");
   if (!GA || !GA->hasInitializer()) {
@@ -333,7 +512,7 @@ bool FilAsyncPass::enrollAnnotatedFunctions(Module &M) {
       }
     }
 
-    if (Debug) {
+    if (FilAsyncDebug) {
       errs() << "enrolled " << F->getName() << "\n";
       for (StringRef Opt : Info.opts)
         errs() << "  " << Opt << "\n";
@@ -366,10 +545,21 @@ PreservedAnalyses FilAsyncPass::run(Module &M, ModuleAnalysisManager &) {
     std::string OrigName = F->getName().str();
     renameBody(F, OrigName);
     GlobalVariable *Opts = emitOpts(M, OrigName, *KV.second);
-    Metas.push_back(emitMeta(F, OrigName, *KV.second, Opts));
+    GlobalVariable *Meta = emitMeta(F, OrigName, *KV.second, Opts);
+    Emitted[F] = {Opts, Meta};
+    Metas.push_back(Meta);
   }
   if (!Metas.empty())
     emitMetaTableAndCtor(M, Metas);
+
+  // Task 4: rewrite every direct call site into the staging+submit sequence,
+  // then drop the consumed annotations so FilPizlonator never sees them. Only
+  // when the pass actually enrolled filc_async entries: a module whose
+  // llvm.global.annotations holds nothing for us keeps it for other users.
+  if (!Annotated.empty()) {
+    rewriteCallSites(M);
+    eraseAnnotations(M);
+  }
 
   // Emission mutated the module; everything else must be recomputed.
   return PreservedAnalyses::none();
