@@ -1,24 +1,18 @@
-/* tests/t_pragma_ignore.c -- the link+run end-to-end proof for the
- * immediate-fail runtime.
+/* tests/t_pragma_ignore.c -- link+run proof for the immediate-fail runtime.
  *
- * `somesuch` is annotated with op=ignore (Ruling-5: valid, never executed,
- * resolves instantly with -EOPNOTSUPP). The patched compiler rewrites the call
- * in main into staging + filc_async_submit, and the runtime resolves it via
- * wait -> -EOPNOTSUPP != 0 -> PASS. Ruling-2: the function returns a POINTER
- * (the pass's result-typing guard would refuse to rewrite an `int` return).
+ * `somesuch` is annotated op=ignore (valid, never executed, resolves instantly
+ * with -EOPNOTSUPP). The patched compiler rewrites the call in main into
+ * staging + filc_async_submit; wait() -> -EOPNOTSUPP != 0 -> PASS. The
+ * function returns a POINTER (a non-pointer return would be left in place).
  *
- * somesuch is defined here (not just declared) because the pass passes the
- * renamed implementation `&__filc_async_somesuch` to submit as an argument,
- * and a mere declaration would leave that symbol undefined at link time. The
- * body is never called -- the rewrite replaces every call site.
+ * somesuch is defined here (not just declared) because submit receives the
+ * renamed implementation `&__filc_async_somesuch`; a mere declaration would
+ * leave that symbol undefined at link time. The body is never called.
  *
- * The body must not be a compile-time-removable pure computation: at -O1+ the
- * function passes AND the inliner run BEFORE FilAsyncPass. A body like
- * `return 0` lets SCCP prove the call is side-effect-free and delete it, and
- * a small body gets inlined into main -- either way the pass is left with no
- * call site to rewrite. The volatile sink keeps the body non-pure, and
- * `noinline` keeps the call site out of the inliner; once the rewrite runs,
- * main calls filc_async_submit instead and the body is never called at all.
+ * The body must not be compile-time-removable: at -O1+ the optimizer runs
+ * BEFORE FilAsyncPass, so a pure body like `return 0` would be deleted and a
+ * small body inlined, leaving no call site to rewrite. The volatile sink
+ * keeps the body non-pure and `noinline` keeps the call out of the inliner.
  */
 #include <stdio.h>
 #include "filc_async.h"
