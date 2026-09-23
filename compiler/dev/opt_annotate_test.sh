@@ -1,19 +1,19 @@
 #!/bin/sh
-# opt_annotate_test.sh -- opt-level FIL async test (plan Task 3 emission +
-# Task 4 call-site rewrite).
+# opt_annotate_test.sh -- opt-level test of the FilAsync pass: descriptor
+# emission, call-site rewriting, and annotation erasure.
 #
-# Generates the two-function annotation fixture with HOST clang (Ruling-7: the
-# patched clang's -S -emit-llvm output is already pizlonated, annotation
-# pointers undef), runs the filc-async pass under the Fil-C LLVM-20 opt, and
-# asserts:
-#   - Task 3: the brief's six greps plus the meta field-order/initializer
-#     check (Ruling-R5: struct field order + [nargs x {i32,i32}] tail, not the
-#     post-pizlonation 16-byte offsets) and the Ruling-3 ctor priority;
-#   - Task 4: the call-site rewrite greps (@filc_async_alloc / submit, the
-#     call referencing its meta, original direct @procread/@uopenat calls gone,
-#     staging stores), the annotation erasure (llvm.global.annotations and the
-#     use-empty .args/.str globals gone while the opts-array .str globals stay
-#     alive), and the Ruling-2 debug gate (-filc-async-debug prints "enrolled").
+# Generates the two-function annotation fixture with HOST clang (the patched
+# clang's -S -emit-llvm output is already pizlonated, annotation pointers
+# undef), runs the pass under the Fil-C LLVM-20 opt, and asserts:
+#   - emission: the meta/opts/renamed-body/table/ctor greps, the meta
+#     field-order/initializer check ({name,nargs,noped_args,flags,result,
+#     opts,args[]} with a [nargs x {i32,i32}] tail), and the ctor's 65535
+#     priority;
+#   - rewrite: alloc/submit greps, each call referencing its meta, original
+#     direct calls gone, staging intval/capability stores;
+#   - erasure: llvm.global.annotations and use-empty .args/.str globals gone
+#     while the opts-array .str globals stay alive;
+#   - the -filc-async-debug gate (enrolled lines print only when enabled).
 #
 # Usage: ./compiler/dev/opt_annotate_test.sh
 #        HOST_CC=/usr/bin/clang ./compiler/dev/opt_annotate_test.sh
@@ -37,11 +37,10 @@ OUT_ERR="$TMP/out.err"
 
 mkdir -p "$TMP"
 
-# Two annotated functions, each in its own push/pop, both called from main:
-# declared-only-and-never-used functions get no llvm.global.annotations entry
-# (Task 2 finding). Return types are pointers (Ruling-2 -> result = PTR = 2).
-# main passes VARIABLE arguments so the rewrite's zext/ptrtoint intval
-# instructions are not folded away (literal 0s would become plain i64 0).
+# Two annotated functions, each declared and called from main: declared-but-
+# unused functions get no llvm.global.annotations entry. Return types are
+# pointers (-> result = PTR = 2). main passes VARIABLE arguments so the
+# rewrite's zext/ptrtoint intval instructions are not folded away.
 cat > "$SRC" <<'EOF'
 #pragma clang attribute push(__attribute__((annotate("filc_async", "op=pread", "fd=0", "buf=1"))), apply_to=function)
 void* procread(int fd, void* buf, unsigned long n);
@@ -73,13 +72,11 @@ cmake --build "$BUILD_DIR"
 echo "### running filc-async"
 "$OPT" -load-pass-plugin="$PLUGIN" -passes="filc-async" "$IN" -S -o "$OUT"
 
-# Ruling-2: the "enrolled ..." lines print only under -filc-async-debug. opt
-# dlopens the plugin mid-parse (the -load-pass-plugin callback fires while the
-# command line is still being consumed), so this trailing flag is registered by
-# the time it is looked up. Guard the invocation: against a plugin that does
-# not register the flag (Task 3), opt dies on "Unknown command line argument"
-# and the R2 assertion below reports FAIL.
-echo "### running filc-async with -filc-async-debug (R2 gate check)"
+# The "enrolled ..." lines print only under -filc-async-debug. opt dlopens
+# the plugin mid-parse, so the flag is registered by the time a trailing
+# -filc-async-debug token is looked up; a plugin that fails to register it
+# makes opt die on "Unknown command line argument" and the check below FAILs.
+echo "### running filc-async with -filc-async-debug (enrolled-lines gate)"
 if "$OPT" -load-pass-plugin="$PLUGIN" -filc-async-debug -passes="filc-async" \
     "$IN" -S -o /dev/null 2> "$OUT_ERR"; then
   DEBUG_OPT_OK=1
@@ -108,7 +105,7 @@ expect_grep '@__filc_async_meta_' 'per-TU meta table (@__filc_async_meta_*)'
 expect_grep 'filc_async_ctor' 'table ctor (filc_async_ctor)'
 expect_grep '@filc_async_validate_table' 'validator declared/called (@filc_async_validate_table)'
 
-# Meta field-order / initializer check (Ruling-R5). Fixture facts:
+# Meta field-order / initializer check. Fixture facts:
 #   procread: nargs=3, noped=2 (fd=,buf=), flags=0, result=PTR(2),
 #             kinds: fd=0 -> 4 (ARG_FD), buf=1 -> 3 (ARG_BUFFER_OUT, op=pread),
 #             arg2 -> 0 (ARG_IGNORED)
@@ -158,13 +155,13 @@ else
   fail 'uopenat meta definition line not found (field-order check)'
 fi
 
-# Ruling-3: the table ctor must be LAST in init order (priority 65535, not 0).
+# The table ctor must be LAST in init order (priority 65535, not 0).
 expect_grep 'i32 65535, ptr @__filc_async_ctor' 'ctor registered at priority 65535 (Ruling-3)'
-# Ruling-6: opts is [<nopts+1> x ptr], internal, trailing null.
+# opts is [<nopts+1> x ptr], internal, trailing null.
 expect_grep '@__filc_opts_procread = internal constant [4 x ptr]' 'opts array [nopts+1 x ptr], internal linkage'
 expect_grep '@__filc_opts_procread = internal constant [4 x ptr] [ptr @' 'opts entries are real pointer constants'
 
-# ---- Task 4: call-site rewrite (brief Step 1) ----
+# ---- call-site rewriting ----
 expect_grep '@filc_async_alloc' 'staging alloc present (@filc_async_alloc)'
 expect_grep '@filc_async_submit' 'submit present (@filc_async_submit)'
 expect_grep '@filc_async_submit(ptr @__filc_meta_procread' 'procread call references its meta'
@@ -172,14 +169,14 @@ expect_grep '@filc_async_submit(ptr @__filc_meta_uopenat' 'uopenat call referenc
 expect_grep '@filc_async_submit(ptr @__filc_meta_procread, ptr @__filc_async_procread, ptr @__filc_opts_procread' \
   'submit passes meta, renamed impl, opts in order'
 
-# Staging stores (Ruling-4): intval = zext(i32 fd/flags/mode) for integer
-# params and ptrtoint(buffer) for the pointer param; capability word zeroed.
+# Staging stores: intval = zext(i32 fd/flags/mode) for integer params and
+# ptrtoint(buffer) for the pointer param; capability word zeroed.
 expect_grep 'zext i32 %' 'integer params zero-extended to intval (R4)'
 expect_grep 'ptrtoint ptr %' 'buffer param ptrtoint-ed to intval (R4)'
 
-# Original direct calls to the annotated functions are gone. Task 3's rename
+# Original direct calls to the annotated functions are gone. The rename
 # already renamed the declaration object itself, so a leftover direct call
-# prints as `call ... @__filc_async_procread(...)` (not `@procread(...)`) --
+# would print as `call ... @__filc_async_procread(...)` (not `@procread(...)`) --
 # assert the load-bearing form: no `call` instruction may use the renamed body
 # as its callee. The rewritten sites call @filc_async_submit instead. Keep the
 # bare `@procread(`/`@uopenat(` sanity greps too.
@@ -204,7 +201,7 @@ else
   pass 'bare @uopenat( absent (sanity)'
 fi
 
-# ---- Task 4: annotation erasure (R8) ----
+# ---- annotation erasure ----
 if grep -qF 'llvm.global.annotations' "$OUT"; then
   fail 'llvm.global.annotations erased'
 else
@@ -233,7 +230,7 @@ expect_grep '@__filc_opts_procread = internal constant [4 x ptr] [ptr @.str' \
 expect_grep '@__filc_opts_uopenat = internal constant [4 x ptr] [ptr @.str' \
   'uopenat opts array still references its .str globals (retained)'
 
-# ---- Ruling-2: debug gate ----
+# ---- debug gate: "enrolled ..." only under -filc-async-debug ----
 if [ "$DEBUG_OPT_OK" -eq 1 ] && grep -qF 'enrolled procread' "$OUT_ERR"; then
   pass 'debug lines print under -filc-async-debug (R2 gate)'
 else
