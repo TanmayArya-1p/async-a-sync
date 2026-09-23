@@ -75,19 +75,22 @@ echo "== compiling native io_uring implementations (host clang, unsafe)"
 
 echo "== compiling async runtime (filcc, memory-safe, capability-checked)"
 "$FILCC" -O3 -g -W -Werror -I"$HERE/src" \
-  -c -o "$OBJ/fil-pizlo-async.o" "$HERE/src/fasync.c"
+  -c -o "$OBJ/fil-pizlo-fasync.o" "$HERE/src/fasync.c"
 "$FILCC" -O3 -g -W -Werror -I"$HERE/src" \
   -c -o "$OBJ/fil-pizlo-syscalls.o" "$HERE/src/fasync_syscalls.c"
 "$FILCC" -O3 -g -W -Werror -I"$HERE/src" \
   -c -o "$OBJ/fil-pizlo-token.o" "$HERE/src/fasync_token.c"
 "$FILCC" -O3 -g -W -Werror -I"$HERE/src" \
   -c -o "$OBJ/fil-pizlo-dep.o" "$HERE/src/fasync_dep.c"
+"$FILCC" -O3 -g -W -Werror -I"$HERE/src" \
+  -c -o "$OBJ/fil-pizlo-arena.o" "$HERE/src/filc_async_arena.c"
 echo "== splicing into a private copy of libpizlo.a"
 cp "$FILC_ROOT/pizfix/lib/libpizlo.a" "$LIB/libpizlo.a"
 ( cd "$LIB" && ar r libpizlo.a \
     "$OBJ/pas-pizlo-release-filc_native_forwarders.o" \
     "$OBJ/fil-pizlo-async-native.o" \
-    "$OBJ/fil-pizlo-async.o" \
+    "$OBJ/fil-pizlo-fasync.o" \
+    "$OBJ/fil-pizlo-arena.o" \
     "$OBJ/fil-pizlo-syscalls.o" \
     "$OBJ/fil-pizlo-token.o" \
     "$OBJ/fil-pizlo-dep.o" >/dev/null && ranlib libpizlo.a )

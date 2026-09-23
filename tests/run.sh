@@ -155,6 +155,12 @@ if [ "$PATCHED_READY" -eq 1 ]; then
   RUN_PATCHED_FLAGS="-DFASYNC_IMPLICIT" run_patched demo_wordcount \
     "$REPO/demos/demo_wordcount.c" "$OUT"
 
+  # The pragma-async interface tests. t_pragma_alloc uses only the allocator
+  # functions (no annotations), so it compiles and links with the stock filcc
+  # against the arena object alone; t_pragma_ignore needs the patched compiler
+  # to rewrite its annotated call site into filc_async_submit.
+  run_filc_test t_pragma_alloc
+
   # The two-backend comparison, as a standalone script: the same word-count
   # source built one way with plain Fil-C and one way with the patched
   # compiler + io_uring, run on a real filesystem, and reported as two
