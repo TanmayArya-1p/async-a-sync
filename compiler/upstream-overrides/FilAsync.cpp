@@ -345,6 +345,19 @@ void FilAsyncPass::rewriteCallSites(Module &M) {
 
     unsigned NArgs = F->getFunctionType()->getNumParams();
     for (CallBase *CB : DirectCalls) {
+      // Decide result handling BEFORE inserting anything: a non-void non-ptr
+      // return cannot be replaced by submit's ptr result, so skip the site
+      // entirely -- diagnostic only, no staging/submit. Inserting the sequence
+      // first and then leaving the old call would fire the async op alongside
+      // the synchronous one.
+      bool IsVoid = CB->getType()->isVoidTy();
+      if (!IsVoid && !CB->getType()->isPointerTy()) {
+        errs() << "FilAsync: call to " << F->getName() << " returns "
+               << *CB->getType()
+               << " but filc_async_submit returns ptr; call left in place\n";
+        continue;
+      }
+
       IRBuilder<> Builder(CB);
       // Staging: nargs filc_ptr slots x 16 bytes, 16-byte alignment (two i64
       // words per slot: intval + capability lower word).
@@ -355,8 +368,10 @@ void FilAsyncPass::rewriteCallSites(Module &M) {
 
       // Ruling-4: per parameter i, store the intval at slot i*2 and the
       // (explicit) capability zero-word at slot i*2+1. Pointers become
-      // ptrtoint i64; unsigned integers are zero-extended (i32 fd/flags/mode
-      // -> i64); anything unrepresentable is recorded as an ignored zero.
+      // ptrtoint i64; integers up to 64 bits are zero-extended (i32
+      // fd/flags/mode -> i64) or passed through at exactly i64; anything
+      // wider (i128/i256) or otherwise unrepresentable is recorded as an
+      // ignored zero.
       for (unsigned I = 0; I < NArgs; ++I) {
         Value *Arg = CB->getArgOperand(I);
         Type *ArgTy = Arg->getType();
@@ -365,7 +380,7 @@ void FilAsyncPass::rewriteCallSites(Module &M) {
           IntVal = Builder.CreatePtrToInt(Arg, Int64Ty);
         } else if (ArgTy->isIntegerTy() && ArgTy->getIntegerBitWidth() < 64) {
           IntVal = Builder.CreateZExt(Arg, Int64Ty);
-        } else if (ArgTy->isIntegerTy()) {
+        } else if (ArgTy->isIntegerTy() && ArgTy->getIntegerBitWidth() == 64) {
           IntVal = Arg;
         } else {
           IntVal = ConstantInt::get(Int64Ty, 0);
@@ -387,20 +402,14 @@ void FilAsyncPass::rewriteCallSites(Module &M) {
           {Meta, F, Opts, Staging, ConstantInt::get(Int64Ty, NArgs)},
           "async_result");
 
-      if (CB->getType()->isVoidTy()) {
-        CB->eraseFromParent();
-      } else if (CB->getType() == Submit->getType()) {
-        // Ruling-5: the fixture's annotated functions return ptr, so result
-        // types match; replacement is a pure swap.
-        CB->replaceAllUsesWith(Submit);
+      if (IsVoid) {
         CB->eraseFromParent();
       } else {
-        // Non-ptr non-void result: submit's ptr result cannot stand in for it.
-        // Prototype scope has no such calls; leave the old call in place so
-        // the module stays valid and name the function.
-        errs() << "FilAsync: call to " << F->getName() << " returns "
-               << *CB->getType()
-               << " but filc_async_submit returns ptr; call left in place\n";
+        // Ruling-5: the fixture's annotated functions return ptr, so result
+        // types match (both opaque `ptr`); replacement is a pure swap. The
+        // non-ptr non-void case was rejected above, before any insertion.
+        CB->replaceAllUsesWith(Submit);
+        CB->eraseFromParent();
       }
     }
   }
