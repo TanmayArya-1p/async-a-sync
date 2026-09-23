@@ -14401,7 +14401,8 @@ class Pizlonator {
     return (G->getName() == "llvm.global_ctors" ||
             G->getName() == "llvm.global_dtors" ||
             G->getName() == "llvm.used" ||
-            G->getName() == "llvm.compiler.used");
+            G->getName() == "llvm.compiler.used" ||
+            G->getName() == "llvm.global.annotations");
   }
 
   bool shouldPassThrough(GlobalValue* G) {
@@ -14597,7 +14598,8 @@ class Pizlonator {
              G.getName() == "llvm.global_ctors" ||
              G.getName() == "llvm.global_dtors" ||
              G.getName() == "llvm.used" ||
-             G.getName() == "llvm.compiler.used");
+             G.getName() == "llvm.compiler.used" ||
+             G.getName() == "llvm.global.annotations");
 
       /* FIXME: Don't even know what this is? */
       assert(G.getLinkage() != GlobalValue::CommonLinkage);
