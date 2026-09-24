@@ -115,6 +115,52 @@ static bool isPoolConstant(Constant *C) {
   return isa<ConstantArray, ConstantStruct, ConstantVector, ConstantExpr>(C);
 }
 
+// Reads the positional option tokens into Kinds (default ARG_IGNORED) and
+// counts them in Noped. op= never decides a kind: fd=<i> -> ARG_FD; bin=<i> ->
+// ARG_BUFFER_IN; bout=<i> -> ARG_BUFFER_OUT; buf=<i> -> ARG_PENDING (direction
+// decided at use time by the runtime). A token that does not index an argument
+// is a compile-time fatal.
+static void parseKinds(StringRef OrigName, unsigned NArgs,
+                       const FilAsyncPass::AnnotInfo &Info,
+                       SmallVectorImpl<unsigned> &Kinds, unsigned &Noped) {
+  Kinds.assign(NArgs, ARG_IGNORED);
+  Noped = 0;
+  for (StringRef Opt : Info.opts) {
+    unsigned Kind = 0;
+    unsigned PrefixLen = 0;
+    if (Opt.starts_with("fd=")) {
+      Kind = ARG_FD;
+      PrefixLen = 3;
+    } else if (Opt.starts_with("bin=")) {
+      Kind = ARG_BUFFER_IN;
+      PrefixLen = 4;
+    } else if (Opt.starts_with("bout=")) {
+      Kind = ARG_BUFFER_OUT;
+      PrefixLen = 5;
+    } else if (Opt.starts_with("buf=")) {
+      Kind = ARG_PENDING;
+      PrefixLen = 4;
+    } else {
+      continue;
+    }
+    ++Noped;
+    unsigned Idx = 0;
+    StringRef Num = Opt.drop_front(PrefixLen);
+    if (Num.empty() || Num.getAsInteger(10, Idx) || Idx >= NArgs) {
+      errs() << "FilAsync: '" << Opt
+             << "' does not index an argument of " << OrigName << "\n";
+      report_fatal_error("FilAsync: malformed filc_async option");
+    }
+    Kinds[Idx] = Kind;
+  }
+}
+
+// Kinds whose args are handed to the async runtime; the pass marks them
+// pending, the generated resolve wrapper clears them.
+static bool isBufferKind(unsigned Kind) {
+  return Kind == ARG_BUFFER_IN || Kind == ARG_PENDING;
+}
+
 } // anonymous namespace
 
 const FilAsyncPass::AnnotInfo *
@@ -160,40 +206,10 @@ GlobalVariable *FilAsyncPass::emitMeta(Function *F, StringRef OrigName,
   unsigned Result = F->getReturnType()->isPointerTy() ? RESULT_PTR : RESULT_WORD;
 
   // Kinds come from the positional option tokens ONLY -- op= never decides a
-  // kind: fd=<i> -> ARG_FD; bin=<i> -> ARG_BUFFER_IN; bout=<i> ->
-  // ARG_BUFFER_OUT; buf=<i> -> ARG_PENDING (no direction annotated, decided
-  // at use time by the runtime); everything else stays ARG_IGNORED.
-  // noped_args counts the fd=/bin=/bout=/buf= options.
-  SmallVector<unsigned, 8> Kinds(NArgs, ARG_IGNORED);
-  unsigned Noped = 0;
-  for (StringRef Opt : Info.opts) {
-    unsigned Kind = 0;
-    unsigned PrefixLen = 0;
-    if (Opt.starts_with("fd=")) {
-      Kind = ARG_FD;
-      PrefixLen = 3;
-    } else if (Opt.starts_with("bin=")) {
-      Kind = ARG_BUFFER_IN;
-      PrefixLen = 4;
-    } else if (Opt.starts_with("bout=")) {
-      Kind = ARG_BUFFER_OUT;
-      PrefixLen = 5;
-    } else if (Opt.starts_with("buf=")) {
-      Kind = ARG_PENDING;
-      PrefixLen = 4;
-    } else {
-      continue;
-    }
-    ++Noped;
-    unsigned Idx = 0;
-    StringRef Num = Opt.drop_front(PrefixLen);
-    if (Num.empty() || Num.getAsInteger(10, Idx) || Idx >= NArgs) {
-      errs() << "FilAsync: '" << Opt
-             << "' does not index an argument of " << OrigName << "\n";
-      report_fatal_error("FilAsync: malformed filc_async option");
-    }
-    Kinds[Idx] = Kind;
-  }
+  // kind (see parseKinds). noped_args counts the fd=/bin=/bout=/buf= options.
+  SmallVector<unsigned, 8> Kinds;
+  unsigned Noped;
+  parseKinds(OrigName, NArgs, Info, Kinds, Noped);
 
   // The `name` field holds the ORIGINAL name, captured before renameBody in run().
   Constant *NameInit =
@@ -262,9 +278,65 @@ void FilAsyncPass::emitMetaTableAndCtor(Module &M,
   appendToGlobalCtors(M, Ctor, /*Priority=*/65535);
 }
 
+void FilAsyncPass::emitResolveWrapper(Module &M, Function *F,
+                                      StringRef OrigName,
+                                      const AnnotInfo &Info) {
+  LLVMContext &Ctx = M.getContext();
+  Type *VoidTy = Type::getVoidTy(Ctx);
+  PointerType *PtrTy = PointerType::getUnqual(Ctx);
+  FunctionType *FTy = F->getFunctionType();
+
+  SmallVector<unsigned, 8> Kinds;
+  unsigned Noped;
+  parseKinds(OrigName, FTy->getNumParams(), Info, Kinds, Noped);
+
+  bool HasBuffer = false;
+  for (unsigned Kind : Kinds)
+    if (isBufferKind(Kind))
+      HasBuffer = true;
+  if (!HasBuffer)
+    return;
+
+  // Same parameter list as the annotated function, but a void return: it only
+  // clears the pending marks, it does not run the op.
+  SmallVector<Type *, 8> ParamTys;
+  for (Type *ParamTy : FTy->params())
+    ParamTys.push_back(ParamTy);
+  FunctionType *WrapperTy =
+      FunctionType::get(VoidTy, ParamTys, FTy->isVarArg());
+
+  FunctionCallee Mark = M.getOrInsertFunction(
+      "filc_async_mark_nonpending",
+      FunctionType::get(VoidTy, {PtrTy}, /*isVarArg=*/false));
+
+  // A pre-existing declaration (the program naming its own resolve wrapper)
+  // must BECOME the wrapper: a newly created function would be name-uniqued
+  // to `<name>.N` and leave the declaration undefined at link.
+  std::string WrapperName = "__filc_async_resolve_" + OrigName.str();
+  Function *Wrapper = M.getFunction(WrapperName);
+  if (Wrapper) {
+    if (Wrapper->getFunctionType() != WrapperTy)
+      report_fatal_error("FilAsync: resolve wrapper declaration has the wrong type");
+    if (!Wrapper->isDeclaration())
+      return;
+    Wrapper->setLinkage(GlobalValue::InternalLinkage);
+  } else {
+    Wrapper = Function::Create(WrapperTy, GlobalValue::InternalLinkage,
+                               WrapperName, &M);
+  }
+  BasicBlock *BB = BasicBlock::Create(Ctx, "entry", Wrapper);
+  IRBuilder<> Builder(BB);
+  for (unsigned I = 0; I < FTy->getNumParams(); ++I)
+    if (isBufferKind(Kinds[I]))
+      if (Wrapper->getArg(I)->getType()->isPointerTy())
+        Builder.CreateCall(Mark, {Wrapper->getArg(I)});
+  Builder.CreateRetVoid();
+}
+
 void FilAsyncPass::rewriteCallSites(Module &M) {
   LLVMContext &Ctx = M.getContext();
   Type *Int64Ty = Type::getInt64Ty(Ctx);
+  Type *VoidTy = Type::getVoidTy(Ctx);
   PointerType *PtrTy = PointerType::getUnqual(Ctx);
 
   // Contract: alloc(size: i64, align: i64) -> ptr;
@@ -276,6 +348,10 @@ void FilAsyncPass::rewriteCallSites(Module &M) {
       "filc_async_submit", FunctionType::get(
                                PtrTy, {PtrTy, PtrTy, PtrTy, PtrTy, Int64Ty},
                                /*isVarArg=*/false));
+  // mark_pending(ptr): buffer args go pending before the runtime takes them.
+  FunctionCallee MarkCallee = M.getOrInsertFunction(
+      "filc_async_mark_pending",
+      FunctionType::get(VoidTy, {PtrTy}, /*isVarArg=*/false));
 
   for (const auto &KV : Annotated) {
     Function *F = const_cast<Function *>(KV.first);
@@ -343,6 +419,18 @@ void FilAsyncPass::rewriteCallSites(Module &M) {
         Value *CapGEP = Builder.CreateGEP(
             Int64Ty, Staging, {ConstantInt::get(Int64Ty, I * 2 + 1)});
         Builder.CreateStore(ConstantInt::get(Int64Ty, 0), CapGEP);
+      }
+
+      // Mark buffer args (bin=, bare buf=) pending before the async runtime
+      // takes ownership; the resolve wrapper clears them on request.
+      SmallVector<unsigned, 8> &Kinds = DesIt->second.Kinds;
+      for (unsigned I = 0; I < NArgs; ++I) {
+        if (!isBufferKind(Kinds[I]))
+          continue;
+        Value *Arg = CB->getArgOperand(I);
+        if (!Arg->getType()->isPointerTy())
+          continue;
+        Builder.CreateCall(MarkCallee, {Arg});
       }
 
       // Opaque-pointer `ptr` operands -- no bitcasts; the globals and the
@@ -481,10 +569,15 @@ PreservedAnalyses FilAsyncPass::run(Module &M, ModuleAnalysisManager &) {
     // The meta's name field holds the ORIGINAL name, so copy it before the
     // rename invalidates F's name storage.
     std::string OrigName = F->getName().str();
+    SmallVector<unsigned, 8> Kinds;
+    unsigned Noped;
+    parseKinds(OrigName, F->getFunctionType()->getNumParams(), *KV.second,
+               Kinds, Noped);
     renameBody(F, OrigName);
     GlobalVariable *Opts = emitOpts(M, OrigName, *KV.second);
     GlobalVariable *Meta = emitMeta(F, OrigName, *KV.second, Opts);
-    Emitted[F] = {Opts, Meta};
+    emitResolveWrapper(M, F, OrigName, *KV.second);
+    Emitted[F] = {Opts, Meta, OrigName, std::move(Kinds)};
     Metas.push_back(Meta);
   }
   if (!Metas.empty())

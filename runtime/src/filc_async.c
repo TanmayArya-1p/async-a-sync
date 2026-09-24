@@ -1,5 +1,6 @@
 #include <errno.h>
 #include <pizlonated_syscalls.h>
+#include <stdfil.h>
 
 #include "filc_async.h"
 #include "filc_async_alloc.h"
@@ -7,14 +8,28 @@
 /* Minimal link-level filc_async runtime: lets every compiler-emitted symbol
  * link and run. submit immediately fails each task with -EOPNOTSUPP, poll/wait
  * resolve it from a small identity registry, and startup validation accepts
- * the op set the compiler bakes into the descriptors. This is the seed for
- * the io_uring backend (a later branch); nothing here touches fasync_*.
+ * the op set the compiler bakes into the descriptors. Also tracks the
+ * pass-emitted pending marks (mark_pending/mark_nonpending/is_pending). This
+ * is the seed for the io_uring backend (a later branch); nothing here touches
+ * fasync_*.
  */
 
 #define FASYNC_TASK_REGISTRY_CAPACITY 64
 
 static void* g_tasks[FASYNC_TASK_REGISTRY_CAPACITY];
 static size_t g_ntasks;
+
+// Pending-buffer registry. mark_pending/mark_nonpending flip ranges; is_pending
+// tests range overlap so aliases of a marked buffer probe true.
+#define FASYNC_PENDING_REGISTRY_CAPACITY 64
+
+typedef struct {
+    uintptr_t lower;
+    uintptr_t upper;
+} filc_async_pending_range;
+
+static filc_async_pending_range g_pending[FASYNC_PENDING_REGISTRY_CAPACITY];
+static size_t g_npending;
 
 // Stat counters. Every task resolves instantly, so it completes and fails at
 // submit time.
@@ -179,6 +194,46 @@ void filc_async_wait(struct filc_async_result_s* out)
     if (!t)
         return;
     result_fill(out, t);
+}
+
+void filc_async_mark_pending(void* buf)
+{
+    if (!buf)
+        return;
+    uintptr_t lower = (uintptr_t)zgetlower(buf);
+    for (size_t i = 0; i < g_npending; ++i)
+        if (g_pending[i].lower == lower)
+            return; // already marked
+    if (g_npending >= FASYNC_PENDING_REGISTRY_CAPACITY)
+        filc_async_fatal("too many pending buffers");
+    g_pending[g_npending].lower = lower;
+    g_pending[g_npending].upper = (uintptr_t)zgetupper(buf);
+    g_npending++;
+}
+
+void filc_async_mark_nonpending(void* buf)
+{
+    if (!buf)
+        return;
+    uintptr_t lower = (uintptr_t)zgetlower(buf);
+    for (size_t i = 0; i < g_npending; ++i)
+        if (g_pending[i].lower == lower) {
+            g_pending[i] = g_pending[g_npending - 1];
+            g_npending--;
+            return;
+        }
+}
+
+bool filc_async_is_pending(const void* buf)
+{
+    if (!buf)
+        return false;
+    uintptr_t lower = (uintptr_t)zgetlower((void*)buf);
+    uintptr_t upper = (uintptr_t)zgetupper((void*)buf);
+    for (size_t i = 0; i < g_npending; ++i)
+        if (lower < g_pending[i].upper && g_pending[i].lower < upper)
+            return true;
+    return false;
 }
 
 void filc_async_capabilities(unsigned long* syscall_shaped, unsigned long* executes_bodies)

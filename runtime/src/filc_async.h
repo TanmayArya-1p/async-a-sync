@@ -14,6 +14,18 @@
  * filc_async_meta must match, byte for byte, the descriptor global the pass
  * emits (name at 0, nargs at 16, opts at 32, args[0] at 48 once the 16-byte
  * Fil-C pointers are in play). Do not change field order.
+ *
+ * Ordering: submit never blocks, and there is no edge between calls from
+ * program order. Dependencies are resolved lazily at the first data access to
+ * a still-in-flight range (result buffers held by pending ops); bare pointer
+ * passing does not synchronize, and two writers to one buffer need explicit
+ * sequencing. A pending range always resolves, so waits always terminate.
+ *
+ * Pending marks: the pass calls mark_pending on every buffer-typed arg
+ * (bin=, bare buf=) of an annotated call before submit; is_pending reports
+ * range coverage; mark_nonpending (or the pass-emitted
+ * __filc_async_resolve_<name> wrapper) clears a mark. Marks are object-range
+ * records, not object-flag bits.
  */
 
 #define FILC_ASYNC_RESULT_NONE 0u
@@ -70,6 +82,13 @@ void* filc_async_submit(const filc_async_meta* meta, void* impl, void* opts,
                         void* staged_args, size_t nargs);
 bool  filc_async_poll(struct filc_async_result_s* out);
 void  filc_async_wait(struct filc_async_result_s* out);
+
+// Buffer pending-marking. The pass marks every buffer-typed arg (bin=, bare
+// buf=) of an annotated call before handing it to the runtime; the runtime
+// clears the mark with mark_nonpending when the owning op completes.
+void  filc_async_mark_pending(void* buf);
+void  filc_async_mark_nonpending(void* buf);
+bool  filc_async_is_pending(const void* buf);
 
 void  filc_async_capabilities(unsigned long* syscall_shaped, unsigned long* executes_bodies);
 void  filc_async_get_stats(filc_async_stats* out);

@@ -6,6 +6,7 @@
 #include "llvm/IR/PassManager.h"
 
 #include <map>
+#include <string>
 
 namespace llvm {
 
@@ -59,6 +60,12 @@ public:
   // pointer fields as real pointers.
   GlobalVariable *emitMeta(Function *F, StringRef OrigName, const AnnotInfo &Info,
                            GlobalVariable *Opts);
+  // `__filc_async_resolve_<name>` = internal void(same params) wrapper that
+  // calls filc_async_mark_nonpending on each buffer arg (bin=, bare buf=);
+  // omitted when the function has no buffer args. Lets the program clear the
+  // pending marks the rewritten call sites set.
+  void emitResolveWrapper(Module &M, Function *F, StringRef OrigName,
+                          const AnnotInfo &Info);
   // Renames F to `__filc_async_<OrigName>`; callers retarget automatically.
   void renameBody(Function *F, StringRef OrigName);
   // `@__filc_async_meta_table` (internal [<n+1> x ptr] of metas + null) plus
@@ -82,10 +89,12 @@ private:
   std::map<const Function *, AnnotInfo> Annotated;
 
   // Per-enrolled-function emission results, so rewriteCallSites can reference
-  // the exact metas/opts globals without re-deriving names.
+  // the exact metas/opts globals and re-derive kinds without re-parsing.
   struct Descriptors {
     GlobalVariable *Opts;
     GlobalVariable *Meta;
+    std::string OrigName;
+    SmallVector<unsigned, 8> Kinds;
   };
   std::map<const Function *, Descriptors> Emitted;
 };

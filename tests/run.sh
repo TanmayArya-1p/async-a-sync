@@ -91,6 +91,7 @@ run_filc_test stage3_dependency
 run_filc_test stage5_trackers
 run_filc_test stage6_fd_provenance
 run_filc_test stage7_throughput
+run_filc_test t_pending_registry
 
 # stage4, stage8, demo_plain_io and demo_wordcount all need the *patched*
 # compiler, because what they demonstrate is the hook it inserts. Built with the
@@ -190,6 +191,7 @@ if [ "$PATCHED_READY" -eq 1 ]; then
   # to rewrite its annotated call site into filc_async_submit.
   run_filc_test t_pragma_alloc
   run_patched t_pragma_ignore "$HERE/t_pragma_ignore.c"
+  run_patched t_pragma_markpending "$HERE/t_pragma_markpending.c"
   # Negative control: an unknown op= is accepted by the pass and rejected by
   # the runtime's startup validator (the runtime is the authority).
   run_patched_neg t_pragma_unknownop "$HERE/t_pragma_unknownop.c"
