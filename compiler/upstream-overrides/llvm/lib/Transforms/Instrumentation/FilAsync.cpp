@@ -58,6 +58,7 @@ static const unsigned ARG_IGNORED = 0;
 static const unsigned ARG_BUFFER_IN = 2;
 static const unsigned ARG_BUFFER_OUT = 3;
 static const unsigned ARG_FD = 4;
+static const unsigned ARG_PENDING = 5;
 
 // Result constants; mirror FILC_ASYNC_RESULT_* in the runtime header.
 static const unsigned RESULT_WORD = 1;
@@ -158,14 +159,11 @@ GlobalVariable *FilAsyncPass::emitMeta(Function *F, StringRef OrigName,
   // Pointer return -> FILC_ASYNC_RESULT_PTR (2); anything else WORD (1).
   unsigned Result = F->getReturnType()->isPointerTy() ? RESULT_PTR : RESULT_WORD;
 
-  // Kinds come from the option tokens: fd=<i> -> ARG_FD{4,0}; buf=<i> ->
-  // ARG_BUFFER_OUT{3,0} for op=pread else ARG_BUFFER_IN{2,0}; everything else
-  // stays ARG_IGNORED{0,0}. noped_args counts the fd=/buf= options.
-  StringRef Op;
-  for (StringRef Opt : Info.opts)
-    if (Opt.starts_with("op="))
-      Op = Opt.drop_front(3);
-
+  // Kinds come from the positional option tokens ONLY -- op= never decides a
+  // kind: fd=<i> -> ARG_FD; bin=<i> -> ARG_BUFFER_IN; bout=<i> ->
+  // ARG_BUFFER_OUT; buf=<i> -> ARG_PENDING (no direction annotated, decided
+  // at use time by the runtime); everything else stays ARG_IGNORED.
+  // noped_args counts the fd=/bin=/bout=/buf= options.
   SmallVector<unsigned, 8> Kinds(NArgs, ARG_IGNORED);
   unsigned Noped = 0;
   for (StringRef Opt : Info.opts) {
@@ -174,14 +172,19 @@ GlobalVariable *FilAsyncPass::emitMeta(Function *F, StringRef OrigName,
     if (Opt.starts_with("fd=")) {
       Kind = ARG_FD;
       PrefixLen = 3;
-      ++Noped;
-    } else if (Opt.starts_with("buf=")) {
-      Kind = (Op == "pread") ? ARG_BUFFER_OUT : ARG_BUFFER_IN;
+    } else if (Opt.starts_with("bin=")) {
+      Kind = ARG_BUFFER_IN;
       PrefixLen = 4;
-      ++Noped;
+    } else if (Opt.starts_with("bout=")) {
+      Kind = ARG_BUFFER_OUT;
+      PrefixLen = 5;
+    } else if (Opt.starts_with("buf=")) {
+      Kind = ARG_PENDING;
+      PrefixLen = 4;
     } else {
       continue;
     }
+    ++Noped;
     unsigned Idx = 0;
     StringRef Num = Opt.drop_front(PrefixLen);
     if (Num.empty() || Num.getAsInteger(10, Idx) || Idx >= NArgs) {

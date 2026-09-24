@@ -83,8 +83,8 @@ static enum fasync_op opcode_from(const char* const* opts)
     return FASYNC_OP_UNKNOWN;
 }
 
-/* arg_kinds_ok: noped_args is the number of fd=/buf= options the pass
- * counted; the five real ops consume at least one of them. `ignore` is
+/* arg_kinds_ok: noped_args is the number of fd=/bin=/bout=/buf= options the
+ * pass counted; the five real ops consume at least one of them. `ignore` is
  * exempt (noped_args may be 0). An unknown op is invalid here: the runtime
  * is the authority for the op set (the pass does not validate it). */
 static bool arg_kinds_ok(const filc_async_meta* m)

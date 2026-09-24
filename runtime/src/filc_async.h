@@ -20,11 +20,16 @@
 #define FILC_ASYNC_RESULT_WORD 1u
 #define FILC_ASYNC_RESULT_PTR  2u
 
+/* Arg kinds. The pass records these from the pragma's positional tokens
+ * ONLY -- op= never decides a kind: fd=<i> -> FD, bin=<i> -> BUFFER_IN,
+ * bout=<i> -> BUFFER_OUT, buf=<i> -> PENDING (no direction annotated; the
+ * runtime decides at use time). Any other option index stays IGNORED. */
 #define FILC_ASYNC_ARG_IGNORED    0u
 #define FILC_ASYNC_ARG_SCALAR     1u
 #define FILC_ASYNC_ARG_BUFFER_IN  2u
 #define FILC_ASYNC_ARG_BUFFER_OUT 3u
 #define FILC_ASYNC_ARG_FD         4u
+#define FILC_ASYNC_ARG_PENDING    5u
 
 typedef struct {
     const char* name;

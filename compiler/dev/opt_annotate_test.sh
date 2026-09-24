@@ -40,13 +40,17 @@ mkdir -p "$TMP"
 # Two annotated functions, each declared and called from main: declared-but-
 # unused functions get no llvm.global.annotations entry. Return types are
 # pointers (-> result = PTR = 2). main passes VARIABLE arguments so the
-# rewrite's zext/ptrtoint intval instructions are not folded away.
+# rewrite's zext/ptrtoint intval instructions are not folded away. The
+# annotations use the generic grammar (op never decides a kind): fd/bout on
+# procread (FD + BUFFER_OUT), fd/bin + a bare buf (FD + BUFFER_IN + PENDING)
+# on uopenat -- the bare buf= on an op=openat is what proves buf= is PENDING
+# and NOT inferred from the op name.
 cat > "$SRC" <<'EOF'
-#pragma clang attribute push(__attribute__((annotate("filc_async", "op=pread", "fd=0", "buf=1"))), apply_to=function)
+#pragma clang attribute push(__attribute__((annotate("filc_async", "op=pread", "fd=0", "bout=1"))), apply_to=function)
 void* procread(int fd, void* buf, unsigned long n);
 #pragma clang attribute pop
 
-#pragma clang attribute push(__attribute__((annotate("filc_async", "op=openat", "fd=0", "buf=1"))), apply_to=function)
+#pragma clang attribute push(__attribute__((annotate("filc_async", "op=openat", "fd=0", "bin=1", "buf=2"))), apply_to=function)
 void* uopenat(int dirfd, const char* path, int flags, int mode);
 #pragma clang attribute pop
 
@@ -106,11 +110,12 @@ expect_grep 'filc_async_ctor' 'table ctor (filc_async_ctor)'
 expect_grep '@filc_async_validate_table' 'validator declared/called (@filc_async_validate_table)'
 
 # Meta field-order / initializer check. Fixture facts:
-#   procread: nargs=3, noped=2 (fd=,buf=), flags=0, result=PTR(2),
-#             kinds: fd=0 -> 4 (ARG_FD), buf=1 -> 3 (ARG_BUFFER_OUT, op=pread),
+#   procread: nargs=3, noped=2 (fd=,bout=), flags=0, result=PTR(2),
+#             kinds: fd=0 -> 4 (ARG_FD), bout=1 -> 3 (ARG_BUFFER_OUT),
 #             arg2 -> 0 (ARG_IGNORED)
-#   uopenat:  nargs=4, noped=2, flags=0, result=PTR(2),
-#             kinds: 4 (ARG_FD), 2 (ARG_BUFFER_IN, op!=pread), 0, 0
+#   uopenat:  nargs=4, noped=3 (fd=,bin=,buf=), flags=0, result=PTR(2),
+#             kinds: 4 (ARG_FD), 2 (ARG_BUFFER_IN via bin=),
+#             5 (ARG_PENDING via bare buf=, NOT inferred from op), 0
 # Struct field order must match the C header
 # {name, nargs, noped_args, flags, result, opts, args[]}.
 META_P=$(grep -F '@__filc_meta_procread =' "$OUT" || true)
@@ -126,9 +131,9 @@ if [ -n "$META_P" ]; then
     fail 'procread meta values (nargs=3, noped=2, flags=0, result=PTR, opts)'
   fi
   if echo "$META_P" | grep -qF -- '[{ i32, i32 } { i32 4, i32 0 }, { i32, i32 } { i32 3, i32 0 }, { i32, i32 } zeroinitializer]'; then
-    pass 'procread args kinds (FD, BUFFER_OUT, IGNORED)'
+    pass 'procread args kinds (FD, BUFFER_OUT via bout=, IGNORED)'
   else
-    fail 'procread args kinds (FD, BUFFER_OUT, IGNORED)'
+    fail 'procread args kinds (FD, BUFFER_OUT via bout=, IGNORED)'
   fi
 else
   fail 'procread meta definition line not found (field-order check)'
@@ -141,15 +146,15 @@ if [ -n "$META_U" ]; then
   else
     fail 'uopenat meta struct field order + [4 x {i32,i32}] tail'
   fi
-  if echo "$META_U" | grep -qF -- 'i32 4, i32 2, i32 0, i32 2, ptr @__filc_opts_uopenat'; then
-    pass 'uopenat meta values (nargs=4, noped=2, flags=0, result=PTR, opts)'
+  if echo "$META_U" | grep -qF -- 'i32 4, i32 3, i32 0, i32 2, ptr @__filc_opts_uopenat'; then
+    pass 'uopenat meta values (nargs=4, noped=3, flags=0, result=PTR, opts)'
   else
-    fail 'uopenat meta values (nargs=4, noped=2, flags=0, result=PTR, opts)'
+    fail 'uopenat meta values (nargs=4, noped=3, flags=0, result=PTR, opts)'
   fi
-  if echo "$META_U" | grep -qF -- '[{ i32, i32 } { i32 4, i32 0 }, { i32, i32 } { i32 2, i32 0 }, { i32, i32 } zeroinitializer, { i32, i32 } zeroinitializer]'; then
-    pass 'uopenat args kinds (FD, BUFFER_IN, IGNORED, IGNORED)'
+  if echo "$META_U" | grep -qF -- '[{ i32, i32 } { i32 4, i32 0 }, { i32, i32 } { i32 2, i32 0 }, { i32, i32 } { i32 5, i32 0 }, { i32, i32 } zeroinitializer]'; then
+    pass 'uopenat args kinds (FD, BUFFER_IN via bin=, PENDING via buf=, IGNORED)'
   else
-    fail 'uopenat args kinds (FD, BUFFER_IN, IGNORED, IGNORED)'
+    fail 'uopenat args kinds (FD, BUFFER_IN via bin=, PENDING via buf=, IGNORED)'
   fi
 else
   fail 'uopenat meta definition line not found (field-order check)'
@@ -227,7 +232,7 @@ else
 fi
 expect_grep '@__filc_opts_procread = internal constant [4 x ptr] [ptr @.str' \
   'procread opts array still references its .str globals (retained)'
-expect_grep '@__filc_opts_uopenat = internal constant [4 x ptr] [ptr @.str' \
+expect_grep '@__filc_opts_uopenat = internal constant [5 x ptr] [ptr @.str' \
   'uopenat opts array still references its .str globals (retained)'
 
 # ---- debug gate: "enrolled ..." only under -filc-async-debug ----
