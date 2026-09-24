@@ -4,8 +4,9 @@
 # Rebuilds the loadable FilAsync pass plugin and asserts the reader's contract
 # on two fixtures:
 #
-#   good      -> opt prints "enrolled procread" + op=pread / fd=0 / buf=1, exit 0
-#   malformed -> empty "op=" option; opt names procread and dies non-zero
+#   good   -> opt prints "enrolled procread" + op=pread / fd=0 / buf=1, exit 0
+#   unknown -> an unrecognized "op=" value is ACCEPTED: the op set is the
+#              runtime's authority, not the compiler's, so opt must not reject it
 #
 # Uses HOST clang for the fixture IR: the patched clang's -S -emit-llvm output
 # is pizlonated, so the pre-pizlonation annotation IR has to come from the host
@@ -36,8 +37,8 @@ mkdir -p "$TMP"
 echo "### generating fixtures"
 "$HOST_CC" -S -emit-llvm -O0 -o "$GOOD" "$REPO/tests/t_annotate_smoke.c"
 printf '%s\n' \
-  '/* malformed: empty op= is rejected at compile time */' \
-  '#pragma clang attribute push(__attribute__((annotate("filc_async", "op=", "fd=0", "buf=1"))), apply_to=function)' \
+  '/* unknown op=; the runtime is the authority for the op set */' \
+  '#pragma clang attribute push(__attribute__((annotate("filc_async", "op=somefutureop", "fd=0", "buf=1"))), apply_to=function)' \
   'int procread(int fd, void* buf, unsigned long n);' \
   '#pragma clang attribute pop' \
   'int main(void) { return procread(0, 0, 0); }' > "$BAD_SRC"
@@ -64,16 +65,18 @@ for TOK in "op=pread" "fd=0" "buf=1"; do
 done
 
 echo
-echo "### malformed fixture (empty op=)"
+echo "### unknown-op fixture (op=somefutureop: pass must accept)"
 set +e
-BAD_OUT=$("$OPT" -load-pass-plugin="$PLUGIN" -passes="filc-async" "$BAD" -disable-output 2>&1)
+BAD_OUT=$("$OPT" -load-pass-plugin="$PLUGIN" -filc-async-debug -passes="filc-async" "$BAD" -disable-output 2>&1)
 BAD_RC=$?
 set -e
 echo "$BAD_OUT"
-[ "$BAD_RC" -ne 0 ] \
-  || { echo "!! malformed fixture: opt should have failed, exited $BAD_RC"; exit 1; }
-echo "$BAD_OUT" | grep -q -- "procread" \
-  || { echo "!! malformed fixture: diagnostic should name procread"; exit 1; }
+[ "$BAD_RC" -eq 0 ] \
+  || { echo "!! unknown-op fixture: opt should have accepted it, exited $BAD_RC"; exit 1; }
+echo "$BAD_OUT" | grep -q "enrolled procread" \
+  || { echo "!! unknown-op fixture: missing 'enrolled procread'"; exit 1; }
+echo "$BAD_OUT" | grep -q -- "op=somefutureop" \
+  || { echo "!! unknown-op fixture: missing parsed option 'op=somefutureop'"; exit 1; }
 
 echo
 echo "=== OK"

@@ -21,7 +21,6 @@
 
 #include "FilAsync.h"
 
-#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
@@ -49,14 +48,6 @@
 using namespace llvm;
 
 namespace {
-
-// Known `op=` set: the five real ops plus the never-executed `ignore`
-// family. Any other or empty `op=` is a compile-time fatal naming the function.
-static const StringRef KnownOpcodes[] = {
-    "pread", "pwrite", "openat", "fsync", "close", "ignore",
-};
-
-bool isKnownOpcode(StringRef Op) { return is_contained(KnownOpcodes, Op); }
 
 static cl::opt<bool> FilAsyncDebug(
     "filc-async-debug", cl::init(false),
@@ -453,20 +444,8 @@ bool FilAsyncPass::enrollAnnotatedFunctions(Module &M) {
       }
     }
 
-    // Every `op=` option must be non-empty and one of the known opcodes;
-    // anything else is fatal naming the function.
-    for (StringRef Opt : Info.opts) {
-      if (!Opt.starts_with("op="))
-        continue;
-      StringRef OpName = Opt.drop_front(3);
-      if (OpName.empty() || !isKnownOpcode(OpName)) {
-        errs() << "FilAsync: '" << Opt << "' is not a known filc_async op for "
-               << F->getName() << "\n";
-        errs() << "FilAsync: known ops are "
-                  "pread, pwrite, openat, fsync, close, ignore\n";
-        return false;
-      }
-    }
+    // No op= validation here: the op set is the runtime's authority, enforced
+    // by its startup validator (filc_async_validate_table), not the compiler's.
 
     if (FilAsyncDebug) {
       errs() << "enrolled " << F->getName() << "\n";

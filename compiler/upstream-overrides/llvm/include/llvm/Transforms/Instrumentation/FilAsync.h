@@ -38,10 +38,11 @@ public:
     SmallVector<StringRef, 4> opts;
   };
 
-  // Fills Annotated from llvm.global.annotations and validates every
-  // filc_async annotation found. Returns true on success (including the
-  // not-annotated case); on a malformed annotation names the function on
-  // errs() and returns false (caller turns it into a compile-time fatal).
+  // Fills Annotated from llvm.global.annotations. Returns true on success
+  // (including the not-annotated case); returns false only when an entry does
+  // not name a function, naming it on errs() (the caller turns that into a
+  // compile-time fatal). The op= set is NOT validated here: the runtime is the
+  // authority, enforced by its startup validator (filc_async_validate_table).
   bool enrollAnnotatedFunctions(Module &M);
 
   const AnnotInfo *getAnnotInfo(const Function *F) const;

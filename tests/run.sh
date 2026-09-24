@@ -139,6 +139,35 @@ run_patched() {
   fi
 }
 
+# run_patched_neg <name> <source>: builds like run_patched but expects the
+# program to be rejected at startup (runtime-side op validation). Passes only
+# when it dies with the validator's rejection message.
+run_patched_neg() {
+  name=$1
+  src=$2
+  shift 2
+  echo
+  echo "### $name (patched compiler, expects runtime rejection)"
+  # shellcheck disable=SC2086
+  if "$PATCHED_CC" -O2 -static -DFASYNC_COMPILER_INSERTS_CHECKS \
+       $RUN_PATCHED_FLAGS \
+       -I"$REPO/runtime/src" -L"$REPO/runtime/build/lib" \
+       -o "$OUT/$name" "$src"; then
+    if err_out=$("$OUT/$name" 2>&1); then
+      echo "!!! $name exited 0; runtime should have rejected the op"
+      FAILED=$((FAILED + 1))
+    elif echo "$err_out" | grep -q "cannot be registered on this runtime"; then
+      PASSED=$((PASSED + 1))
+    else
+      echo "!!! $name died without the validator rejecting it: $(echo "$err_out" | head -1)"
+      FAILED=$((FAILED + 1))
+    fi
+  else
+    echo "!!! $name failed to build"
+    FAILED=$((FAILED + 1))
+  fi
+}
+
 # The payloads go under $OUT so they land on a real filesystem: the timing in
 # stage8 and demo_wordcount is only meaningful where a read costs a device round
 # trip, and /tmp is usually tmpfs. Both programs detect the no-latency case and
@@ -161,6 +190,9 @@ if [ "$PATCHED_READY" -eq 1 ]; then
   # to rewrite its annotated call site into filc_async_submit.
   run_filc_test t_pragma_alloc
   run_patched t_pragma_ignore "$HERE/t_pragma_ignore.c"
+  # Negative control: an unknown op= is accepted by the pass and rejected by
+  # the runtime's startup validator (the runtime is the authority).
+  run_patched_neg t_pragma_unknownop "$HERE/t_pragma_unknownop.c"
 
   # The two-backend comparison, as a standalone script: the same word-count
   # source built one way with plain Fil-C and one way with the patched
