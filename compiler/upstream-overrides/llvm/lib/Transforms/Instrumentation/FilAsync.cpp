@@ -319,11 +319,14 @@ void FilAsyncPass::emitResolveWrapper(Module &M, Function *F,
       report_fatal_error("FilAsync: resolve wrapper declaration has the wrong type");
     if (!Wrapper->isDeclaration())
       return;
-    Wrapper->setLinkage(GlobalValue::InternalLinkage);
   } else {
-    Wrapper = Function::Create(WrapperTy, GlobalValue::InternalLinkage,
+    Wrapper = Function::Create(WrapperTy, GlobalValue::ExternalLinkage,
                                WrapperName, &M);
   }
+  // External so the runtime and other TUs can bind it: an internal wrapper is
+  // dropped before codegen (the module's only local callers get pizlonated
+  // away), so the resolve symbol would never appear in the object file.
+  Wrapper->setLinkage(GlobalValue::ExternalLinkage);
   BasicBlock *BB = BasicBlock::Create(Ctx, "entry", Wrapper);
   IRBuilder<> Builder(BB);
   for (unsigned I = 0; I < FTy->getNumParams(); ++I)
