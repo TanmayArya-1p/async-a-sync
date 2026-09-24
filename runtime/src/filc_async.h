@@ -21,11 +21,12 @@
  * passing does not synchronize, and two writers to one buffer need explicit
  * sequencing. A pending range always resolves, so waits always terminate.
  *
- * Pending marks: the pass calls mark_pending on every buffer-typed arg
- * (bin=, bare buf=) of an annotated call before submit; is_pending reports
- * range coverage; mark_nonpending (or the pass-emitted
- * __filc_async_resolve_<name> wrapper) clears a mark. Marks are object-range
- * records, not object-flag bits.
+ * Pending marks: the pass calls mark_pending on the producing buffer args
+ * (bout=, bare buf=) of an annotated call before submit; bin= const inputs
+ * are never marked. is_pending reports range coverage; mark_nonpending (or
+ * the pass-emitted __filc_async_resolve_<name> wrapper) clears a mark.
+ * Marking a range already claimed by an older op resolves that op first.
+ * Marks are object-range records, not object-flag bits.
  */
 
 #define FILC_ASYNC_RESULT_NONE 0u
@@ -73,6 +74,7 @@ typedef struct {
     unsigned long sqes_queued;
     unsigned long kernel_submit_entries;
     unsigned long kernel_wait_entries;
+    unsigned long pending_resolves; /* mark_pending resolved a stale mark */
 } filc_async_stats;
 
 /* Takes ownership of staged_args (the pass-emitted arg array: nargs filc_ptr
@@ -83,9 +85,10 @@ void* filc_async_submit(const filc_async_meta* meta, void* impl, void* opts,
 bool  filc_async_poll(struct filc_async_result_s* out);
 void  filc_async_wait(struct filc_async_result_s* out);
 
-// Buffer pending-marking. The pass marks every buffer-typed arg (bin=, bare
-// buf=) of an annotated call before handing it to the runtime; the runtime
-// clears the mark with mark_nonpending when the owning op completes.
+// Buffer pending-marking. The pass marks the producing args (bout= and bare
+// buf=, an out-by-default) of an annotated call before handing them to the
+// runtime; bin= const inputs are never marked. Marking a range already held
+// by an older op resolves that op first (generic gate), then re-marks.
 void  filc_async_mark_pending(void* buf);
 void  filc_async_mark_nonpending(void* buf);
 bool  filc_async_is_pending(const void* buf);

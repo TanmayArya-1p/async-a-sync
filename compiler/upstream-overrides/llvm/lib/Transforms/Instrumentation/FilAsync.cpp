@@ -155,10 +155,11 @@ static void parseKinds(StringRef OrigName, unsigned NArgs,
   }
 }
 
-// Kinds whose args are handed to the async runtime; the pass marks them
-// pending, the generated resolve wrapper clears them.
+// Kinds the pass marks pending before submit: the op produces bytes into
+// them (bout=) or their direction is undecided (bare buf=, out by default).
+// bin= const inputs are never marked. The wrapper clears the same kinds.
 static bool isBufferKind(unsigned Kind) {
-  return Kind == ARG_BUFFER_IN || Kind == ARG_PENDING;
+  return Kind == ARG_BUFFER_OUT || Kind == ARG_PENDING;
 }
 
 } // anonymous namespace
@@ -424,8 +425,9 @@ void FilAsyncPass::rewriteCallSites(Module &M) {
         Builder.CreateStore(ConstantInt::get(Int64Ty, 0), CapGEP);
       }
 
-      // Mark buffer args (bin=, bare buf=) pending before the async runtime
-      // takes ownership; the resolve wrapper clears them on request.
+      // Mark producing buffer args (bout=, bare buf=) pending before the
+      // async runtime takes ownership; the resolve wrapper clears them on
+      // request. bin= const inputs are never marked.
       SmallVector<unsigned, 8> &Kinds = DesIt->second.Kinds;
       for (unsigned I = 0; I < NArgs; ++I) {
         if (!isBufferKind(Kinds[I]))

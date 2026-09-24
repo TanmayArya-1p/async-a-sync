@@ -61,12 +61,12 @@ public:
   GlobalVariable *emitMeta(Function *F, StringRef OrigName, const AnnotInfo &Info,
                            GlobalVariable *Opts);
   // `__filc_async_resolve_<name>` = external void(same params) wrapper that
-  // calls filc_async_mark_nonpending on each buffer arg (bin=, bare buf=);
-  // omitted when the function has no buffer args. External linkage so the
-  // runtime and other TUs can bind it (internal wrappers are dropped before
-  // codegen); a pre-existing declaration of the name is reused as the
-  // definition. Lets the program clear the pending marks the rewritten call
-  // sites set.
+  // calls filc_async_mark_nonpending on each producing buffer arg (bout=,
+  // bare buf=); omitted when the function has none. bin= const inputs are
+  // never marked, so never cleared. External linkage so the runtime and other
+  // TUs can bind it (internal wrappers are dropped before codegen); a
+  // pre-existing declaration of the name is reused as the definition. Lets
+  // the program clear the pending marks the rewritten call sites set.
   void emitResolveWrapper(Module &M, Function *F, StringRef OrigName,
                           const AnnotInfo &Info);
   // Renames F to `__filc_async_<OrigName>`; callers retarget automatically.

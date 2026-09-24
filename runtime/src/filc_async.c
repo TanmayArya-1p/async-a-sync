@@ -2,16 +2,18 @@
 #include <pizlonated_syscalls.h>
 #include <stdfil.h>
 
+#include "fasync.h"
 #include "filc_async.h"
 #include "filc_async_alloc.h"
 
 /* Minimal link-level filc_async runtime: lets every compiler-emitted symbol
  * link and run. submit immediately fails each task with -EOPNOTSUPP, poll/wait
  * resolve it from a small identity registry, and startup validation accepts
- * the op set the compiler bakes into the descriptors. Also tracks the
- * pass-emitted pending marks (mark_pending/mark_nonpending/is_pending). This
- * is the seed for the io_uring backend (a later branch); nothing here touches
- * fasync_*.
+ * the op set the compiler bakes into the descriptors. Tracks the pass-emitted
+ * pending marks (mark_pending/mark_nonpending/is_pending): marking a buffer
+ * already claimed by an older op resolves that op through the generic
+ * resolution gate first. This is the seed for the real backend (a later
+ * branch).
  */
 
 #define FASYNC_TASK_REGISTRY_CAPACITY 64
@@ -20,7 +22,8 @@ static void* g_tasks[FASYNC_TASK_REGISTRY_CAPACITY];
 static size_t g_ntasks;
 
 // Pending-buffer registry. mark_pending/mark_nonpending flip ranges; is_pending
-// tests range overlap so aliases of a marked buffer probe true.
+// tests range overlap so aliases of a marked buffer probe true. Re-marking a
+// range resolves the prior mark first (see mark_pending).
 #define FASYNC_PENDING_REGISTRY_CAPACITY 64
 
 typedef struct {
@@ -30,6 +33,9 @@ typedef struct {
 
 static filc_async_pending_range g_pending[FASYNC_PENDING_REGISTRY_CAPACITY];
 static size_t g_npending;
+
+// mark_pending bumped once per stale mark it resolved before re-marking.
+static unsigned long g_pending_resolves;
 
 // Stat counters. Every task resolves instantly, so it completes and fails at
 // submit time.
@@ -201,13 +207,27 @@ void filc_async_mark_pending(void* buf)
     if (!buf)
         return;
     uintptr_t lower = (uintptr_t)zgetlower(buf);
-    for (size_t i = 0; i < g_npending; ++i)
-        if (g_pending[i].lower == lower)
-            return; // already marked
+    uintptr_t upper = (uintptr_t)zgetupper(buf);
+
+    // A range already claimed by an older op must finish first: wait on the
+    // generic resolution gate, drop its stale mark, then requeue one fresh
+    // entry for this op.
+    for (size_t i = 0; i < g_npending;) {
+        if (lower < g_pending[i].upper && g_pending[i].lower < upper) {
+            fasync_resolve_pending((void*)g_pending[i].lower,
+                                   g_pending[i].upper - g_pending[i].lower);
+            g_pending[i] = g_pending[g_npending - 1];
+            g_npending--;
+            g_pending_resolves++;
+        } else {
+            i++;
+        }
+    }
+
     if (g_npending >= FASYNC_PENDING_REGISTRY_CAPACITY)
         filc_async_fatal("too many pending buffers");
     g_pending[g_npending].lower = lower;
-    g_pending[g_npending].upper = (uintptr_t)zgetupper(buf);
+    g_pending[g_npending].upper = upper;
     g_npending++;
 }
 
@@ -250,6 +270,7 @@ void filc_async_get_stats(filc_async_stats* out)
     out->tasks_submitted = g_submitted;
     out->tasks_completed = g_completed;
     out->tasks_failed = g_failed;
+    out->pending_resolves = g_pending_resolves;
 }
 
 void filc_async_set_register_fn(filc_async_register_fn fn)

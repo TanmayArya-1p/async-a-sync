@@ -21,6 +21,9 @@ int main(void)
 {
     char* a = malloc(64);
     char* b = malloc(64);
+    filc_async_stats stats0;
+    filc_async_stats stats1;
+    unsigned long pending_resolves_before;
 
     check("not pending before mark", !filc_async_is_pending(a));
     filc_async_mark_pending(a);
@@ -36,6 +39,18 @@ int main(void)
     filc_async_mark_pending(b);
     filc_async_mark_nonpending(a);
     check("clearing one leaves the other", filc_async_is_pending(b) && !filc_async_is_pending(a));
+
+    // b is still marked from above; re-marking it resolves the stale mark
+    // first, so the requeue leaves ONE entry: a single clear releases it.
+    filc_async_get_stats(&stats0);
+    pending_resolves_before = stats0.pending_resolves;
+    filc_async_mark_pending(b);
+    check("requeue of a pending buffer stays pending", filc_async_is_pending(b));
+    filc_async_get_stats(&stats1);
+    check("requeue counted as a pending resolve",
+          stats1.pending_resolves == pending_resolves_before + 1);
+    filc_async_mark_nonpending(b);
+    check("one clear fully releases a requeued buffer", !filc_async_is_pending(b));
 
     free(a);
     free(b);
