@@ -22,9 +22,10 @@
  * sequencing. A pending range always resolves, so waits always terminate.
  *
  * Pending marks: the pass calls mark_pending on the producing buffer args
- * (bout=, bare buf=) of an annotated call before submit; bin= const inputs
- * are never marked. is_pending reports range coverage; mark_nonpending (or
- * the pass-emitted __filc_async_resolve_<name> wrapper) clears a mark.
+ * (bout=, bare buf=, and unannotated pointer args) of an annotated call before
+ * submit; bin= const inputs are never marked. is_pending reports range
+ * coverage; mark_resolved clears a mark (the runtime auto-resolves a task's
+ * buffers on completion, and the program can resolve early between calls).
  * Marking a range already claimed by an older op resolves that op first.
  * Marks are object-range records, not object-flag bits.
  */
@@ -36,7 +37,8 @@
 /* Arg kinds. The pass records these from the pragma's positional tokens
  * ONLY -- op= never decides a kind: fd=<i> -> FD, bin=<i> -> BUFFER_IN,
  * bout=<i> -> BUFFER_OUT, buf=<i> -> PENDING (no direction annotated; the
- * runtime decides at use time). Any other option index stays IGNORED. */
+ * runtime decides at use time). Unannotated pointer args also default to
+ * PENDING (pessimistic); unannotated non-pointers stay IGNORED. */
 #define FILC_ASYNC_ARG_IGNORED    0u
 #define FILC_ASYNC_ARG_SCALAR     1u
 #define FILC_ASYNC_ARG_BUFFER_IN  2u
@@ -85,12 +87,14 @@ void* filc_async_submit(const filc_async_meta* meta, void* impl, void* opts,
 bool  filc_async_poll(struct filc_async_result_s* out);
 void  filc_async_wait(struct filc_async_result_s* out);
 
-// Buffer pending-marking. The pass marks the producing args (bout= and bare
-// buf=, an out-by-default) of an annotated call before handing them to the
-// runtime; bin= const inputs are never marked. Marking a range already held
-// by an older op resolves that op first (generic gate), then re-marks.
+// Buffer pending-marking. The pass marks the producing args (bout=, bare
+// buf=, and unannotated pointers, all out-by-default) of an annotated call
+// before handing them to the runtime; bin= const inputs are never marked.
+// Marking a range already held by an older op resolves that op first (generic
+// gate), then re-marks. The runtime auto-resolves a task's marked buffers on
+// completion; the program can resolve early with mark_resolved.
 void  filc_async_mark_pending(void* buf);
-void  filc_async_mark_nonpending(void* buf);
+void  filc_async_mark_resolved(void* buf);
 bool  filc_async_is_pending(const void* buf);
 
 void  filc_async_capabilities(unsigned long* syscall_shaped, unsigned long* executes_bodies);

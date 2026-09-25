@@ -10,10 +10,10 @@
  * link and run. submit immediately fails each task with -EOPNOTSUPP, poll/wait
  * resolve it from a small identity registry, and startup validation accepts
  * the op set the compiler bakes into the descriptors. Tracks the pass-emitted
- * pending marks (mark_pending/mark_nonpending/is_pending): marking a buffer
+ * pending marks (mark_pending/mark_resolved/is_pending): marking a buffer
  * already claimed by an older op resolves that op through the generic
- * resolution gate first. This is the seed for the real backend (a later
- * branch).
+ * resolution gate first, and poll/wait auto-resolve the task's marked buffers
+ * on completion. This is the seed for the real backend (a later branch).
  */
 
 #define FASYNC_TASK_REGISTRY_CAPACITY 64
@@ -21,7 +21,7 @@
 static void* g_tasks[FASYNC_TASK_REGISTRY_CAPACITY];
 static size_t g_ntasks;
 
-// pending-buffer registry. mark_pending/mark_nonpending flip marks; is_pending
+// pending-buffer registry. mark_pending/mark_resolved flip marks; is_pending
 // tests range overlap so aliases of a marked buffer probe true. a mark holds
 // the real buffer pointer (so resolve keeps its capability); bounds are derived
 // via zgetlower/zgetupper. re-marking resolves the prior mark first.
@@ -47,7 +47,9 @@ struct filc_async_task {
     void* impl;
     void* opts;
     const filc_async_meta* meta;
-    unsigned char state; /* 0 done, 1 pending, 2 failed */
+    void* staged_args;      /* pass-emitted arg array; auto-resolve reads it */
+    unsigned char state;    /* 0 done, 1 pending, 2 failed */
+    unsigned char resolved; /* auto-resolve already ran for this task */
     long result;
 };
 
@@ -161,6 +163,8 @@ void* filc_async_submit(const filc_async_meta* meta, void* impl, void* opts,
     t->impl = impl;
     t->opts = opts;
     t->meta = meta;
+    t->staged_args = staged_args;
+    t->resolved = 0;
     // Immediate-fail placeholder; the io_uring backend replaces the dispatch.
     t->state = 2;
     t->result = -EOPNOTSUPP;
@@ -175,8 +179,31 @@ void* filc_async_submit(const filc_async_meta* meta, void* impl, void* opts,
     return (void*)t;
 }
 
+// On completion (poll/wait), clear the pending marks the pass set for this
+// task's producing buffers. Idempotent per task; address-based so it needs no
+// capability (the staging holds intvals).
+static void auto_resolve_buffers(struct filc_async_task* t)
+{
+    if (t->resolved)
+        return;
+    t->resolved = 1;
+    for (size_t i = 0; i < t->meta->nargs; ++i) {
+        uint32_t kind = t->meta->args[i].kind;
+        if (kind != FILC_ASYNC_ARG_BUFFER_OUT && kind != FILC_ASYNC_ARG_PENDING)
+            continue;
+        uintptr_t addr = ((const uint64_t*)t->staged_args)[i * 2];
+        for (size_t j = 0; j < g_npending; ++j)
+            if ((uintptr_t)g_pending[j].buf == addr) {
+                g_pending[j] = g_pending[g_npending - 1];
+                g_npending--;
+                break;
+            }
+    }
+}
+
 static void result_fill(struct filc_async_result_s* out, struct filc_async_task* t)
 {
+    auto_resolve_buffers(t);
     out->result = t->result;
     out->state = t->state;
 }
@@ -233,7 +260,7 @@ void filc_async_mark_pending(void* buf)
     g_npending++;
 }
 
-void filc_async_mark_nonpending(void* buf)
+void filc_async_mark_resolved(void* buf)
 {
     if (!buf)
         return;
