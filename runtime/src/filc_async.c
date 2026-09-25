@@ -21,17 +21,17 @@
 static void* g_tasks[FASYNC_TASK_REGISTRY_CAPACITY];
 static size_t g_ntasks;
 
-// Pending-buffer registry. mark_pending/mark_nonpending flip ranges; is_pending
-// tests range overlap so aliases of a marked buffer probe true. Re-marking a
-// range resolves the prior mark first (see mark_pending).
+// pending-buffer registry. mark_pending/mark_nonpending flip marks; is_pending
+// tests range overlap so aliases of a marked buffer probe true. a mark holds
+// the real buffer pointer (so resolve keeps its capability); bounds are derived
+// via zgetlower/zgetupper. re-marking resolves the prior mark first.
 #define FASYNC_PENDING_REGISTRY_CAPACITY 64
 
 typedef struct {
-    uintptr_t lower;
-    uintptr_t upper;
-} filc_async_pending_range;
+    void* buf;
+} filc_async_pending_mark;
 
-static filc_async_pending_range g_pending[FASYNC_PENDING_REGISTRY_CAPACITY];
+static filc_async_pending_mark g_pending[FASYNC_PENDING_REGISTRY_CAPACITY];
 static size_t g_npending;
 
 // mark_pending bumped once per stale mark it resolved before re-marking.
@@ -209,13 +209,16 @@ void filc_async_mark_pending(void* buf)
     uintptr_t lower = (uintptr_t)zgetlower(buf);
     uintptr_t upper = (uintptr_t)zgetupper(buf);
 
-    // A range already claimed by an older op must finish first: wait on the
+    // a range already claimed by an older op must finish first: wait on the
     // generic resolution gate, drop its stale mark, then requeue one fresh
     // entry for this op.
     for (size_t i = 0; i < g_npending;) {
-        if (lower < g_pending[i].upper && g_pending[i].lower < upper) {
-            fasync_resolve_pending((void*)g_pending[i].lower,
-                                   g_pending[i].upper - g_pending[i].lower);
+        uintptr_t ilower = (uintptr_t)zgetlower(g_pending[i].buf);
+        uintptr_t iupper = (uintptr_t)zgetupper(g_pending[i].buf);
+        if (lower < iupper && ilower < upper) {
+            // size 1 = resolve the prior op's buffer start, like the access
+            // hook (filc_resolve_pending); keeps the pointer's capability.
+            fasync_resolve_pending(g_pending[i].buf, 1);
             g_pending[i] = g_pending[g_npending - 1];
             g_npending--;
             g_pending_resolves++;
@@ -226,8 +229,7 @@ void filc_async_mark_pending(void* buf)
 
     if (g_npending >= FASYNC_PENDING_REGISTRY_CAPACITY)
         filc_async_fatal("too many pending buffers");
-    g_pending[g_npending].lower = lower;
-    g_pending[g_npending].upper = upper;
+    g_pending[g_npending].buf = buf;
     g_npending++;
 }
 
@@ -237,7 +239,7 @@ void filc_async_mark_nonpending(void* buf)
         return;
     uintptr_t lower = (uintptr_t)zgetlower(buf);
     for (size_t i = 0; i < g_npending; ++i)
-        if (g_pending[i].lower == lower) {
+        if ((uintptr_t)zgetlower(g_pending[i].buf) == lower) {
             g_pending[i] = g_pending[g_npending - 1];
             g_npending--;
             return;
@@ -250,9 +252,12 @@ bool filc_async_is_pending(const void* buf)
         return false;
     uintptr_t lower = (uintptr_t)zgetlower((void*)buf);
     uintptr_t upper = (uintptr_t)zgetupper((void*)buf);
-    for (size_t i = 0; i < g_npending; ++i)
-        if (lower < g_pending[i].upper && g_pending[i].lower < upper)
+    for (size_t i = 0; i < g_npending; ++i) {
+        uintptr_t ilower = (uintptr_t)zgetlower(g_pending[i].buf);
+        uintptr_t iupper = (uintptr_t)zgetupper(g_pending[i].buf);
+        if (lower < iupper && ilower < upper)
             return true;
+    }
     return false;
 }
 
