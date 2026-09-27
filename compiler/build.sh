@@ -70,8 +70,9 @@ if [ ! -f "$BUILD_DIR/build.ninja" ]; then
     -DLLVM_ENABLE_ASSERTIONS=OFF
 fi
 
-echo "== building clang (this is the long part)"
-ninja -C "$BUILD_DIR" -j "$JOBS" clang
+# opt drives the FilAsync pass tests (compiler/dev) and `make cfg`.
+echo "== building clang and opt (this is the long part)"
+ninja -C "$BUILD_DIR" -j "$JOBS" clang opt
 
 echo "== done"
 echo "   $BUILD_DIR/bin/clang"
@@ -81,4 +82,4 @@ echo "   $BUILD_DIR/bin/filcc -static -DFASYNC_COMPILER_INSERTS_CHECKS \\"
 echo "     -I$REPO/runtime/src -L$REPO/runtime/build/lib ..."
 echo
 echo "NOTE: this build itself needs the pizfix runtime from a Fil-C distribution."
-echo "See compiler/README.md for the full sequence and the known gaps."
+echo "See the Quickstart in README.md for the full sequence."

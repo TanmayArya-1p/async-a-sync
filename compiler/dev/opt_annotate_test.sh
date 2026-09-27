@@ -22,20 +22,24 @@ set -e
 
 HERE=$(cd "$(dirname "$0")" && pwd)
 REPO=$(cd "$HERE/../.." && pwd)
-SDD="$REPO/.superpowers/sdd/2026-09-23-pragma-async"
-BUILD_DIR="$SDD/plugin-build"
+BUILD_DIR=${BUILD_DIR:-$REPO/build/filasync-plugin}
 PLUGIN="$BUILD_DIR/libFilAsync.so"
 OPT="$REPO/vendor/fil-c-src/build/bin/opt"
 LLVM_DIR="$REPO/vendor/fil-c-src/build/lib/cmake/llvm"
 HOST_CC=${HOST_CC:-/usr/bin/clang}
 
-TMP=/tmp/opencode
+TMP=$(mktemp -d)
+trap 'rm -rf "$TMP"' EXIT
 SRC="$TMP/two_annot.c"
 IN="$TMP/two_annot.ll"
 OUT="$TMP/out.ll"
 OUT_ERR="$TMP/out.err"
 
-mkdir -p "$TMP"
+if [ ! -x "$OPT" ]; then
+  echo "$(basename "$0"): opt not found at $OPT" >&2
+  echo "          build it with: ./compiler/build.sh" >&2
+  exit 1
+fi
 
 # Two annotated functions, each declared and called from main: declared-but-
 # unused functions get no llvm.global.annotations entry. Return types are
