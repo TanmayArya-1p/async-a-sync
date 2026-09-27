@@ -66,6 +66,8 @@ skips the tests that submit requests and still runs the rest.
 
 See [compiler/README.md](compiler/README.md) for build requirements, the
 patched compiler's runtime path, link flags, and common failure signatures.
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the compiler-to-runtime
+implementation, ABI, dependency ordering, test map, and current limits.
 
 `tests/check_forwarders.sh` can run without Fil-C. The full suite also checks
 the generated forwarders, the symbols in a linked two-file executable, the

@@ -4,6 +4,8 @@ This repository needs two Fil-C artifacts. The v0.685 distribution supplies
 `pizfix` and the stock `filcc` used to build the runtime. A `deluge` source
 checkout supplies the Clang sources that `compiler/build.sh` patches and builds.
 The full test suite uses both compilers.
+For the compiler pass, runtime ABI, and dependency implementation, see
+[the architecture guide](../docs/ARCHITECTURE.md).
 
 ## Set up the sources
 
