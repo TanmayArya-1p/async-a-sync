@@ -69,7 +69,9 @@ static inline size_t demo_fill_words(unsigned char* p, size_t cap,
   return words;
 }
 
-__attribute__((noinline))
+/* noinline keeps it a separate symbol for inspect_disasm_cfg.sh; unused
+ * because not every demo counts words */
+__attribute__((noinline, unused))
 static size_t wordcount(const char* p) {
   size_t words = 0;
   int in_word = 0;
@@ -97,18 +99,19 @@ static inline int demo_files(const char* dir, int n, size_t bytes) {
     demo_expect[i] = demo_fill_words(b, bytes, &state);
     snprintf(demo_paths[i], DEMO_PATH_MAX, "%s/demo_%04d.txt", dir, i);
     int w = open(demo_paths[i], O_CREAT | O_TRUNC | O_WRONLY, 0644);
-    if (w < 0 || pwrite(w, b, bytes, 0) != (ssize_t)bytes) {
-      printf("cannot write %s\n", demo_paths[i]);
+    if (w < 0 || pwrite(w, b, bytes, 0) != (ssize_t)bytes || fsync(w) != 0) {
+      perror(demo_paths[i]);
+      if (w >= 0)
+        close(w);
       free(b);
       return -1;
     }
-    fsync(w);
     close(w);
 
-    demo_buf[i] = (unsigned char*)malloc(bytes);
-    memset(demo_buf[i], 0, bytes);
+    demo_buf[i] = (unsigned char*)calloc(1, bytes);
     demo_fd[i] = open(demo_paths[i], O_RDONLY);
-    if (demo_fd[i] < 0) {
+    if (!demo_buf[i] || demo_fd[i] < 0) {
+      perror(demo_paths[i]);
       free(b);
       return -1;
     }
@@ -128,31 +131,27 @@ static inline const char* read_file(int i) {
   return (const char*)demo_buf[i];
 }
 
-
-
-
-
-void read_all_files() {
+static inline void read_all_files(void) {
   for (int i = 0; i < demo_n; i++) {
 #ifdef FASYNC_IMPLICIT
     memset(demo_buf[i], 0, demo_bytes);
     if (!fasync_pread(demo_fd[i], demo_buf[i], demo_bytes, 0)) {
-        exit(1);
+      fprintf(stderr, "fasync_pread %s: %s\n", demo_paths[i],
+              fasync_last_error());
+      exit(1);
     }
 #else
     if (pread(demo_fd[i], demo_buf[i], demo_bytes, 0) != (ssize_t)demo_bytes) {
-        exit(1);
+      perror(demo_paths[i]);
+      exit(1);
     }
 #endif
   }
 }
 
-const char* file_data(int i) {
+static inline const char* file_data(int i) {
   return (const char*)demo_buf[i];
 }
-
-
-
 
 static inline void demo_finish(void) {
   for (int i = 0; i < demo_n; i++) {
