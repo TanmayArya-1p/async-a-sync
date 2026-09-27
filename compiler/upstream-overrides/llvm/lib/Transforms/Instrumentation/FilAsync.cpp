@@ -19,7 +19,7 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "FilAsync.h"
+#include "llvm/Transforms/Instrumentation/FilAsync.h"
 
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallVector.h"
@@ -87,11 +87,13 @@ static Function *extractAnnotatedFunction(Constant *C) {
   return dyn_cast<Function>(V);
 }
 
-// Reuse an existing .str global matching string S; make a private copy only
-// when none exists (normally never hit).
+// Reuse an existing constant .str global matching string S; make a private
+// copy only when none exists (normally never hit). A mutable global with the
+// same bytes (`char buf[] = "op=pread"`) must not be reused: the program could
+// rewrite the options the runtime reads.
 static Constant *findOrCreateStringGlobal(Module &M, StringRef S) {
   for (GlobalVariable &GV : M.globals()) {
-    if (!GV.hasInitializer())
+    if (!GV.isConstant() || !GV.hasInitializer())
       continue;
     auto *CDS = dyn_cast<ConstantDataSequential>(GV.getInitializer());
     if (!CDS || !CDS->isString())
@@ -165,6 +167,12 @@ static void parseKinds(StringRef OrigName, FunctionType *FTy,
 // args, both ARG_PENDING, out by default). bin= const inputs are never marked.
 static bool isBufferKind(unsigned Kind) {
   return Kind == ARG_BUFFER_OUT || Kind == ARG_PENDING;
+}
+
+static bool isFilcAsyncEntry(Value *E) {
+  auto *Entry = dyn_cast<ConstantStruct>(E);
+  return Entry && Entry->getNumOperands() == 5 &&
+         underlyingString(cast<Constant>(Entry->getOperand(1))) == "filc_async";
 }
 
 } // anonymous namespace
@@ -327,6 +335,16 @@ void FilAsyncPass::rewriteCallSites(Module &M) {
 
     unsigned NArgs = F->getFunctionType()->getNumParams();
     for (CallBase *CB : DirectCalls) {
+      // Only a plain call can be swapped for the staging sequence: an invoke
+      // or callbr is a terminator, and erasing it would leave its block
+      // without one. A call through a mismatched prototype (an unprototyped
+      // C declaration) may carry fewer operands than the staging reads.
+      if (!isa<CallInst>(CB) || CB->getFunctionType() != F->getFunctionType()) {
+        errs() << "FilAsync: call to " << F->getName()
+               << " is not a plain call matching its prototype; call left in "
+                  "place\n";
+        continue;
+      }
       // Decide result handling BEFORE inserting anything: a non-void non-ptr
       // return cannot take submit's ptr result, so skip the site entirely
       // (diagnostic only). Inserting first and then leaving the old call
@@ -415,13 +433,32 @@ void FilAsyncPass::eraseAnnotations(Module &M) {
   // which keeps shared leaves alive -- the opts arrays still use the option
   // .str globals, so those stay. Only GlobalVariables are erased from the
   // module; Functions/aliases are never touched.
+  //
+  // Entries that are not filc_async belong to other consumers: they move to a
+  // fresh llvm.global.annotations, whose uses keep them out of the teardown.
   GlobalVariable *GA = M.getNamedGlobal("llvm.global.annotations");
   if (!GA || !GA->hasInitializer())
     return;
 
   Constant *Root = GA->getInitializer();
+  SmallVector<Constant *, 8> Foreign;
+  if (auto *Array = dyn_cast<ConstantArray>(Root->stripPointerCasts()))
+    for (Value *E : Array->operand_values())
+      if (!isFilcAsyncEntry(E))
+        Foreign.push_back(cast<Constant>(E));
+
+  GlobalValue::LinkageTypes Linkage = GA->getLinkage();
+  std::string Section = GA->getSection().str();
   GA->setInitializer(nullptr);
   GA->eraseFromParent();
+
+  if (!Foreign.empty()) {
+    ArrayType *Ty = ArrayType::get(Foreign.front()->getType(), Foreign.size());
+    auto *Kept = new GlobalVariable(M, Ty, /*isConstant=*/false, Linkage,
+                                    ConstantArray::get(Ty, Foreign),
+                                    "llvm.global.annotations");
+    Kept->setSection(Section);
+  }
 
   SmallVector<Constant *, 16> Worklist;
   SmallPtrSet<Constant *, 16> Seen;
@@ -462,13 +499,9 @@ bool FilAsyncPass::enrollAnnotatedFunctions(Module &M) {
     return true;
 
   for (Value *E : Array->operand_values()) {
-    auto *Entry = dyn_cast<ConstantStruct>(E);
-    if (!Entry || Entry->getNumOperands() != 5)
+    if (!isFilcAsyncEntry(E))
       continue;
-
-    if (underlyingString(cast<Constant>(Entry->getOperand(1))) !=
-        "filc_async")
-      continue;
+    auto *Entry = cast<ConstantStruct>(E);
 
     Function *F = extractAnnotatedFunction(cast<Constant>(Entry->getOperand(0)));
     if (!F) {
@@ -502,9 +535,15 @@ bool FilAsyncPass::enrollAnnotatedFunctions(Module &M) {
 }
 
 PreservedAnalyses FilAsyncPass::run(Module &M, ModuleAnalysisManager &) {
+  // A pass instance may be run on more than one module.
+  Annotated.clear();
+  Emitted.clear();
+
   if (!enrollAnnotatedFunctions(M))
     report_fatal_error(
         "FilAsync: malformed filc_async annotation; see diagnostics above");
+  if (Annotated.empty())
+    return PreservedAnalyses::all();
 
   // Deterministic emission order (table and globals follow name order; the
   // map is keyed on Function*).
@@ -530,17 +569,12 @@ PreservedAnalyses FilAsyncPass::run(Module &M, ModuleAnalysisManager &) {
     Emitted[F] = {Opts, Meta, OrigName, std::move(Kinds)};
     Metas.push_back(Meta);
   }
-  if (!Metas.empty())
-    emitMetaTableAndCtor(M, Metas);
+  emitMetaTableAndCtor(M, Metas);
 
   // Rewrite every direct call site, then drop the consumed annotations so
-  // FilPizlonator never sees them. Only when the pass actually enrolled
-  // entries: a module whose llvm.global.annotations holds nothing for us
-  // keeps it for other users.
-  if (!Annotated.empty()) {
-    rewriteCallSites(M);
-    eraseAnnotations(M);
-  }
+  // FilPizlonator never sees them.
+  rewriteCallSites(M);
+  eraseAnnotations(M);
 
   // The pass mutated the module; everything else must be recomputed.
   return PreservedAnalyses::none();

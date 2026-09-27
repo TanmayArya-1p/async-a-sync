@@ -246,6 +246,47 @@ else
   fail 'debug lines print under -filc-async-debug (R2 gate; flag rejected or lines missing)'
 fi
 
+# ---- mixed fixture: foreign annotations and an unprototyped call ----
+# A non-filc_async annotation belongs to another consumer and must survive the
+# erasure. kr() is called through an unprototyped declaration with fewer
+# arguments than its definition takes; the pass must leave that call alone
+# (with a diagnostic) rather than read operands the call does not have.
+MIXED_SRC="$TMP/mixed.c"
+MIXED_IN="$TMP/mixed.ll"
+MIXED_OUT="$TMP/mixed_out.ll"
+MIXED_ERR="$TMP/mixed.err"
+cat > "$MIXED_SRC" <<'EOF'
+void* kr();
+int use_kr(void) { return kr(1) != 0; }
+
+#pragma clang attribute push(__attribute__((annotate("filc_async", "op=ignore", "fd=0"))), apply_to=function)
+void* kr(int a, int b) { return (void*)(long)(a + b); }
+#pragma clang attribute pop
+
+__attribute__((annotate("keep_me"))) int other(void) { return 0; }
+int main(void) { return use_kr() + other(); }
+EOF
+"$HOST_CC" -std=gnu17 -Wno-deprecated-non-prototype -S -emit-llvm -O0 \
+  -o "$MIXED_IN" "$MIXED_SRC"
+if "$OPT" -load-pass-plugin="$PLUGIN" -passes="filc-async" "$MIXED_IN" -S \
+    -o "$MIXED_OUT" 2> "$MIXED_ERR"; then
+  pass 'mixed fixture: pass completes'
+  ANNOT=$(grep -F '@llvm.global.annotations =' "$MIXED_OUT" || true)
+  if echo "$ANNOT" | grep -qF '@other' && ! echo "$ANNOT" | grep -qF '@__filc_async_kr'; then
+    pass 'foreign annotation kept, filc_async entry dropped'
+  else
+    fail 'foreign annotation kept, filc_async entry dropped'
+  fi
+  if grep -qF 'not a plain call matching its prototype' "$MIXED_ERR"; then
+    pass 'mismatched-prototype call left in place with a diagnostic'
+  else
+    fail 'mismatched-prototype call left in place with a diagnostic'
+  fi
+else
+  fail 'mixed fixture: pass completes'
+  cat "$MIXED_ERR"
+fi
+
 echo
 if [ "$FAIL" -eq 0 ]; then
   echo "=== OK: all checks passed"
