@@ -358,33 +358,32 @@ void FilAsyncPass::rewriteCallSites(Module &M) {
       }
 
       IRBuilder<> Builder(CB);
-      // Staging: nargs filc_ptr slots x 16 bytes, 16-byte aligned (two i64
-      // words per slot: intval + capability lower word).
+      // Staging: nargs filc_ptr slots x 16 bytes, 16-byte aligned. Scalars
+      // use the low word; pointer stores are widened by FilPizlonator.
       Value *Staging = Builder.CreateCall(
           AllocCallee,
           {ConstantInt::get(Int64Ty, NArgs * 16), ConstantInt::get(Int64Ty, 16)},
           "staging");
 
-      // per-arg: intval at slot i*2, capability zero-word at i*2+1. Pointers
-      // become ptrtoint i64; integers up to 64 bits are zero-extended
-      // (i32 fd/flags/mode -> i64) or passed through at exactly i64; wider
-      // or otherwise unrepresentable ints are recorded as an ignored zero.
+      // Each slot is a Fil-C pointer-sized (16-byte) cell. Store pointer
+      // operands as pointers so FilPizlonator preserves their capability;
+      // turning them into integers here would make the backend unable to
+      // validate or retain a kernel buffer. Scalars occupy the low word.
       for (unsigned I = 0; I < NArgs; ++I) {
         Value *Arg = CB->getArgOperand(I);
         Type *ArgTy = Arg->getType();
-        Value *IntVal;
-        if (ArgTy->isPointerTy()) {
-          IntVal = Builder.CreatePtrToInt(Arg, Int64Ty);
-        } else if (ArgTy->isIntegerTy() && ArgTy->getIntegerBitWidth() < 64) {
-          IntVal = Builder.CreateZExt(Arg, Int64Ty);
-        } else if (ArgTy->isIntegerTy() && ArgTy->getIntegerBitWidth() == 64) {
-          IntVal = Arg;
-        } else {
-          IntVal = ConstantInt::get(Int64Ty, 0);
-        }
-        Value *IntGEP = Builder.CreateGEP(
+        Value *Slot = Builder.CreateGEP(
             Int64Ty, Staging, {ConstantInt::get(Int64Ty, I * 2)});
-        Builder.CreateStore(IntVal, IntGEP);
+        if (ArgTy->isPointerTy()) {
+          Builder.CreateStore(Arg, Slot);
+          continue;
+        }
+        Value *IntVal = ConstantInt::get(Int64Ty, 0);
+        if (ArgTy->isIntegerTy() && ArgTy->getIntegerBitWidth() < 64)
+          IntVal = Builder.CreateZExt(Arg, Int64Ty);
+        else if (ArgTy->isIntegerTy() && ArgTy->getIntegerBitWidth() == 64)
+          IntVal = Arg;
+        Builder.CreateStore(IntVal, Slot);
         Value *CapGEP = Builder.CreateGEP(
             Int64Ty, Staging, {ConstantInt::get(Int64Ty, I * 2 + 1)});
         Builder.CreateStore(ConstantInt::get(Int64Ty, 0), CapGEP);

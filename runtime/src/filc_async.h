@@ -8,8 +8,9 @@
  * A function declared with `#pragma clang attribute` +
  * `__attribute__((annotate("filc_async", ...)))` has its call sites rewritten
  * by the FilAsync pass into filc_async_submit against this interface. The
- * only backend implemented so far is the immediate-fail placeholder in
- * filc_async.c (the io_uring runtime is a later branch).
+ * io_uring backend supports op=pread, pwrite, openat, fsync and close using
+ * their standard syscall argument order. op=ignore is a test-only operation
+ * that completes with -EOPNOTSUPP.
  *
  * filc_async_meta must match, byte for byte, the descriptor global the pass
  * emits (name at 0, nargs at 16, opts at 32, args[0] at 48 once the 16-byte
@@ -27,7 +28,8 @@
  * coverage; mark_resolved clears a mark (the runtime auto-resolves a task's
  * buffers on completion, and the program can resolve early between calls).
  * Marking a range already claimed by an older op resolves that op first.
- * Marks are object-range records, not object-flag bits.
+ * Marks are object-range records, not object-flag bits. The io_uring backend
+ * retains staged pointer capabilities until each request completes.
  */
 
 #define FILC_ASYNC_RESULT_NONE 0u
@@ -80,8 +82,9 @@ typedef struct {
 } filc_async_stats;
 
 /* Takes ownership of staged_args (the pass-emitted arg array: nargs filc_ptr
- * slots) and returns a pending pointer the caller dereferences -- or parks in
- * a filc_async_result_s for explicit poll/wait. */
+ * slots) and returns a task pointer for explicit poll/wait. Output-buffer
+ * accesses also resolve the underlying io_uring request through Fil-C's
+ * compiler-inserted access hook. */
 void* filc_async_submit(const filc_async_meta* meta, void* impl, void* opts,
                         void* staged_args, size_t nargs);
 /* Delivering a completion (poll returning true, or wait) retires the handle:

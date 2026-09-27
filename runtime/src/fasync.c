@@ -2,6 +2,7 @@
 #include <pizlonated_syscalls.h>
 
 #include <string.h>
+#include <errno.h>
 
 #include "fasync.h"
 #include "fasync_io_uring.h"
@@ -78,6 +79,7 @@ static int fasync_ring_init(void) {
   void* sqes = zgc_aligned_alloc(4096, sqes_bytes);
   if (!rings || !sqes) {
     g_last_error = "out of memory allocating ring memory";
+    errno = ENOMEM;
     return -1;
   }
 
@@ -244,6 +246,7 @@ fasync_id fasync_push_sqe(unsigned char op, int fd, unsigned long addr,
   struct fasync_req_shared* r = fasync_req_alloc();
   if (!r) {
     g_last_error = "request table full";
+    errno = EAGAIN;
     return 0;
   }
 
@@ -259,7 +262,10 @@ fasync_id fasync_push_sqe(unsigned char op, int fd, unsigned long addr,
   sqe->fd = fd;
   sqe->addr = addr;
   sqe->len = (unsigned int)len;
-  sqe->off = offset;
+  if (op == FASYNC_OP_OPENAT)
+    sqe->open_flags = (unsigned int)offset;
+  else
+    sqe->off = offset;
   sqe->user_data = r->id;
 
   g_ring.sqe_tail++;

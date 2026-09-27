@@ -10,7 +10,7 @@
 #     opts,args[]} with a [nargs x {i32,i32}] tail), and the ctor's 65535
 #     priority;
 #   - rewrite: alloc/submit greps, each call referencing its meta, original
-#     direct calls gone, staging intval/capability stores;
+#     direct calls gone, staging scalar/pointer stores;
 #   - erasure: llvm.global.annotations and use-empty .args/.str globals gone
 #     while the opts-array .str globals stay alive;
 #   - the -filc-async-debug gate (enrolled lines print only when enabled).
@@ -44,7 +44,7 @@ fi
 # Two annotated functions, each declared and called from main: declared-but-
 # unused functions get no llvm.global.annotations entry. Return types are
 # pointers (-> result = PTR = 2). main passes VARIABLE arguments so the
-# rewrite's zext/ptrtoint intval instructions are not folded away. The
+# rewrite's scalar extension and pointer staging are not folded away. The
 # annotations use the generic grammar (op never decides a kind): fd/bout on
 # procread (FD + BUFFER_OUT), fd/bin + a bare buf (FD + BUFFER_IN + PENDING)
 # on uopenat -- the bare buf= on an op=openat is what proves buf= is PENDING
@@ -178,10 +178,10 @@ expect_grep '@filc_async_submit(ptr @__filc_meta_uopenat' 'uopenat call referenc
 expect_grep '@filc_async_submit(ptr @__filc_meta_procread, ptr @__filc_async_procread, ptr @__filc_opts_procread' \
   'submit passes meta, renamed impl, opts in order'
 
-# Staging stores: intval = zext(i32 fd/flags/mode) for integer params and
-# ptrtoint(buffer) for the pointer param; capability word zeroed.
+# Staging stores: scalar words are extended; pointer stores keep the Fil-C
+# capability when FilPizlonator widens them.
 expect_grep 'zext i32 %' 'integer params zero-extended to intval (R4)'
-expect_grep 'ptrtoint ptr %' 'buffer param ptrtoint-ed to intval (R4)'
+expect_grep 'store ptr %' 'pointer params staged with their capability'
 
 # Original direct calls to the annotated functions are gone. The rename
 # already renamed the declaration object itself, so a leftover direct call

@@ -16,6 +16,8 @@ OUT=${OUT:-$REPO/build/tests}
 
 mkdir -p "$OUT"
 
+"$HERE/check_forwarders.sh"
+
 if [ ! -x "$FILCC" ]; then
   echo "run.sh: filcc not found at $FILCC (set FILC_ROOT)" >&2
   exit 1
@@ -64,12 +66,13 @@ needs_io_uring() {
 
 run_filc_test() {
   name=$1
+  shift
   echo
   echo "### $name (Fil-C)"
   # shellcheck disable=SC2086
   if "$FILCC" -O2 -static $WARN -I"$REPO/runtime/src" -L"$REPO/runtime/build/lib" \
        -o "$OUT/$name" "$HERE/$name.c"; then
-    if "$OUT/$name"; then
+    if "$OUT/$name" "$@"; then
       PASSED=$((PASSED + 1))
     else
       echo "!!! $name exited non-zero"
@@ -133,6 +136,7 @@ run_filc_test t_pending_registry
 run_filc_test t_dag_submit_failure
 # Allocator interface only (no annotations), so the stock filcc builds it.
 run_filc_test t_pragma_alloc
+needs_io_uring run_filc_test t_backend_io_uring "$OUT"
 
 # stage4, stage8, demo_plain_io and demo_wordcount all need the *patched*
 # compiler, because what they demonstrate is the hook it inserts. Built with the
@@ -177,6 +181,28 @@ run_patched() {
     fi
   else
     echo "!!! $name failed to build"
+    FAILED=$((FAILED + 1))
+  fi
+}
+
+# Compile a caller and annotated implementation in separate translation units,
+# then inspect the archive and final executable before running the program.
+run_patched_linked() {
+  echo
+  echo "### t_linked_async (patched compiler, two translation units)"
+  if "$PATCHED_CC" -O2 -static -DFASYNC_COMPILER_INSERTS_CHECKS \
+       -I"$REPO/runtime/src" -L"$REPO/runtime/build/lib" \
+       -o "$OUT/t_linked_async" \
+       "$HERE/t_linked_async_main.c" "$HERE/t_linked_async_def.c"; then
+    if "$HERE/check_linkage.sh" "$REPO/runtime/build/lib/libpizlo.a" \
+         "$OUT/t_linked_async" && "$OUT/t_linked_async" "$OUT"; then
+      PASSED=$((PASSED + 1))
+    else
+      echo "!!! t_linked_async linkage or execution failed"
+      FAILED=$((FAILED + 1))
+    fi
+  else
+    echo "!!! t_linked_async failed to link"
     FAILED=$((FAILED + 1))
   fi
 }
@@ -230,7 +256,9 @@ if [ "$PATCHED_READY" -eq 1 ]; then
   # annotated call sites into filc_async_submit.
   run_patched t_pragma_ignore "$HERE/t_pragma_ignore.c"
   run_patched t_pragma_markpending "$HERE/t_pragma_markpending.c"
-  run_patched t_pragma_many_calls "$HERE/t_pragma_many_calls.c"
+  needs_io_uring run_patched t_pragma_many_calls "$HERE/t_pragma_many_calls.c"
+  needs_io_uring run_patched_linked
+  needs_io_uring run_patched t_pragma_io_uring "$HERE/t_pragma_io_uring.c" "$OUT"
   # Negative control: an unknown op= is accepted by the pass and rejected by
   # the runtime's startup validator (the runtime is the authority).
   run_patched_neg t_pragma_unknownop "$HERE/t_pragma_unknownop.c"

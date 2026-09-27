@@ -1,7 +1,7 @@
 /* tests/t_pragma_unknownop.c -- negative control: the RUNTIME is the
  * authority for the op set, not the compiler.
  *
- * The FilAsync pass accepts any op= value; the immediate-fail runtime's
+ * The FilAsync pass accepts any op= value; the io_uring runtime's
  * startup validator (run from the pass-emitted ctor via
  * filc_async_validate_table) must REJECT the unrecognized op before main and
  * abort with "function cannot be registered on this runtime".

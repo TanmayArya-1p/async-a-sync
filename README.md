@@ -64,6 +64,11 @@ profile blocks it. An x86-64 container on Apple silicon runs under Rosetta,
 which does not implement io_uring at all. Without io_uring, `tests/run.sh`
 skips the tests that submit requests and still runs the rest.
 
+`tests/check_forwarders.sh` can run without Fil-C. The full suite also checks
+the generated forwarders, the symbols in a linked two-file executable, the
+io_uring backend through direct `filc_async_submit` calls, and the annotated
+compiler-to-runtime path.
+
 ## The demos
 
 | demo | what it shows |
@@ -72,6 +77,19 @@ skips the tests that submit requests and still runs the rest.
 | `demo_wordcount` | one word count program ran twice, blocking and implicit, over 512 files |
 | `demo_provenance` | a write and a read on two descriptors of one file, ordered by a provenance token |
 | `demo_async_io` | lazy resolution, blocking vs issuing-all, the dependency DAG |
+
+## Annotated io_uring calls
+
+The `filc_async` annotation path also submits `op=pread`, `op=pwrite`,
+`op=openat`, `op=fsync`, and `op=close` to the same io_uring runtime. Annotated
+functions use the usual syscall argument order: `(fd, buffer, length, offset)`
+for reads and writes, `(dirfd, path, flags, mode)` for open, and `(fd)` for
+sync and close. Mark output buffers with `bout=`, input buffers and paths with
+`bin=`, and descriptor arguments with `fd=`. The renamed function body is not
+executed; the call returns a task pointer for `filc_async_poll` or
+`filc_async_wait`. A read's output buffer can also resolve on its first access.
+The compiler currently rewrites pointer-returning and void call sites; scalar
+returning call sites remain direct calls.
 
 
 ## Results
