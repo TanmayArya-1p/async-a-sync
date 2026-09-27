@@ -20,6 +20,9 @@ static struct fasync_req_shared req_slots[FASYNC_MAX_INFLIGHT];
 static void fasync_req_table_init(void);
 static unsigned int req_next_gen = 0;
 
+/* the sqe len field is 32 bits wide */
+#define FASYNC_MAX_LEN 0xFFFFFFFFUL
+
 static volatile unsigned long g_inflight = 0;
 
 struct fasync_ring {
@@ -163,7 +166,7 @@ static void fasync_req_table_init(void) {
   g_shared.memo.end = 0;
   for (unsigned int i = 0; i < FASYNC_MAX_INFLIGHT; i++) {
     req_slots[i].state = FASYNC_REQ_FREE;
-    /* slot i next is i+2 so slot 0 never handed out */
+    /* one based so slot i links to slot i+1 */
     g_req_free_next[i] = (i + 2 <= FASYNC_MAX_INFLIGHT) ? i + 2 : 0;
   }
   g_req_free_head = 1;
@@ -178,7 +181,10 @@ static struct fasync_req_shared* fasync_req_alloc(void) {
   g_req_free_head = g_req_free_next[index];
 
   struct fasync_req_shared* r = &req_slots[index];
-  r->gen = ++req_next_gen;
+  /* generation 0 is skipped so no id is ever 0, the failure value */
+  if (++req_next_gen == 0)
+    ++req_next_gen;
+  r->gen = req_next_gen;
   /* id packs slot and generation so reuse cannot alias */
   r->id = ((fasync_id)r->gen << 32) | (fasync_id)index;
   r->state = FASYNC_REQ_PENDING;
@@ -225,9 +231,13 @@ static struct fasync_sqe* fasync_get_sqe(void) {
 
 /* addr len are operands result buf is wait region */
 fasync_id fasync_push_sqe(unsigned char op, int fd, unsigned long addr,
-                          unsigned int len, unsigned long offset,
+                          size_t len, unsigned long offset,
                           void* result_buf, size_t result_len,
                           unsigned char sqe_flags) {
+  if (len > FASYNC_MAX_LEN) {
+    g_last_error = "sqe length does not fit in 32 bits";
+    return 0;
+  }
   if (fasync_ensure_ring() < 0)
     return 0;
 
@@ -248,7 +258,7 @@ fasync_id fasync_push_sqe(unsigned char op, int fd, unsigned long addr,
   sqe->flags = sqe_flags;
   sqe->fd = fd;
   sqe->addr = addr;
-  sqe->len = len;
+  sqe->len = (unsigned int)len;
   sqe->off = offset;
   sqe->user_data = r->id;
 
@@ -271,8 +281,8 @@ fasync_id fasync_push_sqe(unsigned char op, int fd, unsigned long addr,
 
 fasync_id fasync_push_buf(unsigned char op, int fd, void* buf, size_t len,
                           unsigned long offset, unsigned char sqe_flags) {
-  return fasync_push_sqe(op, fd, (unsigned long)(size_t)buf, (unsigned int)len,
-                         offset, buf, len, sqe_flags);
+  return fasync_push_sqe(op, fd, (unsigned long)(size_t)buf, len, offset, buf,
+                         len, sqe_flags);
 }
 
 int fasync_submit(void) {

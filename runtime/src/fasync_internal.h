@@ -4,7 +4,7 @@
 #include "fasync_shared.h"
 
 fasync_id fasync_push_sqe(unsigned char op, int fd, unsigned long addr,
-                          unsigned int len, unsigned long offset,
+                          size_t len, unsigned long offset,
                           void* result_buf, size_t result_len,
                           unsigned char sqe_flags);
 

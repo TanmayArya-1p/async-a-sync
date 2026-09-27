@@ -167,6 +167,7 @@ fasync_tracker* fasync_tracker_new(void) {
   if (!t)
     return 0;
   t->resource = fasync_next_resource++;
+  t->n = 0;
   return t;
 }
 
@@ -281,5 +282,6 @@ int fasync_run_dag(const struct fasync_op* ops, unsigned n_ops,
 
   if (out)
     *out = run;
-  return 0;
+  /* an op whose submit failed never ran, nor did anything after it */
+  return finished == n_ops ? 0 : -1;
 }

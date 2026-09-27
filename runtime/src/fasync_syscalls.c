@@ -15,8 +15,9 @@
 
 struct fasync_pending_fd {
   int used;
+  int resolved;
   fasync_id id; /* the request that will produce the fd */
-  long fd;      /* resolved value or -1 while still pending */
+  long result;  /* once resolved the fd or the open's -errno */
 };
 
 static struct fasync_pending_fd g_pending_fds[FASYNC_MAX_PENDING_FDS];
@@ -26,11 +27,19 @@ static int fasync_pending_fd_new(fasync_id id) {
     if (g_pending_fds[i].used)
       continue;
     g_pending_fds[i].used = 1;
+    g_pending_fds[i].resolved = 0;
     g_pending_fds[i].id = id;
-    g_pending_fds[i].fd = -1;
     return -(i + 2); /* -1 stays the failure value */
   }
   return -1;
+}
+
+static struct fasync_pending_fd* fasync_pending_fd_lookup(int fd) {
+  /* bounds checked before negating so INT_MIN cannot overflow */
+  if (fd >= -1 || fd < -(FASYNC_MAX_PENDING_FDS + 1))
+    return 0;
+  struct fasync_pending_fd* p = &g_pending_fds[-fd - 2];
+  return p->used ? p : 0;
 }
 
 fasync_id fasync_pread(int fd, void* buf, size_t len, unsigned long offset) {
@@ -54,8 +63,8 @@ fasync_id fasync_pwrite(int fd, void* buf, size_t len, unsigned long offset) {
   /* kernel reads the source at execute time */
   fasync_resolve_pending(buf, len);
 
-  return fasync_push_sqe(FASYNC_OP_WRITE, fd, (unsigned long)(size_t)buf,
-                         (unsigned int)len, offset, 0, 0, 0);
+  return fasync_push_sqe(FASYNC_OP_WRITE, fd, (unsigned long)(size_t)buf, len,
+                         offset, 0, 0, 0);
 }
 
 fasync_id fasync_fsync(int fd) {
@@ -69,7 +78,13 @@ fasync_id fasync_close(int fd) {
   long real = fasync_fd_resolve(fd);
   if (real < 0)
     return 0;
-  return fasync_push_sqe(FASYNC_OP_CLOSE, (int)real, 0, 0, 0, 0, 0, 0);
+  fasync_id id = fasync_push_sqe(FASYNC_OP_CLOSE, (int)real, 0, 0, 0, 0, 0, 0);
+
+  /* a closed pending handle frees its slot like a closed fd */
+  struct fasync_pending_fd* p = fasync_pending_fd_lookup(fd);
+  if (id && p)
+    p->used = 0;
+  return id;
 }
 
 int fasync_open_pending(int dirfd, const char* path, int flags, int mode) {
@@ -128,21 +143,14 @@ long fasync_fd_resolve(int fd) {
   if (fd >= 0)
     return fd;
 
-  if (fd == -1)
-    return -EBADF; /* reserved failure value not a handle */
-  int index = -fd - 2;
-  if (index < 0 || index >= FASYNC_MAX_PENDING_FDS)
-    return -EBADF;
+  struct fasync_pending_fd* p = fasync_pending_fd_lookup(fd);
+  if (!p)
+    return -EBADF; /* -1 is the reserved failure value not a handle */
 
-  struct fasync_pending_fd* p = &g_pending_fds[index];
-  if (!p->used)
-    return -EBADF;
-
-  if (p->fd < 0) {
-    long result = fasync_result(p->id);
-    if (result < 0)
-      return result;
-    p->fd = result;
+  /* fasync_result releases the request so the outcome is kept here */
+  if (!p->resolved) {
+    p->result = fasync_result(p->id);
+    p->resolved = 1;
   }
-  return p->fd;
+  return p->result;
 }

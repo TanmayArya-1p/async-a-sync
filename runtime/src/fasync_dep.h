@@ -73,6 +73,8 @@ struct fasync_dag_run {
   unsigned waves;
 };
 
+/* 0 once every op has completed; -1 if an op could not be submitted, so it
+ * and everything ordered after it never ran */
 int fasync_run_dag(const struct fasync_op* ops, unsigned n_ops,
                    const unsigned* edges, unsigned n_edges,
                    fasync_submit_fn submit, void* ctx,

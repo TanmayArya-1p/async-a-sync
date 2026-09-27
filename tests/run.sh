@@ -92,6 +92,7 @@ run_filc_test stage5_trackers
 run_filc_test stage6_fd_provenance
 run_filc_test stage7_throughput
 run_filc_test t_pending_registry
+run_filc_test t_dag_submit_failure
 
 # stage4, stage8, demo_plain_io and demo_wordcount all need the *patched*
 # compiler, because what they demonstrate is the hook it inserts. Built with the
