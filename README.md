@@ -39,8 +39,8 @@ tar xf filc-0.685-linux-x86_64.tar.xz && cd ..
 # filc sources that we need to modify in this repo for building
 git clone --depth 1 --filter=blob:none --sparse \
   -b deluge https://github.com/pizlonator/fil-c.git vendor/fil-c-src
-(cd vendor/fil-c-src && git sparse-checkout set filc libpas llvm/lib/Transforms \
-  llvm/include/llvm/Transforms clang/lib/CodeGen)
+(cd vendor/fil-c-src && git sparse-checkout set \
+  clang cmake filc libpas lld llvm third-party)
 ```
 
 Build, then run the demos:
@@ -63,6 +63,9 @@ that means `--security-opt seccomp=unconfined`, because the default seccomp
 profile blocks it. An x86-64 container on Apple silicon runs under Rosetta,
 which does not implement io_uring at all. Without io_uring, `tests/run.sh`
 skips the tests that submit requests and still runs the rest.
+
+See [compiler/README.md](compiler/README.md) for build requirements, the
+patched compiler's runtime path, link flags, and common failure signatures.
 
 `tests/check_forwarders.sh` can run without Fil-C. The full suite also checks
 the generated forwarders, the symbols in a linked two-file executable, the
