@@ -51,7 +51,7 @@ for symbol in filc_resolve_pending \
   expect_exact 'linked binary symbol' "$TMP/binary_symbols" "$symbol"
 done
 
-expect_compiled "$TMP/binary_symbols" '__filc_async_linked_pread'
+expect_compiled "$TMP/binary_symbols" 'linked_pread'
 for symbol in filc_async_submit filc_async_wait filc_resolve_pending \
               pizlonated_zsys_io_uring_setup pizlonated_zsys_io_uring_enter; do
   if grep -Eq "(^|_)${symbol}$" "$TMP/undefined_symbols"; then

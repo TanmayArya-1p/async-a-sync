@@ -1,5 +1,5 @@
-/* A separate translation unit must link the renamed implementation, the
- * generated metadata/constructor, and the runtime/forwarder implementations. */
+/* A declaration-only annotation links the ordinary implementation in another
+ * translation unit, plus generated metadata and runtime forwarders. */
 #include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>

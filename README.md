@@ -91,6 +91,29 @@ executed; the call returns a task pointer for `filc_async_poll` or
 The compiler currently rewrites pointer-returning and void call sites; scalar
 returning call sites remain direct calls.
 
+Like `op=`, `fd=`, and buffer options, dependency options can appear on a
+function declaration or definition. When both carry a `filc_async` annotation,
+the definition's options apply. Repeat
+`r_dep=<argument index>` or `w_dep=<argument index>` to list resources the call
+reads or writes. For example, a write declared with `"w_dep=0"` uses its fd as
+the dependency key, and a read with `"r_dep=0", "w_dep=1"` reads that fd resource
+and writes its output buffer. Scalar arguments with the same value share a key;
+pointer arguments into the same object share a key. Calls with a matching key
+dispatch in call order whenever either side writes (read/write, write/read, or
+write/write). Two reads can be in flight together. The submission stub and
+completion path guard dependency claims with a mutex. A conflicting call waits
+for its predecessors before its own io_uring request is dispatched, so a
+returned task can still resolve its output buffer on access. The ordinary
+function implementation still links, but its body is not called by this backend.
+When compiling annotated code, use `-Werror=pragma-clang-attribute` so a
+pragma placed around a call is a compiler error.
+
+```c
+#pragma clang attribute push(__attribute__((annotate("filc_async", "op=pwrite", "fd=0", "bin=1", "w_dep=0"))), apply_to=function)
+void* async_pwrite(int fd, const void* buf, size_t len, unsigned long offset);
+#pragma clang attribute pop
+```
+
 
 ## Results
 

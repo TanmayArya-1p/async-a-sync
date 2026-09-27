@@ -61,7 +61,8 @@ public:
   // pointer fields as real pointers.
   GlobalVariable *emitMeta(Function *F, StringRef OrigName, const AnnotInfo &Info,
                            GlobalVariable *Opts);
-  // Renames F to `__filc_async_<OrigName>`; callers retarget automatically.
+  // Renames a defined F to `__filc_async_<OrigName>`; declarations retain the
+  // ordinary linker name so the implementation can live in another TU.
   void renameBody(Function *F, StringRef OrigName);
   // `@__filc_async_meta_table` (internal [<n+1> x ptr] of metas + null) plus
   // an internal `void()` ctor calling filc_async_validate_table, appended to

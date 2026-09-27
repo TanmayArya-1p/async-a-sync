@@ -17,6 +17,9 @@ OUT=${OUT:-$REPO/build/tests}
 mkdir -p "$OUT"
 
 "$HERE/check_forwarders.sh"
+"$HERE/check_dependencies.sh"
+"$HERE/check_dependency_options.sh"
+"$HERE/check_callsite_pragma.sh"
 
 if [ ! -x "$FILCC" ]; then
   echo "run.sh: filcc not found at $FILCC (set FILC_ROOT)" >&2
@@ -169,7 +172,8 @@ run_patched() {
   echo
   echo "### $name (patched compiler)"
   # shellcheck disable=SC2086
-  if "$PATCHED_CC" -O2 -static $WARN -DFASYNC_COMPILER_INSERTS_CHECKS \
+  if "$PATCHED_CC" -O2 -static $WARN -Werror=pragma-clang-attribute \
+       -DFASYNC_COMPILER_INSERTS_CHECKS \
        $RUN_PATCHED_FLAGS \
        -I"$REPO/runtime/src" -L"$REPO/runtime/build/lib" \
        -o "$OUT/$name" "$src"; then
@@ -190,7 +194,8 @@ run_patched() {
 run_patched_linked() {
   echo
   echo "### t_linked_async (patched compiler, two translation units)"
-  if "$PATCHED_CC" -O2 -static -DFASYNC_COMPILER_INSERTS_CHECKS \
+  if "$PATCHED_CC" -O2 -static -Werror=pragma-clang-attribute \
+       -DFASYNC_COMPILER_INSERTS_CHECKS \
        -I"$REPO/runtime/src" -L"$REPO/runtime/build/lib" \
        -o "$OUT/t_linked_async" \
        "$HERE/t_linked_async_main.c" "$HERE/t_linked_async_def.c"; then
@@ -217,7 +222,8 @@ run_patched_neg() {
   echo
   echo "### $name (patched compiler, expects runtime rejection)"
   # shellcheck disable=SC2086
-  if "$PATCHED_CC" -O2 -static $WARN -DFASYNC_COMPILER_INSERTS_CHECKS \
+  if "$PATCHED_CC" -O2 -static $WARN -Werror=pragma-clang-attribute \
+       -DFASYNC_COMPILER_INSERTS_CHECKS \
        $RUN_PATCHED_FLAGS \
        -I"$REPO/runtime/src" -L"$REPO/runtime/build/lib" \
        -o "$OUT/$name" "$src"; then
@@ -259,6 +265,7 @@ if [ "$PATCHED_READY" -eq 1 ]; then
   needs_io_uring run_patched t_pragma_many_calls "$HERE/t_pragma_many_calls.c"
   needs_io_uring run_patched_linked
   needs_io_uring run_patched t_pragma_io_uring "$HERE/t_pragma_io_uring.c" "$OUT"
+  needs_io_uring run_patched t_pragma_dependencies "$HERE/t_pragma_dependencies.c" "$OUT"
   # Negative control: an unknown op= is accepted by the pass and rejected by
   # the runtime's startup validator (the runtime is the authority).
   run_patched_neg t_pragma_unknownop "$HERE/t_pragma_unknownop.c"

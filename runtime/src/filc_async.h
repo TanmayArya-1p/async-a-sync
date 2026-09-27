@@ -16,11 +16,12 @@
  * emits (name at 0, nargs at 16, opts at 32, args[0] at 48 once the 16-byte
  * Fil-C pointers are in play). Do not change field order.
  *
- * Ordering: submit never blocks, and there is no edge between calls from
- * program order. Dependencies are resolved lazily at the first data access to
- * a still-in-flight range (result buffers held by pending ops); bare pointer
- * passing does not synchronize, and two writers to one buffer need explicit
- * sequencing. A pending range always resolves, so waits always terminate.
+ * Ordering: independent submits do not wait for program order. A declared
+ * dependency can make submit wait for an earlier conflicting call before it
+ * queues the new request. Other dependencies are resolved lazily at the first
+ * data access to a still-in-flight range (result buffers held by pending
+ * ops); bare pointer passing does not synchronize, and two writers to one
+ * buffer need explicit sequencing. A pending range always resolves.
  *
  * Pending marks: the pass calls mark_pending on the producing buffer args
  * (bout=, bare buf=, and unannotated pointer args) of an annotated call before
@@ -30,6 +31,13 @@
  * Marking a range already claimed by an older op resolves that op first.
  * Marks are object-range records, not object-flag bits. The io_uring backend
  * retains staged pointer capabilities until each request completes.
+ *
+ * Repeat r_dep=<i> or w_dep=<i> on an annotated function declaration or
+ * definition for each argument that names a dependency. They follow the same
+ * placement rules as other options. Scalar keys compare by value; pointer keys
+ * compare by object identity. Equal-key read/read calls may overlap; every other pair
+ * dispatches in submission order. Submit waits for a conflicting predecessor
+ * before returning its task, so lazy output-buffer access can find the SQE.
  */
 
 #define FILC_ASYNC_RESULT_NONE 0u
@@ -48,6 +56,14 @@
 #define FILC_ASYNC_ARG_FD         4u
 #define FILC_ASYNC_ARG_PENDING    5u
 
+/* Dependency bits in args[i].dependency. The pointer bit separates an object
+ * identity from a scalar with the same numeric address. Dependency options do
+ * not contribute to noped_args, which counts fd=/bin=/bout=/buf= only. */
+#define FILC_ASYNC_DEP_NONE       0u
+#define FILC_ASYNC_DEP_READ       1u
+#define FILC_ASYNC_DEP_WRITE      2u
+#define FILC_ASYNC_DEP_POINTER    4u
+
 typedef struct {
     const char* name;
     uint32_t    nargs;
@@ -57,7 +73,7 @@ typedef struct {
     const char* const* opts;
     struct {
         uint32_t kind;
-        uint32_t size;
+        uint32_t dependency;
     } args[];
 } filc_async_meta;
 

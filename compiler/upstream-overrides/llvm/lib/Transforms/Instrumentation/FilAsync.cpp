@@ -59,6 +59,10 @@ static const unsigned ARG_BUFFER_IN = 2;
 static const unsigned ARG_BUFFER_OUT = 3;
 static const unsigned ARG_FD = 4;
 static const unsigned ARG_PENDING = 5;
+static const unsigned DEP_NONE = 0;
+static const unsigned DEP_READ = 1;
+static const unsigned DEP_WRITE = 2;
+static const unsigned DEP_POINTER = 4;
 
 // Result constants; mirror FILC_ASYNC_RESULT_* in the runtime header.
 static const unsigned RESULT_WORD = 1;
@@ -125,15 +129,18 @@ static bool isPoolConstant(Constant *C) {
 // ARG_IGNORED. A token that does not index an argument is a compile-time fatal.
 static void parseKinds(StringRef OrigName, FunctionType *FTy,
                        const FilAsyncPass::AnnotInfo &Info,
-                       SmallVectorImpl<unsigned> &Kinds, unsigned &Noped) {
+                       SmallVectorImpl<unsigned> &Kinds,
+                       SmallVectorImpl<unsigned> &Deps, unsigned &Noped) {
   unsigned NArgs = FTy->getNumParams();
   Kinds.assign(NArgs, ARG_IGNORED);
+  Deps.assign(NArgs, DEP_NONE);
   for (unsigned I = 0; I < NArgs; ++I)
     if (FTy->getParamType(I)->isPointerTy())
       Kinds[I] = ARG_PENDING;
   Noped = 0;
   for (StringRef Opt : Info.opts) {
     unsigned Kind = 0;
+    unsigned Dep = DEP_NONE;
     unsigned PrefixLen = 0;
     if (Opt.starts_with("fd=")) {
       Kind = ARG_FD;
@@ -147,10 +154,20 @@ static void parseKinds(StringRef OrigName, FunctionType *FTy,
     } else if (Opt.starts_with("buf=")) {
       Kind = ARG_PENDING;
       PrefixLen = 4;
+    } else if (Opt.starts_with("r_dep=")) {
+      Dep = DEP_READ;
+      PrefixLen = 6;
+    } else if (Opt.starts_with("w_dep=")) {
+      Dep = DEP_WRITE;
+      PrefixLen = 6;
+    } else if (Opt.starts_with("read_dep=") ||
+               Opt.starts_with("write_dep=")) {
+      errs() << "FilAsync: '" << Opt << "' uses an obsolete dependency name; "
+             << "use r_dep= or w_dep=\n";
+      report_fatal_error("FilAsync: malformed filc_async option");
     } else {
       continue;
     }
-    ++Noped;
     unsigned Idx = 0;
     StringRef Num = Opt.drop_front(PrefixLen);
     if (Num.empty() || Num.getAsInteger(10, Idx) || Idx >= NArgs) {
@@ -158,7 +175,24 @@ static void parseKinds(StringRef OrigName, FunctionType *FTy,
              << "' does not index an argument of " << OrigName << "\n";
       report_fatal_error("FilAsync: malformed filc_async option");
     }
-    Kinds[Idx] = Kind;
+    if (Dep != DEP_NONE) {
+      Type *ArgTy = FTy->getParamType(Idx);
+      if (!ArgTy->isPointerTy() &&
+          (!ArgTy->isIntegerTy() || ArgTy->getIntegerBitWidth() > 64)) {
+        errs() << "FilAsync: dependency argument " << Idx << " of "
+               << OrigName << " must be a pointer or an integer up to 64 bits\n";
+        report_fatal_error("FilAsync: malformed filc_async option");
+      }
+      if (Deps[Idx] != DEP_NONE && (Deps[Idx] & ~DEP_POINTER) != Dep) {
+        errs() << "FilAsync: conflicting dependencies on argument " << Idx
+               << " of " << OrigName << "\n";
+        report_fatal_error("FilAsync: malformed filc_async option");
+      }
+      Deps[Idx] = Dep | (ArgTy->isPointerTy() ? DEP_POINTER : 0);
+    } else {
+      ++Noped;
+      Kinds[Idx] = Kind;
+    }
   }
 }
 
@@ -184,7 +218,10 @@ FilAsyncPass::getAnnotInfo(const Function *F) const {
 }
 
 void FilAsyncPass::renameBody(Function *F, StringRef OrigName) {
-  F->setName("__filc_async_" + OrigName.str());
+  // A declaration may be backed by an ordinary definition in another TU.
+  // Keep its linker name; the annotated call still passes it as impl.
+  if (!F->isDeclaration())
+    F->setName("__filc_async_" + OrigName.str());
 }
 
 GlobalVariable *
@@ -222,8 +259,9 @@ GlobalVariable *FilAsyncPass::emitMeta(Function *F, StringRef OrigName,
   // Kinds come from the positional option tokens ONLY -- op= never decides a
   // kind (see parseKinds). noped_args counts the fd=/bin=/bout=/buf= options.
   SmallVector<unsigned, 8> Kinds;
+  SmallVector<unsigned, 8> Deps;
   unsigned Noped;
-  parseKinds(OrigName, F->getFunctionType(), Info, Kinds, Noped);
+  parseKinds(OrigName, F->getFunctionType(), Info, Kinds, Deps, Noped);
 
   // The `name` field holds the ORIGINAL name, captured before renameBody in run().
   Constant *NameInit =
@@ -237,9 +275,10 @@ GlobalVariable *FilAsyncPass::emitMeta(Function *F, StringRef OrigName,
   // {name, nargs, noped_args, flags, result, opts, args[]}; the 16-byte
   // pointers and the offsets they imply materialize under FilPizlonator.
   SmallVector<Constant *, 8> ArgCs;
-  for (unsigned Kind : Kinds)
+  for (unsigned I = 0; I < NArgs; ++I)
     ArgCs.push_back(ConstantStruct::get(
-        PairTy, {ConstantInt::get(I32Ty, Kind), ConstantInt::get(I32Ty, 0)}));
+        PairTy, {ConstantInt::get(I32Ty, Kinds[I]),
+                 ConstantInt::get(I32Ty, Deps[I])}));
   ArrayType *ArgsTy = ArrayType::get(PairTy, NArgs);
   Constant *ArgsInit = ConstantArray::get(ArgsTy, ArgCs);
 
@@ -560,8 +599,9 @@ PreservedAnalyses FilAsyncPass::run(Module &M, ModuleAnalysisManager &) {
     // rename invalidates F's name storage.
     std::string OrigName = F->getName().str();
     SmallVector<unsigned, 8> Kinds;
+    SmallVector<unsigned, 8> Deps;
     unsigned Noped;
-    parseKinds(OrigName, F->getFunctionType(), *KV.second, Kinds, Noped);
+    parseKinds(OrigName, F->getFunctionType(), *KV.second, Kinds, Deps, Noped);
     renameBody(F, OrigName);
     GlobalVariable *Opts = emitOpts(M, OrigName, *KV.second);
     GlobalVariable *Meta = emitMeta(F, OrigName, *KV.second, Opts);

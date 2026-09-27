@@ -5,7 +5,7 @@
 # Generates the two-function annotation fixture with HOST clang (the patched
 # clang's -S -emit-llvm output is already pizlonated, annotation pointers
 # undef), runs the pass under the Fil-C LLVM-20 opt, and asserts:
-#   - emission: the meta/opts/renamed-body/table/ctor greps, the meta
+#   - emission: the meta/opts/declaration/table/ctor greps, the meta
 #     field-order/initializer check ({name,nargs,noped_args,flags,result,
 #     opts,args[]} with a [nargs x {i32,i32}] tail), and the ctor's 65535
 #     priority;
@@ -24,8 +24,8 @@ HERE=$(cd "$(dirname "$0")" && pwd)
 REPO=$(cd "$HERE/../.." && pwd)
 BUILD_DIR=${BUILD_DIR:-$REPO/build/filasync-plugin}
 PLUGIN="$BUILD_DIR/libFilAsync.so"
-OPT="$REPO/vendor/fil-c-src/build/bin/opt"
-LLVM_DIR="$REPO/vendor/fil-c-src/build/lib/cmake/llvm"
+OPT=${OPT:-$REPO/vendor/fil-c-src/build/bin/opt}
+LLVM_DIR=${LLVM_DIR:-$REPO/vendor/fil-c-src/build/lib/cmake/llvm}
 HOST_CC=${HOST_CC:-/usr/bin/clang}
 
 TMP=$(mktemp -d)
@@ -48,9 +48,10 @@ fi
 # annotations use the generic grammar (op never decides a kind): fd/bout on
 # procread (FD + BUFFER_OUT), fd/bin + a bare buf (FD + BUFFER_IN + PENDING)
 # on uopenat -- the bare buf= on an op=openat is what proves buf= is PENDING
-# and NOT inferred from the op name.
+# and NOT inferred from the op name. procread also declares two dependencies
+# on different arguments: a scalar read key and a pointer write key.
 cat > "$SRC" <<'EOF'
-#pragma clang attribute push(__attribute__((annotate("filc_async", "op=pread", "fd=0", "bout=1"))), apply_to=function)
+#pragma clang attribute push(__attribute__((annotate("filc_async", "op=pread", "fd=0", "bout=1", "r_dep=0", "w_dep=1"))), apply_to=function)
 void* procread(int fd, void* buf, unsigned long n);
 #pragma clang attribute pop
 
@@ -70,7 +71,8 @@ int main(void) {
 EOF
 
 echo "### generating fixture IR with host clang"
-"$HOST_CC" -S -emit-llvm -O0 -o "$IN" "$SRC"
+"$HOST_CC" -S -emit-llvm -O0 -Werror=pragma-clang-attribute \
+  -o "$IN" "$SRC"
 
 echo "### building the plugin"
 cmake -S "$REPO/compiler/plugin" -B "$BUILD_DIR" -G Ninja \
@@ -108,7 +110,7 @@ expect_grep() {
 # The brief's six greps.
 expect_grep '@__filc_meta_procread' 'meta exists (@__filc_meta_procread)'
 expect_grep '@__filc_opts_procread' 'opts exist (@__filc_opts_procread)'
-expect_grep '@__filc_async_procread' 'renamed body (@__filc_async_procread)'
+expect_grep 'declare ptr @procread(' 'declaration keeps its linker name'
 expect_grep '@__filc_async_meta_' 'per-TU meta table (@__filc_async_meta_*)'
 expect_grep 'filc_async_ctor' 'table ctor (filc_async_ctor)'
 expect_grep '@filc_async_validate_table' 'validator declared/called (@filc_async_validate_table)'
@@ -116,7 +118,8 @@ expect_grep '@filc_async_validate_table' 'validator declared/called (@filc_async
 # Meta field-order / initializer check. Fixture facts:
 #   procread: nargs=3, noped=2 (fd=,bout=), flags=0, result=PTR(2),
 #             kinds: fd=0 -> 4 (ARG_FD), bout=1 -> 3 (ARG_BUFFER_OUT),
-#             arg2 -> 0 (ARG_IGNORED)
+#             arg2 -> 0 (ARG_IGNORED); dependencies: fd read (1),
+#             buffer write + pointer (6)
 #   uopenat:  nargs=4, noped=3 (fd=,bin=,buf=), flags=0, result=PTR(2),
 #             kinds: 4 (ARG_FD), 2 (ARG_BUFFER_IN via bin=),
 #             5 (ARG_PENDING via bare buf=, NOT inferred from op), 0
@@ -134,10 +137,10 @@ if [ -n "$META_P" ]; then
   else
     fail 'procread meta values (nargs=3, noped=2, flags=0, result=PTR, opts)'
   fi
-  if echo "$META_P" | grep -qF -- '[{ i32, i32 } { i32 4, i32 0 }, { i32, i32 } { i32 3, i32 0 }, { i32, i32 } zeroinitializer]'; then
-    pass 'procread args kinds (FD, BUFFER_OUT via bout=, IGNORED)'
+  if echo "$META_P" | grep -qF -- '[{ i32, i32 } { i32 4, i32 1 }, { i32, i32 } { i32 3, i32 6 }, { i32, i32 } zeroinitializer]'; then
+    pass 'procread args kinds and dependency list (read fd, write buffer)'
   else
-    fail 'procread args kinds (FD, BUFFER_OUT via bout=, IGNORED)'
+    fail 'procread args kinds and dependency list (read fd, write buffer)'
   fi
 else
   fail 'procread meta definition line not found (field-order check)'
@@ -167,47 +170,33 @@ fi
 # The table ctor must be LAST in init order (priority 65535, not 0).
 expect_grep 'i32 65535, ptr @__filc_async_ctor' 'ctor registered at priority 65535 (Ruling-3)'
 # opts is [<nopts+1> x ptr], internal, trailing null.
-expect_grep '@__filc_opts_procread = internal constant [4 x ptr]' 'opts array [nopts+1 x ptr], internal linkage'
-expect_grep '@__filc_opts_procread = internal constant [4 x ptr] [ptr @' 'opts entries are real pointer constants'
+expect_grep '@__filc_opts_procread = internal constant [6 x ptr]' 'opts array [nopts+1 x ptr], internal linkage'
+expect_grep '@__filc_opts_procread = internal constant [6 x ptr] [ptr @' 'opts entries are real pointer constants'
 
 # ---- call-site rewriting ----
 expect_grep '@filc_async_alloc' 'staging alloc present (@filc_async_alloc)'
 expect_grep '@filc_async_submit' 'submit present (@filc_async_submit)'
 expect_grep '@filc_async_submit(ptr @__filc_meta_procread' 'procread call references its meta'
 expect_grep '@filc_async_submit(ptr @__filc_meta_uopenat' 'uopenat call references its meta'
-expect_grep '@filc_async_submit(ptr @__filc_meta_procread, ptr @__filc_async_procread, ptr @__filc_opts_procread' \
-  'submit passes meta, renamed impl, opts in order'
+expect_grep '@filc_async_submit(ptr @__filc_meta_procread, ptr @procread, ptr @__filc_opts_procread' \
+  'submit passes meta, ordinary implementation, opts in order'
 
 # Staging stores: scalar words are extended; pointer stores keep the Fil-C
 # capability when FilPizlonator widens them.
 expect_grep 'zext i32 %' 'integer params zero-extended to intval (R4)'
 expect_grep 'store ptr %' 'pointer params staged with their capability'
 
-# Original direct calls to the annotated functions are gone. The rename
-# already renamed the declaration object itself, so a leftover direct call
-# would print as `call ... @__filc_async_procread(...)` (not `@procread(...)`) --
-# assert the load-bearing form: no `call` instruction may use the renamed body
-# as its callee. The rewritten sites call @filc_async_submit instead. Keep the
-# bare `@procread(`/`@uopenat(` sanity greps too.
-if grep -qE 'call [^@]*@__filc_async_procread\(' "$OUT"; then
-  fail 'direct call to @__filc_async_procread gone'
+# Original direct calls to the annotated declarations are gone. Their
+# declarations remain, since submit passes the ordinary linker symbol.
+if grep -qE 'call [^@]*@procread\(' "$OUT"; then
+  fail 'direct call to @procread gone'
 else
-  pass 'direct call to @__filc_async_procread gone'
+  pass 'direct call to @procread gone'
 fi
-if grep -qE 'call [^@]*@__filc_async_uopenat\(' "$OUT"; then
-  fail 'direct call to @__filc_async_uopenat gone'
+if grep -qE 'call [^@]*@uopenat\(' "$OUT"; then
+  fail 'direct call to @uopenat gone'
 else
-  pass 'direct call to @__filc_async_uopenat gone'
-fi
-if grep -qF -- '@procread(' "$OUT"; then
-  fail 'bare @procread( absent (sanity)'
-else
-  pass 'bare @procread( absent (sanity)'
-fi
-if grep -qF -- '@uopenat(' "$OUT"; then
-  fail 'bare @uopenat( absent (sanity)'
-else
-  pass 'bare @uopenat( absent (sanity)'
+  pass 'direct call to @uopenat gone'
 fi
 
 # ---- annotation erasure ----
@@ -234,7 +223,7 @@ if grep -qF -- '@.str.1 = ' "$OUT"; then
 else
   pass 'annotation-file .str.1 erased (only-use was llvm.global.annotations)'
 fi
-expect_grep '@__filc_opts_procread = internal constant [4 x ptr] [ptr @.str' \
+expect_grep '@__filc_opts_procread = internal constant [6 x ptr] [ptr @.str' \
   'procread opts array still references its .str globals (retained)'
 expect_grep '@__filc_opts_uopenat = internal constant [5 x ptr] [ptr @.str' \
   'uopenat opts array still references its .str globals (retained)'
