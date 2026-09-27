@@ -53,9 +53,16 @@ Build, then run the demos:
 make demo-wordcount         # this has the timing measurements
 make demo-plain             # a simple read loop with no submit/wait calls
 make demo-provenance        # dependency annotation of async function calls
+make demo-async             # lazy resolution, blocking vs issuing-all, the DAG
 
 ./tests/run.sh              # full test suite, all four demos included
 ```
+
+Everything runs on Linux x86-64, and the runtime needs io_uring. Inside Docker
+that means `--security-opt seccomp=unconfined`, because the default seccomp
+profile blocks it. An x86-64 container on Apple silicon runs under Rosetta,
+which does not implement io_uring at all. Without io_uring, `tests/run.sh`
+skips the tests that submit requests and still runs the rest.
 
 ## The demos
 
