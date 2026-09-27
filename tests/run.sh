@@ -192,6 +192,7 @@ if [ "$PATCHED_READY" -eq 1 ]; then
   run_filc_test t_pragma_alloc
   run_patched t_pragma_ignore "$HERE/t_pragma_ignore.c"
   run_patched t_pragma_markpending "$HERE/t_pragma_markpending.c"
+  run_patched t_pragma_many_calls "$HERE/t_pragma_many_calls.c"
   # Negative control: an unknown op= is accepted by the pass and rejected by
   # the runtime's startup validator (the runtime is the authority).
   run_patched_neg t_pragma_unknownop "$HERE/t_pragma_unknownop.c"

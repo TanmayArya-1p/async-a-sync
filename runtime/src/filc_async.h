@@ -84,6 +84,8 @@ typedef struct {
  * a filc_async_result_s for explicit poll/wait. */
 void* filc_async_submit(const filc_async_meta* meta, void* impl, void* opts,
                         void* staged_args, size_t nargs);
+/* Delivering a completion (poll returning true, or wait) retires the handle:
+ * `out` keeps the result, and later poll/wait calls on it are no-ops. */
 bool  filc_async_poll(struct filc_async_result_s* out);
 void  filc_async_wait(struct filc_async_result_s* out);
 

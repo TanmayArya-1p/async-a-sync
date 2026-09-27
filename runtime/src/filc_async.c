@@ -137,14 +137,24 @@ static bool default_validator(const filc_async_meta* m)
 
 static filc_async_register_fn g_register_fn;
 
-static struct filc_async_task* find_task(const void* pending)
+static struct filc_async_task* find_task(const void* pending, size_t* index)
 {
     for (size_t i = 0; i < g_ntasks; ++i) {
         struct filc_async_task* t = g_tasks[i];
-        if ((const void*)t == pending)
+        if ((const void*)t == pending) {
+            *index = i;
             return t;
+        }
     }
     return NULL;
+}
+
+// A task whose completion has been delivered leaves the registry, so the
+// registry bounds tasks in flight rather than tasks over the program's life.
+static void retire_task(size_t index)
+{
+    g_tasks[index] = g_tasks[g_ntasks - 1];
+    g_ntasks--;
 }
 
 void* filc_async_submit(const filc_async_meta* meta, void* impl, void* opts,
@@ -152,6 +162,8 @@ void* filc_async_submit(const filc_async_meta* meta, void* impl, void* opts,
 {
     if (!meta || !staged_args || nargs != meta->nargs)
         filc_async_fatal("filc_async_submit: bad call");
+    if (g_ntasks >= FASYNC_TASK_REGISTRY_CAPACITY)
+        filc_async_fatal("filc_async_submit: too many pending tasks");
 
     // Staged args, impl, opts are owned by the runtime from here. This
     // runtime analyses none of them -- it resolves instantly regardless of
@@ -169,8 +181,6 @@ void* filc_async_submit(const filc_async_meta* meta, void* impl, void* opts,
     t->state = 2;
     t->result = -EOPNOTSUPP;
 
-    if (g_ntasks >= FASYNC_TASK_REGISTRY_CAPACITY)
-        filc_async_fatal("filc_async_submit: too many pending tasks");
     g_tasks[g_ntasks++] = t;
     ++g_submitted;
     ++g_completed;
@@ -212,10 +222,12 @@ bool filc_async_poll(struct filc_async_result_s* out)
 {
     if (!out || !out->pending)
         return false;
-    struct filc_async_task* t = find_task(out->pending);
+    size_t index;
+    struct filc_async_task* t = find_task(out->pending, &index);
     if (!t)
         return false;
     result_fill(out, t);
+    retire_task(index);
     return true; /* this runtime's tasks are always already done */
 }
 
@@ -223,10 +235,12 @@ void filc_async_wait(struct filc_async_result_s* out)
 {
     if (!out || !out->pending)
         return;
-    struct filc_async_task* t = find_task(out->pending);
+    size_t index;
+    struct filc_async_task* t = find_task(out->pending, &index);
     if (!t)
         return;
     result_fill(out, t);
+    retire_task(index);
 }
 
 void filc_async_mark_pending(void* buf)
