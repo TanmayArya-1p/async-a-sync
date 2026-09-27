@@ -158,19 +158,23 @@ static struct filc_async_task* find_task(const void* pending)
 
 /* The staged array has one Fil-C pointer-sized cell per argument. Scalars
  * occupy its low word; pointer cells retain their capabilities. */
-typedef union {
-    void* ptr;
-    uint64_t word;
+typedef struct {
+    union {
+        void* ptr;
+        uint64_t word;
+    } value;
+    uint64_t capability;
 } filc_async_arg;
+_Static_assert(sizeof(filc_async_arg) == 16, "annotated argument slot must be 16 bytes");
 
 static uint64_t arg_word(const filc_async_arg* args, size_t index)
 {
-    return args[index].word;
+    return args[index].value.word;
 }
 
 static void* arg_ptr(const filc_async_arg* args, size_t index)
 {
-    return args[index].ptr;
+    return args[index].value.ptr;
 }
 
 /* The submission stub and completion path use the same mutex to assign call

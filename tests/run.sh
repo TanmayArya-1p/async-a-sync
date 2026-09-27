@@ -74,7 +74,7 @@ run_filc_test() {
   echo "### $name (Fil-C)"
   # shellcheck disable=SC2086
   if "$FILCC" -O2 -static $WARN -I"$REPO/runtime/src" -L"$REPO/runtime/build/lib" \
-       -o "$OUT/$name" "$HERE/$name.c"; then
+       -o "$OUT/$name" "$HERE/$name.c" -lpizlo -lc; then
     if "$OUT/$name" "$@"; then
       PASSED=$((PASSED + 1))
     else
@@ -151,9 +151,9 @@ PATCHED_CC=$REPO/vendor/fil-c-src/build/bin/filcc
 PATCHED_READY=0
 if [ -x "$PATCHED_CC" ]; then
   # The source-built clang looks for its Fil-C runtime at
-  # <binary>/../../../pizfix (i.e. $REPO/vendor/pizfix). Point that at the
+  # <binary>/../../pizfix (i.e. $REPO/vendor/fil-c-src/pizfix). Point that at the
   # distribution's pizfix so the patched compiler can find crt1.o, yolort, etc.
-  PATCHED_PIZFIX=$(cd "$(dirname "$PATCHED_CC")/../../.." && pwd)/pizfix
+  PATCHED_PIZFIX=$(cd "$(dirname "$PATCHED_CC")/../.." && pwd)/pizfix
   if [ ! -e "$PATCHED_PIZFIX" ]; then
     ln -sfn "$FILC_ROOT/pizfix" "$PATCHED_PIZFIX"
   fi
@@ -176,7 +176,7 @@ run_patched() {
        -DFASYNC_COMPILER_INSERTS_CHECKS \
        $RUN_PATCHED_FLAGS \
        -I"$REPO/runtime/src" -L"$REPO/runtime/build/lib" \
-       -o "$OUT/$name" "$src"; then
+       -o "$OUT/$name" "$src" -lpizlo -lc; then
     if "$OUT/$name" "$@"; then
       PASSED=$((PASSED + 1))
     else
@@ -198,7 +198,8 @@ run_patched_linked() {
        -DFASYNC_COMPILER_INSERTS_CHECKS \
        -I"$REPO/runtime/src" -L"$REPO/runtime/build/lib" \
        -o "$OUT/t_linked_async" \
-       "$HERE/t_linked_async_main.c" "$HERE/t_linked_async_def.c"; then
+       "$HERE/t_linked_async_main.c" "$HERE/t_linked_async_def.c" \
+       -lpizlo -lc; then
     if "$HERE/check_linkage.sh" "$REPO/runtime/build/lib/libpizlo.a" \
          "$OUT/t_linked_async" && "$OUT/t_linked_async" "$OUT"; then
       PASSED=$((PASSED + 1))
@@ -226,7 +227,7 @@ run_patched_neg() {
        -DFASYNC_COMPILER_INSERTS_CHECKS \
        $RUN_PATCHED_FLAGS \
        -I"$REPO/runtime/src" -L"$REPO/runtime/build/lib" \
-       -o "$OUT/$name" "$src"; then
+       -o "$OUT/$name" "$src" -lpizlo -lc; then
     if err_out=$("$OUT/$name" 2>&1); then
       echo "!!! $name exited 0; runtime should have rejected the op"
       FAILED=$((FAILED + 1))

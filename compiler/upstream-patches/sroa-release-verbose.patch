@@ -1,0 +1,13 @@
+diff --git a/llvm/lib/Transforms/Scalar/SROA.cpp b/llvm/lib/Transforms/Scalar/SROA.cpp
+index 3c30d9e89..a3048e828 100644
+--- a/llvm/lib/Transforms/Scalar/SROA.cpp
++++ b/llvm/lib/Transforms/Scalar/SROA.cpp
+@@ -1025,7 +1025,7 @@ public:
+ /// slices.
+ iterator_range<AllocaSlices::partition_iterator> AllocaSlices::partitions() {
+   if (verbose) {
+-    errs() << "Iterating partitions of " << AI << "\n";
++    errs() << "Iterating partitions\n";
+     errs() << "Slices:\n";
+     for (Slice S : Slices) {
+       errs() << "    BeginOffset = " << S.beginOffset() << ", EndOffset = " << S.endOffset();

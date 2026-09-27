@@ -10,10 +10,14 @@
 #include "filc_async.h"
 #include "filc_async_alloc.h"
 
-typedef union {
-    void* ptr;
-    uint64_t word;
+typedef struct {
+    union {
+        void* ptr;
+        uint64_t word;
+    } value;
+    uint64_t capability;
 } staged_arg;
+_Static_assert(sizeof(staged_arg) == 16, "annotated argument slot must be 16 bytes");
 
 static const char* const open_opts[] = { "op=openat", NULL };
 static const char* const read_opts[] = { "op=pread", NULL };
@@ -83,10 +87,10 @@ int main(int argc, char** argv)
     staged_arg* a = make_args(4);
     if (!a)
         return 5;
-    a[0].word = (uint64_t)(unsigned)AT_FDCWD;
-    a[1].ptr = path;
-    a[2].word = O_RDWR;
-    a[3].word = 0;
+    a[0].value.word = (uint64_t)(unsigned)AT_FDCWD;
+    a[1].value.ptr = path;
+    a[2].value.word = O_RDWR;
+    a[3].value.word = 0;
     unsigned char state;
     int fd = (int)finish(filc_async_submit(open_meta, NULL, NULL, a, 4), &state);
     if (state != 0 || fd < 0)
@@ -99,10 +103,10 @@ int main(int argc, char** argv)
     a = make_args(4);
     if (!a)
         return 8;
-    a[0].word = (unsigned)fd;
-    a[1].ptr = buf;
-    a[2].word = 8;
-    a[3].word = 0;
+    a[0].value.word = (unsigned)fd;
+    a[1].value.ptr = buf;
+    a[2].value.word = 8;
+    a[3].value.word = 0;
     filc_async_mark_pending(buf);
     void* read_task = filc_async_submit(read_meta, NULL, NULL, a, 4);
     if (!filc_async_is_pending(buf) || finish(read_task, &state) != 8 ||
@@ -112,17 +116,17 @@ int main(int argc, char** argv)
     a = make_args(4);
     if (!a)
         return 10;
-    a[0].word = (unsigned)fd;
-    a[1].ptr = (void*)"updated!";
-    a[2].word = 8;
-    a[3].word = 0;
+    a[0].value.word = (unsigned)fd;
+    a[1].value.ptr = (void*)"updated!";
+    a[2].value.word = 8;
+    a[3].value.word = 0;
     if (finish(filc_async_submit(write_meta, NULL, NULL, a, 4), &state) != 8 || state != 0)
         return 11;
 
     a = make_args(1);
     if (!a)
         return 12;
-    a[0].word = (unsigned)fd;
+    a[0].value.word = (unsigned)fd;
     if (finish(filc_async_submit(sync_meta, NULL, NULL, a, 1), &state) != 0 || state != 0)
         return 13;
 
@@ -130,10 +134,10 @@ int main(int argc, char** argv)
     a = make_args(4);
     if (!a)
         return 14;
-    a[0].word = (unsigned)fd;
-    a[1].ptr = buf;
-    a[2].word = 8;
-    a[3].word = 0;
+    a[0].value.word = (unsigned)fd;
+    a[1].value.ptr = buf;
+    a[2].value.word = 8;
+    a[3].value.word = 0;
     filc_async_mark_pending(buf);
     if (finish(filc_async_submit(read_meta, NULL, NULL, a, 4), &state) != 8 ||
         state != 0 || strcmp(buf, "updated!") != 0)
@@ -142,17 +146,17 @@ int main(int argc, char** argv)
     a = make_args(1);
     if (!a)
         return 16;
-    a[0].word = (unsigned)fd;
+    a[0].value.word = (unsigned)fd;
     if (finish(filc_async_submit(close_meta, NULL, NULL, a, 1), &state) != 0 || state != 0)
         return 17;
 
     a = make_args(4);
     if (!a)
         return 18;
-    a[0].word = (unsigned)-1;
-    a[1].ptr = buf;
-    a[2].word = 1;
-    a[3].word = 0;
+    a[0].value.word = (unsigned)-1;
+    a[1].value.ptr = buf;
+    a[2].value.word = 1;
+    a[3].value.word = 0;
     filc_async_mark_pending(buf);
     if (finish(filc_async_submit(read_meta, NULL, NULL, a, 4), &state) != -EBADF ||
         state != 2 || filc_async_is_pending(buf))
