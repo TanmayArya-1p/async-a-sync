@@ -26,12 +26,48 @@ echo "### building the runtime"
 
 FAILED=0
 PASSED=0
+SKIPPED=0
+
+# Warnings are reported, not fatal: the suite should still run on toolchains
+# that warn about things ours do not.
+WARN="-Wall -Wextra"
+
+skip() {
+  echo
+  echo "### $1: SKIPPED ($2)"
+  SKIPPED=$((SKIPPED + 1))
+}
+
+# Most of the suite submits real requests, so it needs a working io_uring.
+# Without one those tests are skipped, not failed, so the ones that can run
+# still say something. See tests/probe_io_uring.c for why it goes missing.
+IO_URING=0
+if "$HOST_CC" -O2 -o "$OUT/probe_io_uring" "$HERE/probe_io_uring.c" &&
+   "$OUT/probe_io_uring"; then
+  IO_URING=1
+else
+  echo
+  echo "!!! io_uring is not available to this process; tests that need it are"
+  echo "!!! skipped. In Docker, try --security-opt seccomp=unconfined. Under"
+  echo "!!! x86-64 emulation (e.g. Rosetta on Apple silicon) it cannot work."
+fi
+
+# needs_io_uring <runner> <name> [args...]: run the test, or skip it without
+# io_uring.
+needs_io_uring() {
+  if [ "$IO_URING" -eq 1 ]; then
+    "$@"
+  else
+    skip "$2" "needs io_uring"
+  fi
+}
 
 run_filc_test() {
   name=$1
   echo
   echo "### $name (Fil-C)"
-  if "$FILCC" -O2 -static -I"$REPO/runtime/src" -L"$REPO/runtime/build/lib" \
+  # shellcheck disable=SC2086
+  if "$FILCC" -O2 -static $WARN -I"$REPO/runtime/src" -L"$REPO/runtime/build/lib" \
        -o "$OUT/$name" "$HERE/$name.c"; then
     if "$OUT/$name"; then
       PASSED=$((PASSED + 1))
@@ -49,7 +85,8 @@ run_host_test() {
   name=$1
   echo
   echo "### $name (plain C)"
-  if "$HOST_CC" -O2 -o "$OUT/$name" "$HERE/$name.c"; then
+  # shellcheck disable=SC2086
+  if "$HOST_CC" -O2 $WARN -o "$OUT/$name" "$HERE/$name.c"; then
     if "$OUT/$name"; then
       PASSED=$((PASSED + 1))
     else
@@ -68,7 +105,8 @@ run_host_test_pthread() {
   name=$1
   echo
   echo "### $name (plain C, pthreads)"
-  if "$HOST_CC" -O2 -pthread -o "$OUT/$name" "$HERE/$name.c"; then
+  # shellcheck disable=SC2086
+  if "$HOST_CC" -O2 $WARN -pthread -o "$OUT/$name" "$HERE/$name.c"; then
     if "$OUT/$name" "$OUT"; then
       PASSED=$((PASSED + 1))
     else
@@ -82,17 +120,19 @@ run_host_test_pthread() {
 }
 
 run_host_test stage2b_mmap_probe
-run_host_test stage6b_fd_chain_probe
+needs_io_uring run_host_test stage6b_fd_chain_probe
 run_filc_test stage2c_gc_pin_probe
-run_filc_test stage2_lazy_resolution
-run_filc_test stage2_lazy_submit
-run_filc_test stage_token_ordering
-run_filc_test stage3_dependency
-run_filc_test stage5_trackers
-run_filc_test stage6_fd_provenance
-run_filc_test stage7_throughput
+needs_io_uring run_filc_test stage2_lazy_resolution
+needs_io_uring run_filc_test stage2_lazy_submit
+needs_io_uring run_filc_test stage_token_ordering
+needs_io_uring run_filc_test stage3_dependency
+needs_io_uring run_filc_test stage5_trackers
+needs_io_uring run_filc_test stage6_fd_provenance
+needs_io_uring run_filc_test stage7_throughput
 run_filc_test t_pending_registry
 run_filc_test t_dag_submit_failure
+# Allocator interface only (no annotations), so the stock filcc builds it.
+run_filc_test t_pragma_alloc
 
 # stage4, stage8, demo_plain_io and demo_wordcount all need the *patched*
 # compiler, because what they demonstrate is the hook it inserts. Built with the
@@ -125,7 +165,7 @@ run_patched() {
   echo
   echo "### $name (patched compiler)"
   # shellcheck disable=SC2086
-  if "$PATCHED_CC" -O2 -static -DFASYNC_COMPILER_INSERTS_CHECKS \
+  if "$PATCHED_CC" -O2 -static $WARN -DFASYNC_COMPILER_INSERTS_CHECKS \
        $RUN_PATCHED_FLAGS \
        -I"$REPO/runtime/src" -L"$REPO/runtime/build/lib" \
        -o "$OUT/$name" "$src"; then
@@ -151,7 +191,7 @@ run_patched_neg() {
   echo
   echo "### $name (patched compiler, expects runtime rejection)"
   # shellcheck disable=SC2086
-  if "$PATCHED_CC" -O2 -static -DFASYNC_COMPILER_INSERTS_CHECKS \
+  if "$PATCHED_CC" -O2 -static $WARN -DFASYNC_COMPILER_INSERTS_CHECKS \
        $RUN_PATCHED_FLAGS \
        -I"$REPO/runtime/src" -L"$REPO/runtime/build/lib" \
        -o "$OUT/$name" "$src"; then
@@ -175,22 +215,19 @@ run_patched_neg() {
 # trip, and /tmp is usually tmpfs. Both programs detect the no-latency case and
 # say so rather than quoting a ratio they cannot support.
 if [ "$PATCHED_READY" -eq 1 ]; then
-  run_patched stage4_compiler_hook "$HERE/stage4_compiler_hook.c"
-  run_patched stage8_latency "$HERE/stage8_latency.c" "$OUT"
-  RUN_PATCHED_FLAGS="-DFASYNC_IMPLICIT" run_patched demo_plain_io \
-    "$REPO/demos/demo_plain_io.c" "$OUT"
-  RUN_PATCHED_FLAGS="-DFASYNC_IMPLICIT" run_patched demo_async_io \
-    "$REPO/demos/demo_async_io.c" "$OUT"
-  RUN_PATCHED_FLAGS="-DFASYNC_IMPLICIT" run_patched demo_provenance \
-    "$REPO/demos/demo_provenance.c" "$OUT"
-  RUN_PATCHED_FLAGS="-DFASYNC_IMPLICIT" run_patched demo_wordcount \
-    "$REPO/demos/demo_wordcount.c" "$OUT"
+  needs_io_uring run_patched stage4_compiler_hook "$HERE/stage4_compiler_hook.c"
+  needs_io_uring run_patched stage8_latency "$HERE/stage8_latency.c" "$OUT"
+  RUN_PATCHED_FLAGS="-DFASYNC_IMPLICIT" needs_io_uring run_patched \
+    demo_plain_io "$REPO/demos/demo_plain_io.c" "$OUT"
+  RUN_PATCHED_FLAGS="-DFASYNC_IMPLICIT" needs_io_uring run_patched \
+    demo_async_io "$REPO/demos/demo_async_io.c" "$OUT"
+  RUN_PATCHED_FLAGS="-DFASYNC_IMPLICIT" needs_io_uring run_patched \
+    demo_provenance "$REPO/demos/demo_provenance.c" "$OUT"
+  RUN_PATCHED_FLAGS="-DFASYNC_IMPLICIT" needs_io_uring run_patched \
+    demo_wordcount "$REPO/demos/demo_wordcount.c" "$OUT"
 
-  # The pragma-async interface tests. t_pragma_alloc uses only the allocator
-  # functions (no annotations), so it compiles and links with the stock filcc
-  # against the arena object alone; t_pragma_ignore needs the patched compiler
-  # to rewrite its annotated call site into filc_async_submit.
-  run_filc_test t_pragma_alloc
+  # The pragma-async interface tests: the patched compiler rewrites their
+  # annotated call sites into filc_async_submit.
   run_patched t_pragma_ignore "$HERE/t_pragma_ignore.c"
   run_patched t_pragma_markpending "$HERE/t_pragma_markpending.c"
   run_patched t_pragma_many_calls "$HERE/t_pragma_many_calls.c"
@@ -202,20 +239,38 @@ if [ "$PATCHED_READY" -eq 1 ]; then
   # source built one way with plain Fil-C and one way with the patched
   # compiler + io_uring, run on a real filesystem, and reported as two
   # timings plus a ratio.
-  echo
-  echo "### wordcount: the same code, sync and implicit (run_wordcount.sh)"
-  if "$REPO/demos/run_wordcount.sh" "$OUT"; then
-    PASSED=$((PASSED + 1))
+  if [ "$IO_URING" -eq 1 ]; then
+    echo
+    echo "### wordcount: the same code, sync and implicit (run_wordcount.sh)"
+    if "$REPO/demos/run_wordcount.sh" "$OUT"; then
+      PASSED=$((PASSED + 1))
+    else
+      echo "!!! run_wordcount.sh exited non-zero"
+      FAILED=$((FAILED + 1))
+    fi
   else
-    echo "!!! run_wordcount.sh exited non-zero"
-    FAILED=$((FAILED + 1))
+    skip run_wordcount.sh "needs io_uring"
+  fi
+
+  # opt-level tests of the FilAsync pass itself (descriptor emission, call
+  # rewriting, annotation erasure). They need opt, a host clang and cmake.
+  if [ -x "$REPO/vendor/fil-c-src/build/bin/opt" ]; then
+    for script in opt_annotate opt_annotate_test; do
+      echo
+      echo "### $script.sh (FilAsync pass under opt)"
+      if "$REPO/compiler/dev/$script.sh"; then
+        PASSED=$((PASSED + 1))
+      else
+        echo "!!! $script.sh exited non-zero"
+        FAILED=$((FAILED + 1))
+      fi
+    done
+  else
+    skip "compiler/dev pass tests" "opt not built; run ./compiler/build.sh"
   fi
 else
-  echo
-  echo "### stage4_compiler_hook, stage8_latency, demo_plain_io, demo_async_io,"
-  echo "    demo_provenance, demo_wordcount, run_wordcount.sh:"
-  echo "    SKIPPED (patched compiler not built)"
-  echo "    build it with: ./compiler/build.sh"
+  skip "stage4, stage8, the demos, the t_pragma_* and FilAsync pass tests" \
+    "patched compiler not built; run ./compiler/build.sh"
 fi
 
 # Not a runtime test: it measures how much parallelism the device underneath these
@@ -223,9 +278,7 @@ fi
 run_host_test_pthread stage9_device_parallelism
 
 echo
-
-echo
 echo "==============================================="
-echo "tests passed: $PASSED   failed: $FAILED"
+echo "tests passed: $PASSED   failed: $FAILED   skipped: $SKIPPED"
 echo "==============================================="
 [ "$FAILED" -eq 0 ]
