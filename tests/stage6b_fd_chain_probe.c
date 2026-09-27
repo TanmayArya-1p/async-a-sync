@@ -217,7 +217,10 @@ int main(void) {
   const char* path = "/tmp/async-a-sync_fdchain_payload.txt";
   const char* payload = "chained-before-open";
   int fd = open(path, O_CREAT | O_TRUNC | O_RDWR, 0644);
-  write(fd, payload, strlen(payload));
+  if (fd < 0 || write(fd, payload, strlen(payload)) != (ssize_t)strlen(payload)) {
+    perror(path);
+    return 1;
+  }
   close(fd);
 
   struct io_uring_params p;
