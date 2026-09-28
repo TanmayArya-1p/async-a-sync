@@ -157,7 +157,7 @@ effect-set DAG in `fasync_dep.c`.
 
 Run `./tests/run.sh` after both builds. It skips patched-compiler cases if
 `vendor/fil-c-src/build/bin/filcc` is absent, so verify the final count and
-skip line. A full run on 2026-09-29 passed 38 tests with zero failures in an
+skip line. A full run on 2026-09-29 passed 40 tests with zero failures in an
 environment that permitted io_uring. In a restricted sandbox,
 `io_uring_setup` returned `EPERM` and many unrelated tests failed at request
 creation. This is an environment failure, not evidence that dispatch is
