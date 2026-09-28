@@ -1047,6 +1047,12 @@ void EmitAssemblyHelper::RunOptimizationPipeline(
         [](ModulePassManager &MPM, OptimizationLevel Level) {
           if (FilCKillUB)
             MPM.addPass(KillUBPass());
+          // FilAsync runs before any optimization. An annotated function's
+          // body is a stub the backend never executes, so the inliner and
+          // function-attribute inference below must not see direct calls to
+          // it: they would conclude, for example, that a bout= buffer is not
+          // written by the call and forward stale contents past it.
+          MPM.addPass(FilAsyncPass());
           if (Level != OptimizationLevel::O0 && FilCOptimize) {
             FunctionPassManager EarlyFPM;
             EarlyFPM.addPass(LowerExpectIntrinsicPass());
@@ -1111,7 +1117,6 @@ void EmitAssemblyHelper::RunOptimizationPipeline(
               MPM.addPass(std::move(MIWP));
             }
           }
-          MPM.addPass(FilAsyncPass());
           MPM.addPass(FilPizlonatorPass());
         });
 

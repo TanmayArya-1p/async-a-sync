@@ -29,7 +29,10 @@ Clang function annotation
 
 1. Clang emits `llvm.global.annotations` for a pragma around a function
    declaration or definition. `clang/lib/CodeGen/BackendUtil.cpp` installs
-   `FilAsyncPass` **before** `FilPizlonatorPass`; keep this order. The pass
+   `FilAsyncPass` at the start of Fil-C's pipeline, **before** its early
+   optimizations and `FilPizlonatorPass`; keep this order. The annotated body
+   is a stub the backend never runs, so the inliner and attribute inference
+   must not see direct calls to it (see `tests/t_pragma_same_tu_lazy.c`). The pass
    reads the annotation's `op=`, `fd=`, `bin=`, `bout=`, `buf=`, `r_dep=`, and
    `w_dep=` strings. `read_dep=` and `write_dep=` are rejected. A pragma around
    a call gets Clang's unused-attribute warning; compile with

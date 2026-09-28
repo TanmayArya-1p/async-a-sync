@@ -9,10 +9,10 @@
  * renamed implementation `&__filc_async_somesuch`; a mere declaration would
  * leave that symbol undefined at link time. The body is never called.
  *
- * The body must not be compile-time-removable: at -O1+ the optimizer runs
- * BEFORE FilAsyncPass, so a pure body like `return 0` would be deleted and a
- * small body inlined, leaving no call site to rewrite. The volatile sink
- * keeps the body non-pure and `noinline` keeps the call out of the inliner.
+ * FilAsyncPass runs before the optimizer, so even a pure body could not be
+ * deleted or inlined ahead of the rewrite (t_pragma_same_tu_lazy checks
+ * that). The volatile sink and `noinline` date from when it ran afterwards and
+ * are kept as belt and braces.
  */
 #include <stdio.h>
 #include "filc_async.h"

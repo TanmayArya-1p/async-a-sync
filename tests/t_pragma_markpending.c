@@ -8,9 +8,8 @@
  *   - NOT mark const_in (bin= is a const input, never pending);
  *   - let wait() auto-resolve the marked buffers, so all four read clear after.
  *
- * The `noinline` + volatile sink conventions follow t_pragma_ignore.c: the
- * optimizer runs before FilAsyncPass, and the impl is referenced by pointer,
- * so the def must survive with a real body.
+ * The `noinline` + volatile sink conventions follow t_pragma_ignore.c; the
+ * impl is referenced by pointer, so the def must exist.
  */
 #include <stdio.h>
 #include <stdlib.h>
