@@ -104,6 +104,21 @@ echo "== building clang and opt (this is the long part)"
 ninja -C "$BUILD_DIR" -j "$JOBS" clang opt
 ln -sfn clang "$BUILD_DIR/bin/filcc"
 
+# The source-built driver looks for its Fil-C runtime at <bin>/../../pizfix.
+# Point that at the distribution's pizfix so it finds crt1.o, the headers and
+# yolort; without it the driver falls back to the host's glibc headers.
+FILC_ROOT=${FILC_ROOT:-$REPO/vendor/filc-0.685-linux-x86_64}
+PIZFIX_LINK=$(cd "$BUILD_DIR/.." && pwd)/pizfix
+if [ ! -e "$PIZFIX_LINK" ]; then
+  if [ -d "$FILC_ROOT/pizfix" ]; then
+    echo "== linking $PIZFIX_LINK -> $FILC_ROOT/pizfix"
+    ln -sfn "$FILC_ROOT/pizfix" "$PIZFIX_LINK"
+  else
+    echo "   WARNING: no pizfix at $FILC_ROOT; set FILC_ROOT to a Fil-C" >&2
+    echo "            distribution before using $BUILD_DIR/bin/filcc" >&2
+  fi
+fi
+
 echo "== done"
 echo "   $BUILD_DIR/bin/clang"
 echo
@@ -111,4 +126,4 @@ echo "Use it to link against a runtime built with the io_uring extension:"
 echo "   $BUILD_DIR/bin/filcc -static -DFASYNC_COMPILER_INSERTS_CHECKS -I$REPO/runtime/src -L$REPO/runtime/build/lib ... -lpizlo -lc"
 echo
 echo "NOTE: this build itself needs the pizfix runtime from a Fil-C distribution."
-echo "See the Quickstart in README.md for the full sequence."
+echo "See compiler/README.md for the full sequence."
