@@ -1,6 +1,5 @@
 #include <errno.h>
 #include <limits.h>
-#include <pthread.h>
 #include <pizlonated_syscalls.h>
 #include <stdfil.h>
 
@@ -23,7 +22,6 @@
 struct filc_async_task;
 static struct filc_async_task* g_tasks;
 static struct filc_async_task* g_done;
-static pthread_mutex_t g_dependency_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 // pending-buffer registry. mark_pending/mark_resolved flip marks; is_pending
 // tests range overlap so aliases of a marked buffer probe true. a mark holds
@@ -153,20 +151,16 @@ static filc_async_register_fn g_register_fn;
 
 static struct filc_async_task* find_task(const void* pending)
 {
-    pthread_mutex_lock(&g_dependency_mutex);
     for (struct filc_async_task* t = g_tasks; t; t = t->next) {
         if ((const void*)t == pending) {
-            pthread_mutex_unlock(&g_dependency_mutex);
             return t;
         }
     }
     for (struct filc_async_task* t = g_done; t; t = t->done_next) {
         if ((const void*)t == pending) {
-            pthread_mutex_unlock(&g_dependency_mutex);
             return t;
         }
     }
-    pthread_mutex_unlock(&g_dependency_mutex);
     return NULL;
 }
 
@@ -174,7 +168,6 @@ static struct filc_async_task* find_task(const void* pending)
  * calls on its handle find nothing and leave the caller's result alone. */
 static void retire_task(struct filc_async_task* t)
 {
-    pthread_mutex_lock(&g_dependency_mutex);
     for (struct filc_async_task** link = &g_done; *link;
          link = &(*link)->done_next) {
         if (*link == t) {
@@ -182,7 +175,6 @@ static void retire_task(struct filc_async_task* t)
             break;
         }
     }
-    pthread_mutex_unlock(&g_dependency_mutex);
 }
 
 /* The staged array has one Fil-C pointer-sized cell per argument. Scalars
@@ -206,9 +198,9 @@ static void* arg_ptr(const filc_async_arg* args, size_t index)
     return args[index].value.ptr;
 }
 
-/* The submission stub and completion path use the same mutex to assign call
- * order and retire dependency claims. It is released before waiting for this
- * task's result, so independent reads can be in flight together. */
+/* Dependency claims: submission order assigns the call order, and completion
+ * retires a task's claims. The runtime is single-threaded (see
+ * fasync_check_thread), so none of this state is locked. */
 static bool same_dependency_key(const struct filc_async_task* a, size_t ai,
                                 const struct filc_async_task* b, size_t bi)
 {
@@ -244,7 +236,7 @@ static bool tasks_conflict(const struct filc_async_task* a,
     return false;
 }
 
-static struct filc_async_task* predecessor_locked(const struct filc_async_task* t)
+static struct filc_async_task* predecessor(const struct filc_async_task* t)
 {
     /* The list is newest first; t->next contains exactly the earlier calls. */
     for (struct filc_async_task* p = t->next; p; p = p->next)
@@ -322,9 +314,7 @@ static void start_ready_tasks(void);
 
 static void complete_task(struct filc_async_task* t, long result)
 {
-    pthread_mutex_lock(&g_dependency_mutex);
     if (t->state != 1) {
-        pthread_mutex_unlock(&g_dependency_mutex);
         return;
     }
     t->request = 0;
@@ -344,7 +334,6 @@ static void complete_task(struct filc_async_task* t, long result)
     }
     t->done_next = g_done;
     g_done = t;
-    pthread_mutex_unlock(&g_dependency_mutex);
     start_ready_tasks();
 }
 
@@ -376,10 +365,8 @@ static void refresh_task(struct filc_async_task* t, bool wait)
  * retry once reclaim_tasks() has freed a slot. */
 static bool start_task(struct filc_async_task* t)
 {
-    pthread_mutex_lock(&g_dependency_mutex);
-    bool ready = t->state == 1 && !t->started && !predecessor_locked(t);
+    bool ready = t->state == 1 && !t->started && !predecessor(t);
     if (!ready) {
-        pthread_mutex_unlock(&g_dependency_mutex);
         return true;
     }
     t->started = 1;
@@ -403,10 +390,8 @@ static bool start_task(struct filc_async_task* t)
     }
     if (failure == -EAGAIN) {
         t->started = 0;
-        pthread_mutex_unlock(&g_dependency_mutex);
         return false;
     }
-    pthread_mutex_unlock(&g_dependency_mutex);
     if (failure)
         complete_task(t, failure);
     return true;
@@ -414,10 +399,7 @@ static bool start_task(struct filc_async_task* t)
 
 static void start_ready_tasks(void)
 {
-    pthread_mutex_lock(&g_dependency_mutex);
-    struct filc_async_task* head = g_tasks;
-    pthread_mutex_unlock(&g_dependency_mutex);
-    for (struct filc_async_task* t = head; t; t = t->next)
+    for (struct filc_async_task* t = g_tasks; t; t = t->next)
         start_task(t);
 }
 
@@ -428,13 +410,9 @@ static void start_ready_tasks(void)
  * started one. Returns false when no started task is in flight at all. */
 static bool reclaim_tasks(void)
 {
-    pthread_mutex_lock(&g_dependency_mutex);
-    struct filc_async_task* head = g_tasks;
-    pthread_mutex_unlock(&g_dependency_mutex);
-
     bool reclaimed = false;
     struct filc_async_task* oldest = NULL;
-    for (struct filc_async_task* t = head; t; t = t->next) {
+    for (struct filc_async_task* t = g_tasks; t; t = t->next) {
         if (t->state != 1 || !t->started)
             continue;
         refresh_task(t, false);
@@ -473,7 +451,6 @@ void* filc_async_submit(const filc_async_meta* meta, void* impl, void* opts,
     // The compiler marks output buffers just before calling submit. Attach
     // those marks to this request so re-marking can wait for the right owner.
     const filc_async_arg* args = (const filc_async_arg*)staged_args;
-    pthread_mutex_lock(&g_dependency_mutex);
     t->next = g_tasks;
     g_tasks = t;
     ++g_submitted;
@@ -486,26 +463,21 @@ void* filc_async_submit(const filc_async_meta* meta, void* impl, void* opts,
             if (g_pending[j].buf == buf && !g_pending[j].owner)
                 g_pending[j].owner = t;
     }
-    pthread_mutex_unlock(&g_dependency_mutex);
     start_ready_tasks();
 
     /* A returned task must already have an io_uring request. The Fil-C
      * access hook can only resolve buffers represented in that request table;
      * waiting here preserves lazy buffer reads for dependent operations. */
     for (;;) {
-        pthread_mutex_lock(&g_dependency_mutex);
         bool started = t->started;
-        struct filc_async_task* prior = started ? NULL : predecessor_locked(t);
-        pthread_mutex_unlock(&g_dependency_mutex);
+        struct filc_async_task* prior = started ? NULL : predecessor(t);
         if (started)
             break;
         if (prior) {
             refresh_task(prior, true);
         } else if (!start_task(t) && !reclaim_tasks()) {
             /* The table is full of requests this runtime does not own. */
-            pthread_mutex_lock(&g_dependency_mutex);
             t->started = 1;
-            pthread_mutex_unlock(&g_dependency_mutex);
             complete_task(t, -EAGAIN);
         }
     }
@@ -517,7 +489,7 @@ void* filc_async_submit(const filc_async_meta* meta, void* impl, void* opts,
 // task's producing buffers. Idempotent per task.
 static void auto_resolve_buffers(struct filc_async_task* t)
 {
-    /* Called under g_dependency_mutex by the completion callback. */
+    /* Called by complete_task. */
     if (t->resolved)
         return;
     t->resolved = 1;
@@ -574,10 +546,9 @@ void filc_async_mark_pending(void* buf)
     uintptr_t lower = (uintptr_t)zgetlower(buf);
     uintptr_t upper = (uintptr_t)zgetupper(buf);
 
-    // Do not hold the mutex across a kernel wait. The completion callback
-    // takes that mutex to retire the old claim before this loop retries.
+    // Waiting for the owner of an overlapping mark retires that mark, so the
+    // loop rescans until the buffer can be marked.
     for (;;) {
-        pthread_mutex_lock(&g_dependency_mutex);
         size_t i = 0;
         for (; i < g_npending; ++i) {
             uintptr_t ilower = (uintptr_t)zgetlower(g_pending[i].buf);
@@ -587,7 +558,6 @@ void filc_async_mark_pending(void* buf)
         }
         if (i == g_npending) {
             if (g_npending >= FASYNC_PENDING_REGISTRY_CAPACITY) {
-                pthread_mutex_unlock(&g_dependency_mutex);
                 if (!reclaim_tasks())
                     filc_async_fatal("too many pending buffers");
                 continue;
@@ -595,28 +565,22 @@ void filc_async_mark_pending(void* buf)
             g_pending[g_npending].buf = buf;
             g_pending[g_npending].owner = NULL;
             g_npending++;
-            pthread_mutex_unlock(&g_dependency_mutex);
             return;
         }
         filc_async_pending_mark mark = g_pending[i];
-        pthread_mutex_unlock(&g_dependency_mutex);
 
         if (mark.owner) {
             refresh_task(mark.owner, true);
         } else {
             // Standalone marks may describe an explicit fasync request.
             fasync_resolve_pending(mark.buf, 1);
-            pthread_mutex_lock(&g_dependency_mutex);
             for (size_t j = 0; j < g_npending; ++j)
                 if (g_pending[j].buf == mark.buf && !g_pending[j].owner) {
                     g_pending[j] = g_pending[--g_npending];
                     break;
                 }
-            pthread_mutex_unlock(&g_dependency_mutex);
         }
-        pthread_mutex_lock(&g_dependency_mutex);
         g_pending_resolves++;
-        pthread_mutex_unlock(&g_dependency_mutex);
     }
 }
 
@@ -626,15 +590,12 @@ void filc_async_mark_resolved(void* buf)
     if (!buf)
         return;
     uintptr_t lower = (uintptr_t)zgetlower(buf);
-    pthread_mutex_lock(&g_dependency_mutex);
     for (size_t i = 0; i < g_npending; ++i)
         if ((uintptr_t)zgetlower(g_pending[i].buf) == lower) {
             g_pending[i] = g_pending[g_npending - 1];
             g_npending--;
-            pthread_mutex_unlock(&g_dependency_mutex);
             return;
         }
-    pthread_mutex_unlock(&g_dependency_mutex);
 }
 
 bool filc_async_is_pending(const void* buf)
@@ -644,33 +605,23 @@ bool filc_async_is_pending(const void* buf)
         return false;
     // The compiler's access hook may have reaped a CQE without entering this
     // API. Observe those completions before reporting registry state.
-    for (size_t i = 0;;) {
-        pthread_mutex_lock(&g_dependency_mutex);
-        if (i >= g_npending) {
-            pthread_mutex_unlock(&g_dependency_mutex);
-            break;
-        }
+    for (size_t i = 0; i < g_npending;) {
         struct filc_async_task* owner = g_pending[i].owner;
-        pthread_mutex_unlock(&g_dependency_mutex);
         if (owner && owner->request && owner->state == 1)
             refresh_task(owner, false);
-        pthread_mutex_lock(&g_dependency_mutex);
+        /* completing owner removed its marks; slot i may now hold another */
         if (i < g_npending && g_pending[i].owner == owner)
             ++i;
-        pthread_mutex_unlock(&g_dependency_mutex);
     }
     uintptr_t lower = (uintptr_t)zgetlower((void*)buf);
     uintptr_t upper = (uintptr_t)zgetupper((void*)buf);
-    pthread_mutex_lock(&g_dependency_mutex);
     for (size_t i = 0; i < g_npending; ++i) {
         uintptr_t ilower = (uintptr_t)zgetlower(g_pending[i].buf);
         uintptr_t iupper = (uintptr_t)zgetupper(g_pending[i].buf);
         if (lower < iupper && ilower < upper) {
-            pthread_mutex_unlock(&g_dependency_mutex);
             return true;
         }
     }
-    pthread_mutex_unlock(&g_dependency_mutex);
     return false;
 }
 
@@ -684,19 +635,14 @@ void filc_async_get_stats(filc_async_stats* out)
 {
     if (!out)
         return;
-    pthread_mutex_lock(&g_dependency_mutex);
-    struct filc_async_task* head = g_tasks;
-    pthread_mutex_unlock(&g_dependency_mutex);
-    for (struct filc_async_task* t = head; t; t = t->next)
+    for (struct filc_async_task* t = g_tasks; t; t = t->next)
         if (t->request && t->state == 1)
             refresh_task(t, false);
     *out = (filc_async_stats){ 0 };
-    pthread_mutex_lock(&g_dependency_mutex);
     out->tasks_submitted = g_submitted;
     out->tasks_completed = g_completed;
     out->tasks_failed = g_failed;
     out->pending_resolves = g_pending_resolves;
-    pthread_mutex_unlock(&g_dependency_mutex);
     struct fasync_stats stats;
     fasync_get_stats(&stats);
     out->sqes_queued = stats.sqes_queued;

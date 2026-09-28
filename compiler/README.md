@@ -77,10 +77,13 @@ vendor/fil-c-src/build/bin/filcc -O2 -static \
   -o app app.c -lpizlo -lc
 ```
 
-The final `-lc` matters. The added runtime code calls Fil-C's pthread mutex
-functions from `libpizlo.a`, while the driver scans libc before that archive.
-Without a later libc scan, linking can fail with undefined
-`pizlonated_pthread_mutex_lock` and `_unlock` symbols.
+The driver itself appends `-lpizlo -lc -lpizlo`, so the runtime's objects are
+pulled in after its libc scan. Earlier versions of the runtime called Fil-C's
+pthread mutex functions and failed to link without the trailing `-lc`
+(undefined `pizlonated_pthread_mutex_lock` and `_unlock`). The only libc
+symbol the runtime still uses is errno's `__errno_location`, which virtually
+every program already pulls in, so the trailing `-lc` is now a safeguard; the
+repository's scripts keep it.
 
 ## ABI and test boundaries
 
@@ -102,7 +105,7 @@ x86-64) on 2026-09-29 passed 40 tests with no failures or skips.
 | Symptom | Check |
 |---|---|
 | Missing `crtbegin.o`, `filc_crt.o`, or `-lyolort` | Check `vendor/fil-c-src/pizfix` points to the distribution's `pizfix`. |
-| Undefined `pizlonated_pthread_mutex_*` | Put `-lpizlo -lc` after program objects. |
+| Undefined `pizlonated_pthread_mutex_*` | An older runtime that still used a mutex; rebuild it with `./runtime/build.sh`, or put `-lpizlo -lc` after program objects. |
 | Annotated request returns `-75` with no SQE | Check the 16-byte staged argument stride. `-75` is `EOVERFLOW`. |
 | `io_uring_setup: Operation not permitted` | The execution environment blocks io_uring; run the suite where that syscall is allowed. |
 | `SROA.cpp`: `AI` undeclared in Release | Ensure `compiler/build.sh` applied the SROA patch to the source checkout. |
