@@ -156,6 +156,25 @@ static struct filc_async_task* find_task(const void* pending)
     return NULL;
 }
 
+/* A task whose completion has been delivered leaves the list, so the list (and
+ * every scan of it) is bounded by tasks in flight rather than tasks over the
+ * program's life. Only finished tasks are retired, and they are never anyone's
+ * predecessor. t->next is left intact so a walker already standing on t still
+ * reaches the rest of the list. */
+static void retire_task(struct filc_async_task* t)
+{
+    pthread_mutex_lock(&g_dependency_mutex);
+    if (t->state != 1) {
+        for (struct filc_async_task** link = &g_tasks; *link; link = &(*link)->next) {
+            if (*link == t) {
+                *link = t->next;
+                break;
+            }
+        }
+    }
+    pthread_mutex_unlock(&g_dependency_mutex);
+}
+
 /* The staged array has one Fil-C pointer-sized cell per argument. Scalars
  * occupy its low word; pointer cells retain their capabilities. */
 typedef struct {
@@ -462,7 +481,10 @@ bool filc_async_poll(struct filc_async_result_s* out)
         filc_async_fatal("io_uring submission failed");
     refresh_task(t, false);
     result_fill(out, t);
-    return t->state != 1;
+    if (t->state == 1)
+        return false;
+    retire_task(t);
+    return true;
 }
 
 void filc_async_wait(struct filc_async_result_s* out)
@@ -474,6 +496,7 @@ void filc_async_wait(struct filc_async_result_s* out)
         return;
     refresh_task(t, true);
     result_fill(out, t);
+    retire_task(t);
 }
 
 void filc_async_mark_pending(void* buf)

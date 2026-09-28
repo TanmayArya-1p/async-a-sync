@@ -143,6 +143,9 @@ static void finish(void* task, unsigned id)
     struct filc_async_result_s result = { .pending = task };
     assert(filc_async_poll(&result));
     assert(result.state == 0 && result.result == 0);
+    /* Delivering the completion retired the handle. */
+    assert(!filc_async_poll(&result));
+    assert(result.state == 0 && result.result == 0);
 }
 
 int main(void)
