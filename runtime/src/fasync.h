@@ -4,6 +4,13 @@
 
 typedef unsigned long fasync_id; /* one in-flight request */
 
+/* Threading: the runtime is single-threaded. One io_uring ring and request
+ * table serve the process, without locks. The thread that makes the first
+ * request owns them; a request or wait from any other thread stops the
+ * program. Other threads may compute, and resolving an address from them is a
+ * no-op, so a buffer with a request in flight must be touched or waited on by
+ * the owner before another thread reads it. */
+
 void* fasync_resolve_pending(void* ptr, size_t size);
 
 /* hook the patched compiler emits */

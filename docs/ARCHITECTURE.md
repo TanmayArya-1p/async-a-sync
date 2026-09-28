@@ -133,14 +133,26 @@ an integer key. Matching read/read claims can overlap. Matching claims where
 either side writes are ordered by call submission order.
 
 The task list is newest first; a task scans its `next` chain for earlier
-conflicts. `g_dependency_mutex` guards task insertion, predecessor checks,
-request start, and completion/claim retirement. The completion path retires
-the task and starts newly ready successors. The mutex is released before
-waiting for an earlier request. `filc_async_submit` may therefore wait for a
+conflicts. The completion path retires the task and starts newly ready
+successors. `filc_async_submit` may wait for a
 conflicting predecessor: it does not return a task until the new task has
 started and has a request the access hook can find. Independent work can
 still be queued together. This policy is separate from the explicit API's
 effect-set DAG in `fasync_dep.c`.
+
+### Threading
+
+The runtime is single-threaded: one ring, one request table, one pending-fd
+table and filc_async's lists, none of them locked. The thread that sets up the
+ring (its first request) owns it. `fasync_check_thread` in `fasync.c` stops the
+program with a clear message when any other thread issues a request or waits:
+`fasync_push_sqe`, `fasync_submit`, `fasync_req_wait`, `fasync_ready`,
+`fasync_wait_all`, and filc_async's submit, poll, wait and pending-mark entry
+points. The native access hook returns straight away on any other thread, and
+so does `fasync_resolve_pending`, so threads that only compute never touch the
+runtime's state. A buffer with a request in flight must be touched or waited
+on by the owner before another thread reads it
+(`tests/t_thread_owner.c`, `tests/t_thread_compute.c`).
 
 ## Validation map
 
@@ -153,11 +165,12 @@ effect-set DAG in `fasync_dep.c`.
 | `tests/check_linkage.sh` with `t_linked_async_*` | A separately defined function, generated runtime symbols, and the final binary link and execute. |
 | `tests/t_backend_io_uring.c` | Direct `filc_async_submit` calls reach the supported io_uring operations. |
 | `tests/t_pragma_io_uring.c` and `t_pragma_dependencies.c` | Annotated calls dispatch and honor dependency order end to end. |
+| `tests/t_thread_owner.c` and `t_thread_compute.c` | A request from a second thread is stopped; a thread that only computes stays out of the runtime. |
 | `tests/stage4_compiler_hook.c` and `stage8_latency.c` | The compiler's access hook resolves pending buffers; the latter also measures latency. |
 
 Run `./tests/run.sh` after both builds. It skips patched-compiler cases if
 `vendor/fil-c-src/build/bin/filcc` is absent, so verify the final count and
-skip line. A full run on 2026-09-29 passed 40 tests with zero failures in an
+skip line. A full run on 2026-09-29 passed 42 tests with zero failures in an
 environment that permitted io_uring. In a restricted sandbox,
 `io_uring_setup` returned `EPERM` and many unrelated tests failed at request
 creation. This is an environment failure, not evidence that dispatch is
@@ -182,6 +195,12 @@ incorrect. See `compiler/README.md` for build and link troubleshooting.
   Makefile targets, `demos/run_wordcount_3way.sh`, or
   `demos/inspect_disasm_cfg.sh`. Their link commands carry the trailing
   `-lpizlo -lc`; run them by hand after changing the runtime.
+- Only one thread may use the runtime. Making it thread-safe needs either
+  one lock over every `fasync_*` entry point and the access hook's slow path
+  (shared between Fil-C and native code, released around kernel waits and GC
+  safepoints), which still serializes all I/O on one ring, or a ring per
+  thread with a cross-thread lookup for buffers, which is what would scale
+  I/O across cores.
 - The `deluge` branch can move. The upstream SROA patch and compiler
   overrides are tied to the tested source shape; a future source revision
   may require rebasing them. The tested source revision is recorded in

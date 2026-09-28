@@ -23,6 +23,9 @@
  * ops); bare pointer passing does not synchronize, and two writers to one
  * buffer need explicit sequencing. A pending range always resolves.
  *
+ * Threading: like the fasync_* API (see fasync.h), this is single-threaded;
+ * every entry point below must be called from the ring's owner thread.
+ *
  * Pending marks: the pass calls mark_pending on the producing buffer args
  * (bout=, bare buf=, and unannotated pointer args) of an annotated call before
  * submit; bin= const inputs are never marked. is_pending reports range

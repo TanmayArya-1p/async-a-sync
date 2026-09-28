@@ -107,8 +107,7 @@ the dependency key, and a read with `"r_dep=0", "w_dep=1"` reads that fd resourc
 and writes its output buffer. Scalar arguments with the same value share a key;
 pointer arguments into the same object share a key. Calls with a matching key
 dispatch in call order whenever either side writes (read/write, write/read, or
-write/write). Two reads can be in flight together. The submission stub and
-completion path guard dependency claims with a mutex. A conflicting call waits
+write/write). Two reads can be in flight together. A conflicting call waits
 for its predecessors before its own io_uring request is dispatched, so a
 returned task can still resolve its output buffer on access. The ordinary
 function implementation still links, but its body is not called by this backend.
@@ -178,4 +177,5 @@ There are a few caveats and drawbacks that are yet to be addressed. We hope to f
 - **Hidden dependencies must be annotated** invisible sharing is declared with an effect set or a token.
 - **Supported calls are a subset.** `pread`, `pwrite`, `openat`, `close`, `fsync`. Plain `read` is out because it has no offset. Very few syscalls are supported by `io_uring`, which limited our work.
 - **Speedup scope is limited right now:** Significant speedup is only observed in reads that dont read from page cache (via `O_DIRECT`).
+- **Single-threaded runtime.** One io_uring ring serves the whole process, without locks. The thread that makes the first request owns it; a request or wait from any other thread stops the program with a clear message. Other threads may run and compute, but must not read a buffer while its request is in flight: the owner touches it or waits on it first.
 - **The device is not fully saturated.** The implicit path reaches ~52 kIOPS where plain threads sustain ~184 kIOPS; the gap is an `io-wq` worker ceiling which must be tuned for the specific workload.
