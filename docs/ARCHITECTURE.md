@@ -178,10 +178,10 @@ incorrect. See `compiler/README.md` for build and link troubleshooting.
   beyond that an annotated call waits for an earlier one. The explicit
   pending-fd table has 64 entries. Completed annotated tasks that are never
   polled or waited on stay allocated in the arena. There is no general fallback when io_uring is blocked.
-- `./tests/run.sh` covers `demos/run_wordcount.sh`, but it does not run every
-  Makefile target, `demos/run_wordcount_3way.sh`, or
-  `demos/inspect_disasm_cfg.sh`. Their link commands should be checked for
-  the required trailing `-lpizlo -lc` before relying on them.
+- `./tests/run.sh` covers `demos/run_wordcount.sh`, but it does not run the
+  Makefile targets, `demos/run_wordcount_3way.sh`, or
+  `demos/inspect_disasm_cfg.sh`. Their link commands carry the trailing
+  `-lpizlo -lc`; run them by hand after changing the runtime.
 - The `deluge` branch can move. The upstream SROA patch and compiler
   overrides are tied to the tested source shape; a future source revision
   may require rebasing them. The tested source revision is recorded in

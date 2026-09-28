@@ -24,7 +24,7 @@ echo "=================================================================="
 gcc -O2 -I "$REPO/demos" -o "$OUT/wc_gcc" "$REPO/demos/demo_wordcount.c"
 "$PATCHED_CC" -O2 -static -DFASYNC_IMPLICIT -DFASYNC_COMPILER_INSERTS_CHECKS \
   -I "$REPO/runtime/src" -I "$REPO/demos" -L "$REPO/runtime/build/lib" \
-  -o "$OUT/wc_implicit" "$REPO/demos/demo_wordcount.c"
+  -o "$OUT/wc_implicit" "$REPO/demos/demo_wordcount.c" -lpizlo -lc
 
 HAVE_FILC_SYNC=0
 if [ -x "$FILCC" ]; then
