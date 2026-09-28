@@ -74,11 +74,27 @@ echo "== compile jobs: $JOBS"
 # 3. Configure and build.
 # ---------------------------------------------------------------------
 if [ ! -f "$BUILD_DIR/build.ninja" ]; then
+  # lld links clang much faster than ld.bfd, but only use it when the host
+  # compiler can actually link with it: an installed but broken ld.lld (e.g.
+  # built against a libxml2 the system no longer has) makes the configure step
+  # fail outright. LLVM_ENABLE_LLD=ON/OFF in the environment overrides this.
+  if [ -z "${LLVM_ENABLE_LLD:-}" ]; then
+    LLD_PROBE=$(mktemp -d)
+    if printf 'int main(){return 0;}\n' > "$LLD_PROBE/probe.cpp" &&
+       "${CXX:-c++}" -fuse-ld=lld -o "$LLD_PROBE/probe" "$LLD_PROBE/probe.cpp" \
+         >/dev/null 2>&1; then
+      LLVM_ENABLE_LLD=ON
+    else
+      LLVM_ENABLE_LLD=OFF
+      echo "== the host compiler cannot link with lld; using its default linker"
+    fi
+    rm -rf "$LLD_PROBE"
+  fi
   echo "== configuring"
   cmake -S "$FILC_SRC/llvm" -B "$BUILD_DIR" -G Ninja \
     -DCMAKE_BUILD_TYPE="$BUILD_TYPE" \
     -DLLVM_ENABLE_PROJECTS=clang \
-    -DLLVM_ENABLE_LLD=ON \
+    -DLLVM_ENABLE_LLD="$LLVM_ENABLE_LLD" \
     -DLLVM_TARGETS_TO_BUILD=X86 \
     -DLLVM_ENABLE_ASSERTIONS=OFF
 fi
