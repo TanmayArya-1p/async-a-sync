@@ -11,11 +11,17 @@
 
 /* The compiler's annotated-call ABI, backed by the same io_uring requests as
  * fasync_*. The annotated body is retained for linking but is not executed.
- * Tasks and staged arguments live in the allocator arena; the task list also
- * serves as a GC root for every in-flight pointer argument. */
+ * Tasks and staged arguments live in the allocator arena.
+ *
+ * g_tasks lists the tasks still in flight, newest first; dependency ordering
+ * and every scan for work only walk this list. A task moves to g_done when it
+ * completes and leaves that list once poll/wait delivers its completion. A
+ * program that only ever touches its buffers never delivers, so g_done can
+ * grow, but nothing walks it except a poll/wait looking up its handle. */
 
 struct filc_async_task;
 static struct filc_async_task* g_tasks;
+static struct filc_async_task* g_done;
 static pthread_mutex_t g_dependency_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 // pending-buffer registry. mark_pending/mark_resolved flip marks; is_pending
@@ -40,7 +46,8 @@ static unsigned long g_completed;
 static unsigned long g_failed;
 
 struct filc_async_task {
-    struct filc_async_task* next;
+    struct filc_async_task* next;      /* g_tasks, while in flight */
+    struct filc_async_task* done_next; /* g_done, once complete */
     void* impl;
     void* opts;
     const filc_async_meta* meta;
@@ -152,24 +159,26 @@ static struct filc_async_task* find_task(const void* pending)
             return t;
         }
     }
+    for (struct filc_async_task* t = g_done; t; t = t->done_next) {
+        if ((const void*)t == pending) {
+            pthread_mutex_unlock(&g_dependency_mutex);
+            return t;
+        }
+    }
     pthread_mutex_unlock(&g_dependency_mutex);
     return NULL;
 }
 
-/* A task whose completion has been delivered leaves the list, so the list (and
- * every scan of it) is bounded by tasks in flight rather than tasks over the
- * program's life. Only finished tasks are retired, and they are never anyone's
- * predecessor. t->next is left intact so a walker already standing on t still
- * reaches the rest of the list. */
+/* A task whose completion has been delivered leaves g_done; later poll/wait
+ * calls on its handle find nothing and leave the caller's result alone. */
 static void retire_task(struct filc_async_task* t)
 {
     pthread_mutex_lock(&g_dependency_mutex);
-    if (t->state != 1) {
-        for (struct filc_async_task** link = &g_tasks; *link; link = &(*link)->next) {
-            if (*link == t) {
-                *link = t->next;
-                break;
-            }
+    for (struct filc_async_task** link = &g_done; *link;
+         link = &(*link)->done_next) {
+        if (*link == t) {
+            *link = t->done_next;
+            break;
         }
     }
     pthread_mutex_unlock(&g_dependency_mutex);
@@ -324,6 +333,16 @@ static void complete_task(struct filc_async_task* t, long result)
     if (result < 0)
         ++g_failed;
     auto_resolve_buffers(t);
+    /* Move t from g_tasks to g_done. t->next is left intact so a walker
+     * already standing on t still reaches the rest of g_tasks. */
+    for (struct filc_async_task** link = &g_tasks; *link; link = &(*link)->next) {
+        if (*link == t) {
+            *link = t->next;
+            break;
+        }
+    }
+    t->done_next = g_done;
+    g_done = t;
     pthread_mutex_unlock(&g_dependency_mutex);
     start_ready_tasks();
 }
@@ -351,13 +370,16 @@ static void refresh_task(struct filc_async_task* t, bool wait)
     complete_task(t, fasync_result(t->request));
 }
 
-static void start_task(struct filc_async_task* t)
+/* Returns false only when the request could not be queued because the
+ * request table is full; the task is then left unstarted for its submit to
+ * retry once reclaim_tasks() has freed a slot. */
+static bool start_task(struct filc_async_task* t)
 {
     pthread_mutex_lock(&g_dependency_mutex);
     bool ready = t->state == 1 && !t->started && !predecessor_locked(t);
     if (!ready) {
         pthread_mutex_unlock(&g_dependency_mutex);
-        return;
+        return true;
     }
     t->started = 1;
 
@@ -378,9 +400,15 @@ static void start_task(struct filc_async_task* t)
         if (!t->request)
             failure = errno ? -errno : -EIO;
     }
+    if (failure == -EAGAIN) {
+        t->started = 0;
+        pthread_mutex_unlock(&g_dependency_mutex);
+        return false;
+    }
     pthread_mutex_unlock(&g_dependency_mutex);
     if (failure)
         complete_task(t, failure);
+    return true;
 }
 
 static void start_ready_tasks(void)
@@ -390,6 +418,36 @@ static void start_ready_tasks(void)
     pthread_mutex_unlock(&g_dependency_mutex);
     for (struct filc_async_task* t = head; t; t = t->next)
         start_task(t);
+}
+
+/* Complete in-flight tasks whose requests have finished without anyone
+ * observing it, typically because the program resolved their buffers through
+ * the compiler's access hook and never calls poll/wait. That returns their
+ * request slots and pending marks. If none has finished, wait for the oldest
+ * started one. Returns false when no started task is in flight at all. */
+static bool reclaim_tasks(void)
+{
+    pthread_mutex_lock(&g_dependency_mutex);
+    struct filc_async_task* head = g_tasks;
+    pthread_mutex_unlock(&g_dependency_mutex);
+
+    bool reclaimed = false;
+    struct filc_async_task* oldest = NULL;
+    for (struct filc_async_task* t = head; t; t = t->next) {
+        if (t->state != 1 || !t->started)
+            continue;
+        refresh_task(t, false);
+        if (t->state != 1)
+            reclaimed = true;
+        else
+            oldest = t;
+    }
+    if (reclaimed)
+        return true;
+    if (!oldest)
+        return false;
+    refresh_task(oldest, true);
+    return true;
 }
 
 void* filc_async_submit(const filc_async_meta* meta, void* impl, void* opts,
@@ -439,10 +497,15 @@ void* filc_async_submit(const filc_async_meta* meta, void* impl, void* opts,
         pthread_mutex_unlock(&g_dependency_mutex);
         if (started)
             break;
-        if (prior)
+        if (prior) {
             refresh_task(prior, true);
-        else
-            start_task(t);
+        } else if (!start_task(t) && !reclaim_tasks()) {
+            /* The table is full of requests this runtime does not own. */
+            pthread_mutex_lock(&g_dependency_mutex);
+            t->started = 1;
+            pthread_mutex_unlock(&g_dependency_mutex);
+            complete_task(t, -EAGAIN);
+        }
     }
 
     return (void*)t;
@@ -518,8 +581,12 @@ void filc_async_mark_pending(void* buf)
                 break;
         }
         if (i == g_npending) {
-            if (g_npending >= FASYNC_PENDING_REGISTRY_CAPACITY)
-                filc_async_fatal("too many pending buffers");
+            if (g_npending >= FASYNC_PENDING_REGISTRY_CAPACITY) {
+                pthread_mutex_unlock(&g_dependency_mutex);
+                if (!reclaim_tasks())
+                    filc_async_fatal("too many pending buffers");
+                continue;
+            }
             g_pending[g_npending].buf = buf;
             g_pending[g_npending].owner = NULL;
             g_npending++;

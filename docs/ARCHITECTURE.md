@@ -114,8 +114,13 @@ The pass marks `bout=`, bare `buf=`, and unannotated pointer arguments as
 pending before submission. `bin=` is an input and is not marked. The
 runtime's pending registry compares Fil-C object ranges using `zgetlower`
 and `zgetupper`. A new mark overlapping an earlier one resolves that owner
-first. Completed annotated tasks retire their marks when observed through
-poll, wait, or a later pending-state check. The staged argument allocation
+first. Completed annotated tasks retire their marks and request slots when
+observed through poll, wait, or a later pending-state check. A program that
+only touches its buffers never does any of those, so when the request table or
+the mark registry is full the runtime completes the finished tasks itself, or
+waits for the oldest one (`tests/t_pragma_lazy_many.c`). In-flight tasks sit
+on one list, which dependency checks walk; completed ones move to a second
+list until poll/wait delivers them. The staged argument allocation
 and task are kept reachable so the kernel's borrowed buffer pointers remain
 valid while requests are in flight.
 
@@ -163,11 +168,16 @@ incorrect. See `compiler/README.md` for build and link troubleshooting.
 - Only the five syscall shapes above are implemented. Annotated function
   bodies do not run on this backend. Indirect calls and non-void scalar
   return call sites are not lowered.
+- Only code compiled by the patched compiler resolves pending buffers on
+  access. Fil-C's libc is not, so `memcmp`, `strlen`, `write` and the like
+  read a pending buffer as it stands; touch it first or poll/wait.
 - The access hook checks one byte at the access pointer. A pointer beginning
   outside a pending buffer and straddling into it is not detected by that
   lookup. Review this before broadening memory operations.
-- Request and pending-mark capacity is fixed at 1024; the explicit pending-fd
-  table has 64 entries. There is no general fallback when io_uring is blocked.
+- At most 1024 requests and 1024 pending marks can be outstanding at once;
+  beyond that an annotated call waits for an earlier one. The explicit
+  pending-fd table has 64 entries. Completed annotated tasks that are never
+  polled or waited on stay allocated in the arena. There is no general fallback when io_uring is blocked.
 - `./tests/run.sh` covers `demos/run_wordcount.sh`, but it does not run every
   Makefile target, `demos/run_wordcount_3way.sh`, or
   `demos/inspect_disasm_cfg.sh`. Their link commands should be checked for
