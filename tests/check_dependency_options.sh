@@ -17,7 +17,7 @@ if [ -z "${LLVM_CONFIG:-}" ]; then
 fi
 if [ -z "${LLVM_CONFIG:-}" ]; then
     echo "check_dependency_options: LLVM development headers not found" >&2
-    exit 1
+    exit 77
 fi
 LLVM_BINDIR=$("$LLVM_CONFIG" --bindir)
 CLANG=${CLANG:-$LLVM_BINDIR/clang}
@@ -28,6 +28,12 @@ trap 'rm -rf "$TMP"' EXIT HUP INT TERM
 
 PLUGIN=${FILASYNC_PLUGIN:-$TMP/plugin/libFilAsync.so}
 if [ -z "${FILASYNC_PLUGIN:-}" ]; then
+    for tool in cmake ninja; do
+        if ! command -v "$tool" >/dev/null 2>&1; then
+            echo "check_dependency_options: $tool not found" >&2
+            exit 77
+        fi
+    done
     cmake -S "$REPO/compiler/plugin" -B "$TMP/plugin" -G Ninja \
         -DLLVM_DIR="$LLVM_DIR" -DCMAKE_BUILD_TYPE=Release >"$TMP/cmake.log" 2>&1 || {
         cat "$TMP/cmake.log" >&2

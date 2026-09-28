@@ -16,11 +16,6 @@ OUT=${OUT:-$REPO/build/tests}
 
 mkdir -p "$OUT"
 
-"$HERE/check_forwarders.sh"
-"$HERE/check_dependencies.sh"
-"$HERE/check_dependency_options.sh"
-"$HERE/check_callsite_pragma.sh"
-
 if [ ! -x "$FILCC" ]; then
   echo "run.sh: filcc not found at $FILCC (set FILC_ROOT)" >&2
   exit 1
@@ -42,6 +37,29 @@ skip() {
   echo "### $1: SKIPPED ($2)"
   SKIPPED=$((SKIPPED + 1))
 }
+
+# run_check <script>: a host-side check script, counted like any test. Exit
+# status 77 means a prerequisite is missing (it says which), so it is skipped.
+run_check() {
+  name=$1
+  echo
+  echo "### $name (host check)"
+  status=0
+  "$HERE/$name.sh" || status=$?
+  if [ "$status" -eq 0 ]; then
+    PASSED=$((PASSED + 1))
+  elif [ "$status" -eq 77 ]; then
+    skip "$name" "prerequisite missing"
+  else
+    echo "!!! $name exited $status"
+    FAILED=$((FAILED + 1))
+  fi
+}
+
+run_check check_forwarders
+run_check check_dependencies
+run_check check_dependency_options
+run_check check_callsite_pragma
 
 # Most of the suite submits real requests, so it needs a working io_uring.
 # Without one those tests are skipped, not failed, so the ones that can run
