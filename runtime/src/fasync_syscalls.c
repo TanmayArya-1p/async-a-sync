@@ -82,15 +82,18 @@ fasync_id fasync_fsync(int fd) {
 }
 
 fasync_id fasync_close(int fd) {
+  struct fasync_pending_fd* p = fasync_pending_fd_lookup(fd);
   long real = fasync_fd_resolve(fd);
   if (real < 0) {
+    /* a pending open that failed has no fd to close but its handle goes */
+    if (p)
+      p->used = 0;
     errno = (int)-real;
     return 0;
   }
   fasync_id id = fasync_push_sqe(FASYNC_OP_CLOSE, (int)real, 0, 0, 0, 0, 0, 0);
 
   /* a closed pending handle frees its slot like a closed fd */
-  struct fasync_pending_fd* p = fasync_pending_fd_lookup(fd);
   if (id && p)
     p->used = 0;
   return id;
