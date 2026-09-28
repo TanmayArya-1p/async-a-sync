@@ -266,6 +266,15 @@ if "$OPT" -load-pass-plugin="$PLUGIN" -passes="filc-async" "$MIXED_IN" -S \
   else
     fail 'foreign annotation kept, filc_async entry dropped'
   fi
+  # kr is an external definition: its body is renamed, and its own name stays
+  # bound to that body for callers in other translation units.
+  if grep -Eq '^define .*@__filc_async_kr\(' "$MIXED_OUT" &&
+     grep -Eq '^@kr = .*alias ptr \(i32, i32\), ptr @__filc_async_kr$' "$MIXED_OUT"; then
+    pass 'renamed definition keeps its linker name as an alias'
+  else
+    fail 'renamed definition keeps its linker name as an alias'
+    grep -F 'kr' "$MIXED_OUT" | head -5
+  fi
   if grep -qF 'not a plain call matching its prototype' "$MIXED_ERR"; then
     pass 'mismatched-prototype call left in place with a diagnostic'
   else

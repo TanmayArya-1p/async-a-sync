@@ -30,6 +30,7 @@
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/Function.h"
+#include "llvm/IR/GlobalAlias.h"
 #include "llvm/IR/GlobalValue.h"
 #include "llvm/IR/GlobalVariable.h"
 #include "llvm/IR/IRBuilder.h"
@@ -219,9 +220,21 @@ FilAsyncPass::getAnnotInfo(const Function *F) const {
 
 void FilAsyncPass::renameBody(Function *F, StringRef OrigName) {
   // A declaration may be backed by an ordinary definition in another TU.
-  // Keep its linker name; the annotated call still passes it as impl.
-  if (!F->isDeclaration())
-    F->setName("__filc_async_" + OrigName.str());
+  // Keep its linker name; the annotated call still passes it as impl. An
+  // available_externally body is only a copy of such a definition, so it is
+  // treated the same way.
+  if (F->isDeclaration() || F->hasAvailableExternallyLinkage())
+    return;
+  F->setName("__filc_async_" + OrigName.str());
+  // Callers in other TUs still refer to the original name: typically the
+  // annotation sits on a header declaration that both the caller and this
+  // definition see. Keep that name bound to the body with an alias.
+  if (!F->hasLocalLinkage()) {
+    GlobalAlias *GA = GlobalAlias::create(F->getValueType(),
+                                          F->getAddressSpace(), F->getLinkage(),
+                                          OrigName, F, F->getParent());
+    GA->setVisibility(F->getVisibility());
+  }
 }
 
 GlobalVariable *

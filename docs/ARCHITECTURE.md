@@ -48,8 +48,10 @@ Clang function annotation
    `filc_async_submit(meta, impl, opts, args, nargs)`. The pass preserves the
    ordinary linker name of an annotated declaration so its implementation
    can be in another translation unit. A definition in the same unit is
-   renamed to `__filc_async_<name>`. Its body remains linkable but the
-   io_uring backend never executes it.
+   renamed to `__filc_async_<name>`, and a non-static one keeps `<name>` as
+   an alias of it, so callers in other units still link when the definition
+   is annotated too (the usual case with an annotated header). Its body
+   remains linkable but the io_uring backend never executes it.
 4. Only direct call sites with pointer or void returns are rewritten. A
    non-void scalar return produces a diagnostic and remains a direct call.
    The pass does not rewrite indirect calls. Declaration and definition

@@ -189,26 +189,30 @@ run_patched() {
   fi
 }
 
-# Compile a caller and annotated implementation in separate translation units,
-# then inspect the archive and final executable before running the program.
+# run_patched_linked <name> [flags...]: compile a caller and its implementation
+# in separate translation units, then inspect the archive and final executable
+# before running the program. The flags go to both units.
 run_patched_linked() {
+  name=$1
+  shift
   echo
-  echo "### t_linked_async (patched compiler, two translation units)"
-  if "$PATCHED_CC" -O2 -static -Werror=pragma-clang-attribute \
-       -DFASYNC_COMPILER_INSERTS_CHECKS \
+  echo "### $name (patched compiler, two translation units)"
+  # shellcheck disable=SC2086
+  if "$PATCHED_CC" -O2 -static $WARN -Werror=pragma-clang-attribute \
+       -DFASYNC_COMPILER_INSERTS_CHECKS "$@" \
        -I"$REPO/runtime/src" -L"$REPO/runtime/build/lib" \
-       -o "$OUT/t_linked_async" \
+       -o "$OUT/$name" \
        "$HERE/t_linked_async_main.c" "$HERE/t_linked_async_def.c" \
        -lpizlo -lc; then
     if "$HERE/check_linkage.sh" "$REPO/runtime/build/lib/libpizlo.a" \
-         "$OUT/t_linked_async" && "$OUT/t_linked_async" "$OUT"; then
+         "$OUT/$name" && "$OUT/$name" "$OUT"; then
       PASSED=$((PASSED + 1))
     else
-      echo "!!! t_linked_async linkage or execution failed"
+      echo "!!! $name linkage or execution failed"
       FAILED=$((FAILED + 1))
     fi
   else
-    echo "!!! t_linked_async failed to link"
+    echo "!!! $name failed to link"
     FAILED=$((FAILED + 1))
   fi
 }
@@ -264,7 +268,9 @@ if [ "$PATCHED_READY" -eq 1 ]; then
   run_patched t_pragma_ignore "$HERE/t_pragma_ignore.c"
   run_patched t_pragma_markpending "$HERE/t_pragma_markpending.c"
   needs_io_uring run_patched t_pragma_many_calls "$HERE/t_pragma_many_calls.c"
-  needs_io_uring run_patched_linked
+  needs_io_uring run_patched_linked t_linked_async
+  needs_io_uring run_patched_linked t_linked_async_annotated_def \
+    -DLINKED_ANNOTATE_DEF
   needs_io_uring run_patched t_pragma_io_uring "$HERE/t_pragma_io_uring.c" "$OUT"
   needs_io_uring run_patched t_pragma_dependencies "$HERE/t_pragma_dependencies.c" "$OUT"
   needs_io_uring run_patched t_pragma_same_tu_lazy "$HERE/t_pragma_same_tu_lazy.c" "$OUT"
