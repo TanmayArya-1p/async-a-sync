@@ -111,10 +111,6 @@ fasync_id fasync_openat(int dirfd, const char* path, int flags, int mode) {
     errno = EFAULT;
     return 0;
   }
-  /* The kernel reads the path later. If it was produced by an earlier
-   * asynchronous read, finish that read before handing the path to io_uring. */
-  fasync_resolve_pending((void*)path, 1);
-
   /* The kernel has no Fil-C capability. Prove the NUL terminator is inside
    * the source object's bounds before lending the pointer to io_uring. */
   uintptr_t start = (uintptr_t)path;
@@ -127,7 +123,18 @@ fasync_id fasync_openat(int dirfd, const char* path, int flags, int mode) {
   if (available > 4096)
     available = 4096;
   zcheck_readonly((void*)path, available);
-  if (!memchr(path, 0, available)) {
+
+  /* The kernel reads the path later. Any part of it may still be produced by
+   * an earlier asynchronous read, so finish those reads byte by byte up to
+   * the terminator; a lookup only finds a read covering the whole range it
+   * is given, and one read can start past the first byte. */
+  size_t i = 0;
+  for (; i < available; i++) {
+    fasync_resolve_pending((void*)(path + i), 1);
+    if (!path[i])
+      break;
+  }
+  if (i == available) {
     errno = ENAMETOOLONG;
     return 0;
   }

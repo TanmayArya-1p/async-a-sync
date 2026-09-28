@@ -159,6 +159,7 @@ run_filc_test t_dag_submit_failure
 run_filc_test t_pragma_alloc
 needs_io_uring run_filc_test t_backend_io_uring "$OUT"
 needs_io_uring run_filc_test t_pending_open_failure "$OUT"
+needs_io_uring run_filc_test t_openat_pending_path "$OUT"
 
 # stage4, stage8, demo_plain_io and demo_wordcount all need the *patched*
 # compiler, because what they demonstrate is the hook it inserts. Built with the
