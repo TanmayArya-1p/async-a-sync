@@ -93,9 +93,13 @@ static struct fasync_shared* volatile fasync_published;
 
 #define FASYNC_NATIVE_SPIN_LIMIT 20000
 
+/* The ring's owner publishes the state when it sets the ring up. The runtime
+ * is single-threaded, so only that thread may touch the shared state. */
+static filc_thread* fasync_owner;
+
 PAS_API void filc_native_fasync_publish_state(filc_thread* my_thread,
                                               filc_ptr state) {
-  PAS_UNUSED_PARAM(my_thread);
+  fasync_owner = my_thread;
   fasync_published = (struct fasync_shared*)filc_ptr_ptr(state);
 }
 
@@ -175,6 +179,13 @@ PAS_API void* filc_resolve_pending(void* ptr, size_t size) {
     (*sh->fast_path_hits)++;
     return ptr;
   }
+
+  /* Other threads only compute: the memo, counters and rings below are
+   * unlocked, so they leave them alone. A buffer with a request in flight
+   * must be touched or waited on by the owner before another thread reads
+   * it. */
+  if (filc_get_my_thread() != fasync_owner)
+    return ptr;
 
   (*sh->resolve_calls)++;
 

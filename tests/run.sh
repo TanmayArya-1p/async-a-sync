@@ -323,6 +323,7 @@ if [ "$PATCHED_READY" -eq 1 ]; then
   needs_io_uring run_patched t_pragma_dependencies "$HERE/t_pragma_dependencies.c" "$OUT"
   needs_io_uring run_patched t_pragma_same_tu_lazy "$HERE/t_pragma_same_tu_lazy.c" "$OUT"
   needs_io_uring run_patched t_pragma_lazy_many "$HERE/t_pragma_lazy_many.c" "$OUT"
+  needs_io_uring run_patched t_thread_compute "$HERE/t_thread_compute.c" "$OUT"
   # Negative control: an unknown op= is accepted by the pass and rejected by
   # the runtime's startup validator (the runtime is the authority).
   run_patched_neg t_pragma_unknownop "$HERE/t_pragma_unknownop.c"
