@@ -17,3 +17,12 @@ void fasync_req_release(struct fasync_req_shared* r);
 
 /* wait without releasing so handle stays resolvable */
 long fasync_req_wait(struct fasync_req_shared* r);
+
+/* The runtime is single-threaded: one io_uring ring and one request table,
+ * with no locks. The thread that sets up the ring owns it; requests and waits
+ * from any other thread abort here. A no-op until the ring exists. */
+void fasync_check_thread(void);
+
+/* nonzero when the caller is not the ring's owner (resolution from other
+ * threads is a no-op, like the compiler's access hook) */
+int fasync_foreign_thread(void);

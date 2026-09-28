@@ -55,6 +55,26 @@ static struct fasync_shared g_shared;
 
 static const char* g_last_error = "";
 
+/* the thread that set up the ring; 0 until then */
+static unsigned g_owner_tid;
+
+int fasync_foreign_thread(void) {
+  return g_owner_tid && zthread_self_id() != g_owner_tid;
+}
+
+void fasync_check_thread(void) {
+  if (!fasync_foreign_thread())
+    return;
+  /* runtime objects cannot reach pizlonated libc; see filc_async_fatal */
+  static const char msg[] =
+      "fasync: fatal: request from a thread that does not own the io_uring "
+      "ring (the runtime is single-threaded)\n";
+  zsys_write(2, msg, sizeof(msg) - 1);
+  zsys_abort();
+  while (1) {
+  }
+}
+
 void fasync_reset_stats(void) { memset(&g_stats, 0, sizeof(g_stats)); }
 
 void fasync_get_stats(struct fasync_stats* out) {
@@ -139,6 +159,7 @@ static int fasync_ring_init(void) {
   g_shared.completions_reaped = &g_stats.completions_reaped;
   g_shared.memo_hits = &g_stats.memo_hits;
 
+  g_owner_tid = zthread_self_id();
   fasync_publish_state(&g_shared);
   return 0;
 }
@@ -236,6 +257,7 @@ fasync_id fasync_push_sqe(unsigned char op, int fd, unsigned long addr,
                           size_t len, unsigned long offset,
                           void* result_buf, size_t result_len,
                           unsigned char sqe_flags) {
+  fasync_check_thread();
   if (len > FASYNC_MAX_LEN) {
     g_last_error = "sqe length does not fit in 32 bits";
     return 0;
@@ -292,6 +314,7 @@ fasync_id fasync_push_buf(unsigned char op, int fd, void* buf, size_t len,
 }
 
 int fasync_submit(void) {
+  fasync_check_thread();
   if (!g_ring.ready || !g_ring.queued)
     return 0;
 
@@ -323,6 +346,9 @@ void* fasync_resolve_pending(void* ptr, size_t size) {
     g_stats.fast_path_hits++;
     return ptr;
   }
+  /* other threads never touch the ring, like the native hook */
+  if (fasync_foreign_thread())
+    return ptr;
 
   g_stats.resolve_calls++;
 
@@ -349,6 +375,7 @@ void* fasync_resolve_pending(void* ptr, size_t size) {
 }
 
 int fasync_wait_all(void) {
+  fasync_check_thread();
   fasync_submit();
 
   /* bounded so a stuck request cannot hang */

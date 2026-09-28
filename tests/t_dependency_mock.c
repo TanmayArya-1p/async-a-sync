@@ -22,6 +22,9 @@ static int issue_fd[32];
 static unsigned char done[32];
 static int fail_next_fd = -1;
 
+/* single-threaded, so the real runtime's owner check has nothing to do */
+void fasync_check_thread(void) {}
+
 void* zgetlower(void* ptr)
 {
     uintptr_t p = (uintptr_t)ptr;

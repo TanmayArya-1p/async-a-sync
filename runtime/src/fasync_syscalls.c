@@ -145,6 +145,7 @@ fasync_id fasync_openat(int dirfd, const char* path, int flags, int mode) {
 }
 
 int fasync_ready(fasync_id id) {
+  fasync_check_thread();
   struct fasync_req_shared* r = fasync_req_lookup(id);
   if (!r)
     return 0;
@@ -155,6 +156,7 @@ int fasync_ready(fasync_id id) {
 
 /* wait without releasing so the handle stays resolvable */
 long fasync_req_wait(struct fasync_req_shared* r) {
+  fasync_check_thread();
   if (r->state == FASYNC_REQ_PENDING)
     fasync_submit();
 

@@ -105,6 +105,32 @@ run_filc_test() {
   fi
 }
 
+# run_filc_neg <name> <message> [args...]: like run_filc_test, but the program
+# must stop with <message> on stderr; exiting normally or any other way fails.
+run_filc_neg() {
+  name=$1
+  message=$2
+  shift 2
+  echo
+  echo "### $name (Fil-C, expects the runtime to stop it)"
+  # shellcheck disable=SC2086
+  if "$FILCC" -O2 -static $WARN -I"$REPO/runtime/src" -L"$REPO/runtime/build/lib" \
+       -o "$OUT/$name" "$HERE/$name.c" -lpizlo -lc; then
+    if err_out=$("$OUT/$name" "$@" 2>&1); then
+      echo "!!! $name exited 0; the runtime should have stopped it"
+      FAILED=$((FAILED + 1))
+    elif echo "$err_out" | grep -qF "$message"; then
+      PASSED=$((PASSED + 1))
+    else
+      echo "!!! $name died without the expected message: $(echo "$err_out" | tail -n 1)"
+      FAILED=$((FAILED + 1))
+    fi
+  else
+    echo "!!! $name failed to build"
+    FAILED=$((FAILED + 1))
+  fi
+}
+
 run_host_test() {
   name=$1
   echo
@@ -160,6 +186,8 @@ run_filc_test t_pragma_alloc
 needs_io_uring run_filc_test t_backend_io_uring "$OUT"
 needs_io_uring run_filc_test t_pending_open_failure "$OUT"
 needs_io_uring run_filc_test t_openat_pending_path "$OUT"
+needs_io_uring run_filc_neg t_thread_owner \
+  "does not own the io_uring ring" "$OUT"
 
 # stage4, stage8, demo_plain_io and demo_wordcount all need the *patched*
 # compiler, because what they demonstrate is the hook it inserts. Built with the

@@ -5,6 +5,7 @@
 #include <stdfil.h>
 
 #include "fasync.h"
+#include "fasync_internal.h"
 #include "fasync_shared.h"
 #include "filc_async.h"
 #include "filc_async_alloc.h"
@@ -453,6 +454,7 @@ static bool reclaim_tasks(void)
 void* filc_async_submit(const filc_async_meta* meta, void* impl, void* opts,
                         void* staged_args, size_t nargs)
 {
+    fasync_check_thread();
     if (!meta || !staged_args || nargs != meta->nargs)
         filc_async_fatal("filc_async_submit: bad call");
 
@@ -535,6 +537,7 @@ static void result_fill(struct filc_async_result_s* out, struct filc_async_task*
 
 bool filc_async_poll(struct filc_async_result_s* out)
 {
+    fasync_check_thread();
     if (!out || !out->pending)
         return false;
     struct filc_async_task* t = find_task(out->pending);
@@ -552,6 +555,7 @@ bool filc_async_poll(struct filc_async_result_s* out)
 
 void filc_async_wait(struct filc_async_result_s* out)
 {
+    fasync_check_thread();
     if (!out || !out->pending)
         return;
     struct filc_async_task* t = find_task(out->pending);
@@ -564,6 +568,7 @@ void filc_async_wait(struct filc_async_result_s* out)
 
 void filc_async_mark_pending(void* buf)
 {
+    fasync_check_thread();
     if (!buf)
         return;
     uintptr_t lower = (uintptr_t)zgetlower(buf);
@@ -617,6 +622,7 @@ void filc_async_mark_pending(void* buf)
 
 void filc_async_mark_resolved(void* buf)
 {
+    fasync_check_thread();
     if (!buf)
         return;
     uintptr_t lower = (uintptr_t)zgetlower(buf);
@@ -633,6 +639,7 @@ void filc_async_mark_resolved(void* buf)
 
 bool filc_async_is_pending(const void* buf)
 {
+    fasync_check_thread();
     if (!buf)
         return false;
     // The compiler's access hook may have reaped a CQE without entering this
