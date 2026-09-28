@@ -116,7 +116,8 @@ run_filc_neg() {
   # shellcheck disable=SC2086
   if "$FILCC" -O2 -static $WARN -I"$REPO/runtime/src" -L"$REPO/runtime/build/lib" \
        -o "$OUT/$name" "$HERE/$name.c" -lpizlo -lc; then
-    if err_out=$("$OUT/$name" "$@" 2>&1); then
+    # no core file for the expected abort
+    if err_out=$(ulimit -c 0; "$OUT/$name" "$@" 2>&1); then
       echo "!!! $name exited 0; the runtime should have stopped it"
       FAILED=$((FAILED + 1))
     elif echo "$err_out" | grep -qF "$message"; then
