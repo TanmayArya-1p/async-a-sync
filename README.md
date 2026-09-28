@@ -40,7 +40,9 @@ tar xf filc-0.685-linux-x86_64.tar.xz && cd ..
 git clone --depth 1 --filter=blob:none --sparse \
   -b deluge https://github.com/pizlonator/fil-c.git vendor/fil-c-src
 (cd vendor/fil-c-src && git sparse-checkout set \
-  clang cmake filc libpas lld llvm third-party)
+  clang cmake filc libpas lld llvm third-party &&
+  git fetch --depth 1 --filter=blob:none origin d80c8bba1c58f68c33b0ed5e71113c44354f5bb8 &&
+  git checkout FETCH_HEAD)   # the revision the compiler patches are tested on
 ```
 
 Build, then run the demos:

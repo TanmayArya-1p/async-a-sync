@@ -1,10 +1,10 @@
 # Implementation guide
 
-This describes the implementation in this patch series as tested on
-2026-09-27. Start with the root `README.md` for the programming model and
+This describes the annotated io_uring implementation as tested on
+2026-09-29. Start with the root `README.md` for the programming model and
 `compiler/README.md` for the exact Fil-C setup and failure signatures.
-The build artifacts and `vendor/` checkout are ignored by Git; applying the
-patch does not provide either compiler binary or the Fil-C distribution.
+The build artifacts and `vendor/` checkout are ignored by Git; a checkout of
+this repository provides neither compiler binary nor the Fil-C distribution.
 
 ## Two paths into the same io_uring runtime
 
@@ -157,7 +157,7 @@ effect-set DAG in `fasync_dep.c`.
 
 Run `./tests/run.sh` after both builds. It skips patched-compiler cases if
 `vendor/fil-c-src/build/bin/filcc` is absent, so verify the final count and
-skip line. The 2026-09-27 full run passed 27 tests with zero failures in an
+skip line. A full run on 2026-09-29 passed 38 tests with zero failures in an
 environment that permitted io_uring. In a restricted sandbox,
 `io_uring_setup` returned `EPERM` and many unrelated tests failed at request
 creation. This is an environment failure, not evidence that dispatch is

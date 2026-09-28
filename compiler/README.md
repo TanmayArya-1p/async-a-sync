@@ -20,13 +20,17 @@ git clone --depth 1 --filter=blob:none --sparse -b deluge \
   https://github.com/pizlonator/fil-c.git vendor/fil-c-src
 git -C vendor/fil-c-src sparse-checkout set \
   clang cmake filc libpas lld llvm third-party
+# pin the revision the overrides and the SROA patch were tested against
+git -C vendor/fil-c-src fetch --depth 1 --filter=blob:none origin \
+  d80c8bba1c58f68c33b0ed5e71113c44354f5bb8
+git -C vendor/fil-c-src checkout FETCH_HEAD
 ```
 
 The smaller sparse checkout in older setup instructions is enough for the
-runtime but not for a complete Clang build. The source checkout tested on
-2026-09-27 was `d80c8bba1c58f68c33b0ed5e71113c44354f5bb8`; `deluge` is
-a moving branch, so check `git -C vendor/fil-c-src rev-parse HEAD` when a
-future build behaves differently. Both compilers in that test reported
+runtime but not for a complete Clang build. `deluge` is a moving branch; the
+overrides and `upstream-patches/sroa-release-verbose.patch` are tied to the
+source shape at `d80c8bba1c58`, so build from that revision
+unless you mean to rebase them. Both compilers at that revision report
 Fil-C 0.685 and Clang 20.1.8.
 
 ## Build and test
@@ -45,14 +49,20 @@ and creates `vendor/fil-c-src/build/bin/filcc` after Clang links. The SROA
 patch fixes a Release build error where a log statement reads a field omitted
 under `NDEBUG`. The build script applies it only once.
 
+`compiler/build.sh` links Clang with lld when the host compiler can link with
+it and otherwise falls back to the host's default linker; set
+`LLVM_ENABLE_LLD=ON` or `OFF` to force either. The choice only applies when
+the build directory is first configured.
+
 The Clang build has thousands of compilation steps and uses substantial RAM.
 On a 13 GiB machine, 16 jobs caused the OS to kill a compiler process; eight
 jobs completed the memory-heavy Clang phase. Ninja reuses completed objects
 after a restart. Use `JOBS` to match available memory.
 
 The source-built driver looks for `pizfix` at
-`vendor/fil-c-src/pizfix`. `tests/run.sh` creates a link to the distribution
-there. For manual use before running the suite:
+`vendor/fil-c-src/pizfix`. `compiler/build.sh` and `tests/run.sh` both link
+the distribution's `pizfix` there when it is missing. To make the link by
+hand:
 
 ```sh
 ln -sfn "$PWD/vendor/filc-0.685-linux-x86_64/pizfix" vendor/fil-c-src/pizfix
@@ -86,8 +96,8 @@ an SQE was queued.
 
 `tests/run.sh` runs host checks, stock Fil-C runtime tests, and patched
 compiler tests. The latter are skipped when the patched binary is absent, so
-check the summary and the skip message. The full run on 2026-09-27 passed
-27 tests with no failures when `io_uring_setup` was permitted.
+check the summary and the skip message. A full run on kratos (Linux 7.0,
+x86-64) on 2026-09-29 passed 38 tests with no failures or skips.
 
 | Symptom | Check |
 |---|---|
