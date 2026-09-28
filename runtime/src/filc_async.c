@@ -201,6 +201,23 @@ static void* arg_ptr(const filc_async_arg* args, size_t index)
 /* Dependency claims: submission order assigns the call order, and completion
  * retires a task's claims. The runtime is single-threaded (see
  * fasync_check_thread), so none of this state is locked. */
+
+/* FIXME: scalar keys depend on the declared integer width.
+ *
+ * FilAsync stages an integer narrower than 64 bits zero-extended
+ * (Builder.CreateZExt in FilAsync.cpp's call rewriting), and the scalar
+ * comparison below compares the full 64-bit words. The same value declared
+ * with different widths therefore does not always match. For example, a
+ * pending-open handle -2 is 0x00000000FFFFFFFE as an `int fd` argument and
+ * 0xFFFFFFFFFFFFFFFE as a `long fd` argument, so a w_dep=0 call taking
+ * `int` and an r_dep=0 call taking `long` on that handle are not ordered.
+ * Non-negative values are unaffected.
+ *
+ * A fix needs the signedness the pass does not record today: stage signed
+ * arguments sign-extended, or record each dependency argument's width and
+ * sign in the descriptor and normalize here. It is left alone for now because
+ * it only bites when one resource is declared with two different integer
+ * types; declare dependency arguments with one type until then. */
 static bool same_dependency_key(const struct filc_async_task* a, size_t ai,
                                 const struct filc_async_task* b, size_t bi)
 {
