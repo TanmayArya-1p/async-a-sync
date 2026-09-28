@@ -5,6 +5,10 @@ ulimit -c 0
 
 REPO=$(cd "$(dirname "$0")/.." && pwd)
 HOST_CC=${HOST_CC:-cc}
+if ! command -v "$HOST_CC" >/dev/null 2>&1; then
+  echo "check_dependencies: $HOST_CC not found" >&2
+  exit 77
+fi
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT HUP INT TERM
 

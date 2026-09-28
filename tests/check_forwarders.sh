@@ -3,6 +3,11 @@
 # memory-safe runtime calls. This test needs Ruby, but not a Fil-C checkout.
 set -eu
 
+if ! command -v ruby >/dev/null 2>&1; then
+  echo "check_forwarders: ruby not found" >&2
+  exit 77
+fi
+
 REPO=$(cd "$(dirname "$0")/.." && pwd)
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT HUP INT TERM

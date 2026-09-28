@@ -3,6 +3,10 @@
 set -eu
 
 CLANG=${CLANG:-clang}
+if ! command -v "$CLANG" >/dev/null 2>&1; then
+    echo "check_callsite_pragma: $CLANG not found" >&2
+    exit 77
+fi
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT HUP INT TERM
 
