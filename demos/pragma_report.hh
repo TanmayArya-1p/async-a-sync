@@ -87,14 +87,14 @@ static inline int hello_report(struct hello* h, char first, long n) {
     printf("  %-26s %6.1f us %15lu   %s\n", h->step[i].what, h->step[i].us,
            h->step[i].used.submits + h->step[i].used.waits,
            h->step[i].pending ? "yes" : "no");
-  printf("\n  body of read_block ran %d times; buf[0] is '%c'; buf holds:\n"
-         "  \"%s\"\n",
-         pragma_body_calls, first, h->buf);
+  printf("\n  the runtime ran read_block's body before the read; buf[0] is "
+         "'%c'; buf holds:\n  \"%s\"\n",
+         first, h->buf);
   printf("\n  => one call, one request; reading buf sent it (%lu kernel entry), "
          "no wait written\n",
          touch->used.submits + touch->used.waits);
 
-  pragma_check("the body of read_block never ran", pragma_body_calls == 0);
+  pragma_check_bodies();
   pragma_check("the call only queued a request (no kernel entry)",
                call->used.sqes == 1 && call->used.submits == 0 &&
                    call->used.waits == 0);
@@ -171,8 +171,8 @@ static inline int lifecycle_report(struct lifecycle* l,
   pragma_check("the file holds the text (checked with plain read)",
                disk_n == (ssize_t)len && memcmp(disk, text, len) == 0);
   pragma_check("the fd was closed by the last call", fd_closed);
-  pragma_check("five calls, five requests, no bodies run",
-               used.calls == 5 && used.sqes == 5 && pragma_body_calls == 0);
+  pragma_check("five calls, five requests, five bodies run",
+               used.calls == 5 && used.sqes == 5 && pragma_body_calls == 5);
 
   unlink(l->path);
   return pragma_finish();
@@ -290,7 +290,7 @@ static inline int ordering_report(int* fd) {
     close(fd[i]);
     unlink(ordering_paths[i]);
   }
-  pragma_check("no annotated body ran", pragma_body_calls == 0);
+  pragma_check_bodies();
   return pragma_finish();
 }
 
@@ -450,7 +450,7 @@ static inline int coldread_report(struct timing* t) {
   for (int w = 0; w < 3; w++)
     words_ok &= words_counted(way[w], t->passes, t->files);
   pragma_check("every pass of every arm counted every word", words_ok);
-  pragma_check("no annotated body ran", pragma_body_calls == 0);
+  pragma_check_bodies();
   pragma_check("B entered the kernel far less than once per file",
                pass_median(t->annotated, t->passes, F_ENTRIES) <
                    t->files / 4.0 + 1);
@@ -511,7 +511,7 @@ static inline int scaling_report(struct timing* t) {
            t->best, t->best_n, t->last_speedup, t->last_n, t->last_call_us);
 
   pragma_check("every pass counted every word", t->words_ok);
-  pragma_check("no annotated body ran", pragma_body_calls == 0);
+  pragma_check_bodies();
   pragma_check("from 64 files up, B batched its reads into few entries",
                t->batched);
   if (t->regime_ok && t->best_n)
@@ -677,7 +677,7 @@ static inline int overlap_report(struct overlap* o) {
          ratio(a, b), b_sleeps);
 
   pragma_check("A and B hashed the same bytes as the reference", hashes_ok);
-  pragma_check("no annotated body ran", pragma_body_calls == 0);
+  pragma_check_bodies();
   if (o->regime_ok) {
     pragma_check("B beat A on an uncached device", b < a);
     pragma_check("B's hash loop never slept waiting for a read", b_sleeps == 0);

@@ -30,9 +30,10 @@ Clang function annotation
 1. Clang emits `llvm.global.annotations` for a pragma around a function
    declaration or definition. `clang/lib/CodeGen/BackendUtil.cpp` installs
    `FilAsyncPass` at the start of Fil-C's pipeline, **before** its early
-   optimizations and `FilPizlonatorPass`; keep this order. The annotated body
-   is a stub the backend never runs, so the inliner and attribute inference
-   must not see direct calls to it (see `tests/t_pragma_same_tu_lazy.c`). The pass
+   optimizations and `FilPizlonatorPass`; keep this order. The inliner and
+   attribute inference must not see direct calls to an annotated function
+   before they are redirected to its stub, or they could fold or inline them
+   (see `tests/t_pragma_same_tu_lazy.c` and `tests/t_pragma_repeat_read.c`). The pass
    reads the annotation's `op=`, `fd=`, `bin=`, `bout=`, `buf=`, `r_dep=`, and
    `w_dep=` strings. `read_dep=` and `write_dep=` are rejected. A pragma around
    a call gets Clang's unused-attribute warning; compile with
@@ -43,15 +44,24 @@ Clang function annotation
    argument indices and dependency types. The runtime validator owns the
    supported `op=` set and operation shapes; an unknown op is rejected at
    startup. `op=ignore` is a test-only accepted operation.
-3. Direct calls to annotated functions are rewritten to allocate staged
-   argument cells, mark producing buffers pending, and call
-   `filc_async_submit(meta, impl, opts, args, nargs)`. The pass preserves the
+3. Direct calls to annotated functions are redirected to a stub the pass
+   emits for each function. The stub stages the arguments in 16-byte cells,
+   starts a task with `filc_async_begin`, takes one `filc_async_lock_word` or
+   `filc_async_lock_ptr` per dependency argument and one
+   `filc_async_mark_pending` per output buffer, and hands the call to the
+   runtime with `filc_async_submit(task, meta, run, args, nargs)`, where
+   `run` is a thunk that calls the body with the staged arguments. The
+   framework (`runtime/src/filc_async.c`) implements the stub's calls and
+   knows nothing about ops; the runtime implements `filc_async_submit`,
+   `filc_async_runtime_poll` and `filc_async_runtime_validate`
+   (`runtime/src/filc_async_runtime.h`). The pass preserves the
    ordinary linker name of an annotated declaration so its implementation
    can be in another translation unit. A definition in the same unit is
    renamed to `__filc_async_<name>`, and a non-static one keeps `<name>` as
    an alias of it, so callers in other units still link when the definition
-   is annotated too (the usual case with an annotated header). Its body
-   remains linkable but the io_uring backend never executes it.
+   is annotated too (the usual case with an annotated header). The io_uring
+   runtime (`runtime/src/filc_async_uring.c`) runs the body through the run
+   thunk before it issues the request.
 4. Only direct call sites with pointer or void returns are rewritten. A
    non-void scalar return produces a diagnostic and remains a direct call.
    The pass does not rewrite indirect calls. Declaration and definition
@@ -181,9 +191,8 @@ incorrect. See `compiler/README.md` for build and link troubleshooting.
 
 ## Limitations and next checks
 
-- Only the five syscall shapes above are implemented. Annotated function
-  bodies do not run on this backend. Indirect calls and non-void scalar
-  return call sites are not lowered.
+- The io_uring runtime implements only the five syscall shapes above.
+  Indirect calls and non-void scalar return call sites are not lowered.
 - Only code compiled by the patched compiler resolves pending buffers on
   access. Fil-C's libc is not, so `memcmp`, `strlen`, `write` and the like
   read a pending buffer as it stands; touch it first or poll/wait.

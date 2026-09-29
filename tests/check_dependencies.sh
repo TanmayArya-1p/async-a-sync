@@ -1,5 +1,5 @@
 #!/bin/sh
-# Exercise the real generic scheduler with a deterministic fake io_uring layer.
+# Exercise the generic framework against a deterministic mock runtime.
 set -eu
 ulimit -c 0
 

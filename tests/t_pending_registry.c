@@ -26,7 +26,7 @@ int main(void)
     unsigned long pending_resolves_before;
 
     check("not pending before mark", !filc_async_is_pending(a));
-    filc_async_mark_pending(a);
+    filc_async_mark_pending(NULL, a);
     check("pending after mark", filc_async_is_pending(a));
     check("alias of a pending buffer probes pending", filc_async_is_pending(a + 8));
     check("unmarked buffer not pending", !filc_async_is_pending(b));
@@ -35,8 +35,8 @@ int main(void)
     filc_async_mark_resolved(a);
     check("double clear is harmless", !filc_async_is_pending(a));
 
-    filc_async_mark_pending(a);
-    filc_async_mark_pending(b);
+    filc_async_mark_pending(NULL, a);
+    filc_async_mark_pending(NULL, b);
     filc_async_mark_resolved(a);
     check("clearing one leaves the other", filc_async_is_pending(b) && !filc_async_is_pending(a));
 
@@ -44,7 +44,7 @@ int main(void)
     // first, so the requeue leaves ONE entry: a single clear releases it.
     filc_async_get_stats(&stats0);
     pending_resolves_before = stats0.pending_resolves;
-    filc_async_mark_pending(b);
+    filc_async_mark_pending(NULL, b);
     check("requeue of a pending buffer stays pending", filc_async_is_pending(b));
     filc_async_get_stats(&stats1);
     check("requeue counted as a pending resolve",

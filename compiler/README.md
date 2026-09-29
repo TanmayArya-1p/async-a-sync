@@ -112,7 +112,8 @@ with io_uring available passes with no failures or skips.
 
 For the annotation syntax and dependency ordering rules, see the root
 `README.md`. The ordinary implementation of an annotated function remains a
-linker symbol; this io_uring backend does not call its body. The linked
+linker symbol; the io_uring runtime runs it, through the run thunk the pass
+emits, before issuing the request. The linked
 two-file test in `tests/t_linked_async_main.c` and
 `tests/t_linked_async_def.c` verifies that contract.
 

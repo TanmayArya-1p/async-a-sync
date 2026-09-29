@@ -21,9 +21,8 @@ class Module;
 // `@__filc_meta_<name>` and an options array `@__filc_opts_<name>`, and a
 // per-TU meta table plus a startup constructor feeding it to
 // `filc_async_validate_table`. Direct calls of an enrolled function are then
-// rewritten into the staging alloc + intval/capability stores +
-// `filc_async_submit` sequence (submit marks the producing buffer args pending
-// from the meta's kinds), and the consumed `llvm.global.annotations`
+// redirected to an internal stub `@__filc_async_stub_<name>` with the same
+// signature, and the consumed `llvm.global.annotations`
 // (plus its now use-empty `.args`/`.str` globals) are erased so FilPizlonator
 // never sees them.
 //
@@ -71,11 +70,17 @@ public:
   // llvm.global_ctors at priority 65535 (last).
   void emitMetaTableAndCtor(Module &M, SmallVectorImpl<GlobalVariable *> &Metas);
 
-  // Call-site rewriting + annotation erasure: for every enrolled function,
-  // each DIRECT CallBase user (callee operand IS the function) is replaced by
-  // `@filc_async_alloc(<nargs*16>, 16)` + one {intval, capability-zero} i64
-  // pair per parameter + `@filc_async_submit(meta, impl, opts, staging,
-  // nargs)`. Non-direct users (address-taken, blockaddress, ...) are skipped
+  // Call-site rewriting + annotation erasure: for every enrolled function
+  // with a DIRECT call (callee operand IS the function), emits a stub and a
+  // run thunk and redirects those calls to the stub. The stub stages the
+  // arguments (`@filc_async_alloc(<nargs*16>, 16)` + one {intval,
+  // capability-zero} i64 pair per parameter), calls `@filc_async_begin`, takes
+  // one `@filc_async_lock_word`/`@filc_async_lock_ptr` per dependency
+  // argument, marks each output buffer with `@filc_async_mark_pending`, and
+  // hands the call to the runtime's `@filc_async_submit(task, meta, run,
+  // staging, nargs)`. The run thunk `@__filc_async_run_<name>(staging)`
+  // unpacks the cells and calls the function's body; only runtimes call it.
+  // Non-direct users (address-taken, blockaddress, ...) are skipped
   // silently. eraseAnnotations drops llvm.global.annotations and every global
   // that becomes use-empty as a result (.args, annotation-marker/source
   // .str), never a global with other users, so the opts arrays keep the
@@ -87,12 +92,17 @@ private:
   std::map<const Function *, AnnotInfo> Annotated;
 
   // Per-enrolled-function emission results, so rewriteCallSites can reference
-  // the exact metas/opts globals.
+  // the exact metas/opts globals and bake each argument's kind and dependency
+  // into the stub.
   struct Descriptors {
     GlobalVariable *Opts;
     GlobalVariable *Meta;
     std::string OrigName;
+    SmallVector<unsigned, 8> Kinds;
+    SmallVector<unsigned, 8> Deps;
   };
+  Function *emitStub(Module &M, Function *F, const Descriptors &D);
+  Function *emitRunThunk(Module &M, Function *F, const Descriptors &D);
   std::map<const Function *, Descriptors> Emitted;
 };
 

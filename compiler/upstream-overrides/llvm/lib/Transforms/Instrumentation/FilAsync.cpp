@@ -379,21 +379,139 @@ void FilAsyncPass::emitMetaTableAndCtor(Module &M,
   appendToGlobalCtors(M, Ctor, /*Priority=*/65535);
 }
 
-void FilAsyncPass::rewriteCallSites(Module &M) {
+// Stores a call's arguments into 16-byte cells: pointers as pointers, so
+// FilPizlonator keeps their capability, and integers in the low word with a
+// zero second word. Wider integers and other types become an ignored zero.
+static void stageArguments(IRBuilder<> &B, Value *Staging, Function *Stub) {
+  Type *Int64Ty = B.getInt64Ty();
+  for (unsigned I = 0; I < Stub->arg_size(); ++I) {
+    Value *Arg = Stub->getArg(I);
+    Type *ArgTy = Arg->getType();
+    Value *Slot = B.CreateGEP(Int64Ty, Staging, {B.getInt64(I * 2)});
+    if (ArgTy->isPointerTy()) {
+      B.CreateStore(Arg, Slot);
+      continue;
+    }
+    Value *IntVal = B.getInt64(0);
+    if (ArgTy->isIntegerTy() && ArgTy->getIntegerBitWidth() < 64)
+      IntVal = B.CreateZExt(Arg, Int64Ty);
+    else if (ArgTy->isIntegerTy() && ArgTy->getIntegerBitWidth() == 64)
+      IntVal = Arg;
+    B.CreateStore(IntVal, Slot);
+    B.CreateStore(B.getInt64(0),
+                  B.CreateGEP(Int64Ty, Staging, {B.getInt64(I * 2 + 1)}));
+  }
+}
+
+// `i64 @__filc_async_run_<name>(ptr staging)`: loads each argument back out
+// of its cell and calls F's body, returning its result as a word. Only
+// runtimes call it, through filc_async_run.
+Function *FilAsyncPass::emitRunThunk(Module &M, Function *F,
+                                     const Descriptors &D) {
   LLVMContext &Ctx = M.getContext();
   Type *Int64Ty = Type::getInt64Ty(Ctx);
   PointerType *PtrTy = PointerType::getUnqual(Ctx);
+  FunctionType *FTy = F->getFunctionType();
 
-  // Contract: alloc(size: i64, align: i64) -> ptr;
-  // submit(meta, impl, opts, staging, nargs) -> ptr.
-  FunctionCallee AllocCallee =
-      M.getOrInsertFunction("filc_async_alloc",
-                            FunctionType::get(PtrTy, {Int64Ty, Int64Ty}, false));
-  FunctionCallee SubmitCallee = M.getOrInsertFunction(
-      "filc_async_submit", FunctionType::get(
-                               PtrTy, {PtrTy, PtrTy, PtrTy, PtrTy, Int64Ty},
-                               /*isVarArg=*/false));
+  Function *Run = Function::Create(FunctionType::get(Int64Ty, {PtrTy}, false),
+                                   GlobalValue::InternalLinkage,
+                                   "__filc_async_run_" + D.OrigName, &M);
+  IRBuilder<> B(BasicBlock::Create(Ctx, "entry", Run));
+  Value *Staging = Run->getArg(0);
+  SmallVector<Value *, 8> Args;
+  for (unsigned I = 0; I < FTy->getNumParams(); ++I) {
+    Type *ParamTy = FTy->getParamType(I);
+    Value *Slot = B.CreateGEP(Int64Ty, Staging, {B.getInt64(I * 2)});
+    if (ParamTy->isPointerTy()) {
+      Args.push_back(B.CreateLoad(PtrTy, Slot));
+    } else if (ParamTy->isIntegerTy() && ParamTy->getIntegerBitWidth() <= 64) {
+      Value *Word = B.CreateLoad(Int64Ty, Slot);
+      Args.push_back(ParamTy->getIntegerBitWidth() < 64
+                         ? B.CreateTrunc(Word, ParamTy)
+                         : Word);
+    } else {
+      Args.push_back(Constant::getNullValue(ParamTy));
+    }
+  }
+  CallInst *Call = B.CreateCall(FTy, F, Args);
+  Type *RetTy = FTy->getReturnType();
+  Value *Result = B.getInt64(0);
+  if (RetTy->isPointerTy())
+    Result = B.CreatePtrToInt(Call, Int64Ty);
+  else if (RetTy->isIntegerTy())
+    Result = B.CreateSExtOrTrunc(Call, Int64Ty);
+  B.CreateRet(Result);
+  return Run;
+}
 
+// `@__filc_async_stub_<name>`, with F's signature: stages the arguments,
+// starts a task, takes the dependency locks and marks the output buffers
+// that the annotation names, then hands the call to the runtime. What to
+// lock and mark is known here, so the stub carries no descriptor walk.
+Function *FilAsyncPass::emitStub(Module &M, Function *F, const Descriptors &D) {
+  LLVMContext &Ctx = M.getContext();
+  Type *Int64Ty = Type::getInt64Ty(Ctx);
+  Type *Int32Ty = Type::getInt32Ty(Ctx);
+  Type *VoidTy = Type::getVoidTy(Ctx);
+  PointerType *PtrTy = PointerType::getUnqual(Ctx);
+  FunctionType *FTy = F->getFunctionType();
+  unsigned NArgs = FTy->getNumParams();
+
+  FunctionCallee Alloc = M.getOrInsertFunction(
+      "filc_async_alloc", FunctionType::get(PtrTy, {Int64Ty, Int64Ty}, false));
+  FunctionCallee Begin = M.getOrInsertFunction(
+      "filc_async_begin", FunctionType::get(PtrTy, {PtrTy, PtrTy}, false));
+  FunctionCallee LockWord = M.getOrInsertFunction(
+      "filc_async_lock_word",
+      FunctionType::get(VoidTy, {PtrTy, Int64Ty, Int32Ty, Int32Ty}, false));
+  FunctionCallee LockPtr = M.getOrInsertFunction(
+      "filc_async_lock_ptr",
+      FunctionType::get(VoidTy, {PtrTy, PtrTy, Int32Ty, Int32Ty}, false));
+  FunctionCallee Mark = M.getOrInsertFunction(
+      "filc_async_mark_pending",
+      FunctionType::get(VoidTy, {PtrTy, PtrTy}, false));
+  FunctionCallee Submit = M.getOrInsertFunction(
+      "filc_async_submit",
+      FunctionType::get(VoidTy, {PtrTy, PtrTy, PtrTy, PtrTy, Int64Ty}, false));
+
+  Function *Run = emitRunThunk(M, F, D);
+  Function *Stub = Function::Create(FTy, GlobalValue::InternalLinkage,
+                                    "__filc_async_stub_" + D.OrigName, &M);
+  IRBuilder<> B(BasicBlock::Create(Ctx, "entry", Stub));
+
+  Value *Staging = B.CreateCall(
+      Alloc, {B.getInt64(NArgs * 16), B.getInt64(16)}, "staging");
+  stageArguments(B, Staging, Stub);
+  Value *Task = B.CreateCall(Begin, {D.Meta, Staging}, "task");
+
+  for (unsigned I = 0; I < NArgs; ++I) {
+    unsigned Mode = D.Deps[I] & (DEP_READ | DEP_WRITE);
+    if (!Mode)
+      continue;
+    Value *Arg = Stub->getArg(I);
+    Value *Space = ConstantInt::get(Int32Ty, D.Deps[I] & ~(DEP_READ | DEP_WRITE));
+    Value *ModeV = ConstantInt::get(Int32Ty, Mode);
+    if (Arg->getType()->isPointerTy())
+      B.CreateCall(LockPtr, {Task, Arg, Space, ModeV});
+    else
+      B.CreateCall(LockWord,
+                   {Task, B.CreateZExtOrTrunc(Arg, Int64Ty), Space, ModeV});
+  }
+  // bout=, bare buf= and unannotated pointers are marked; bin= never is. The
+  // option parser only gives these kinds to pointer arguments.
+  for (unsigned I = 0; I < NArgs; ++I)
+    if (D.Kinds[I] == ARG_BUFFER_OUT || D.Kinds[I] == ARG_PENDING)
+      B.CreateCall(Mark, {Task, Stub->getArg(I)});
+
+  B.CreateCall(Submit, {Task, D.Meta, Run, Staging, B.getInt64(NArgs)});
+  if (FTy->getReturnType()->isVoidTy())
+    B.CreateRetVoid();
+  else
+    B.CreateRet(Task);
+  return Stub;
+}
+
+void FilAsyncPass::rewriteCallSites(Module &M) {
   for (const auto &KV : Annotated) {
     Function *F = const_cast<Function *>(KV.first);
     auto DesIt = Emitted.find(F);
@@ -403,94 +521,37 @@ void FilAsyncPass::rewriteCallSites(Module &M) {
       errs() << "FilAsync: no descriptor emitted for " << F->getName() << "\n";
       report_fatal_error("FilAsync: internal error: missing descriptor");
     }
-    GlobalVariable *Meta = DesIt->second.Meta;
-    GlobalVariable *Opts = DesIt->second.Opts;
 
-    // Snapshot the direct CallBase users first; rewriting does not erase F, but
-    // transform on a stable set rather than walking F->users().
-    SmallVector<CallBase *, 8> DirectCalls;
+    SmallVector<CallInst *, 8> Calls;
     for (User *U : F->users()) {
-      if (auto *CB = dyn_cast<CallBase>(U))
-        if (CB->getCalledOperand() == F)
-          DirectCalls.push_back(CB);
-    }
-
-    unsigned NArgs = F->getFunctionType()->getNumParams();
-    for (CallBase *CB : DirectCalls) {
-      // Only a plain call can be swapped for the staging sequence: an invoke
-      // or callbr is a terminator, and erasing it would leave its block
-      // without one. A call through a mismatched prototype (an unprototyped
-      // C declaration) may carry fewer operands than the staging reads.
+      auto *CB = dyn_cast<CallBase>(U);
+      if (!CB || CB->getCalledOperand() != F)
+        continue;
+      // Only a plain call through F's own prototype can be redirected: an
+      // invoke or callbr has unwind edges the stub does not model, and a call
+      // through an unprototyped declaration may pass fewer operands.
       if (!isa<CallInst>(CB) || CB->getFunctionType() != F->getFunctionType()) {
         errs() << "FilAsync: call to " << F->getName()
                << " is not a plain call matching its prototype; call left in "
                   "place\n";
         continue;
       }
-      // Decide result handling BEFORE inserting anything: a non-void non-ptr
-      // return cannot take submit's ptr result, so skip the site entirely
-      // (diagnostic only). Inserting first and then leaving the old call
-      // would run the async op alongside the synchronous one.
-      bool IsVoid = CB->getType()->isVoidTy();
-      if (!IsVoid && !CB->getType()->isPointerTy()) {
+      // The stub returns the task, a pointer, so a call that expects another
+      // non-void type is left alone rather than given the wrong value.
+      Type *RetTy = CB->getType();
+      if (!RetTy->isVoidTy() && !RetTy->isPointerTy()) {
         errs() << "FilAsync: call to " << F->getName() << " returns "
-               << *CB->getType()
-               << " but filc_async_submit returns ptr; call left in place\n";
+               << *RetTy << " but the stub returns ptr; call left in place\n";
         continue;
       }
-
-      IRBuilder<> Builder(CB);
-      // Staging: nargs filc_ptr slots x 16 bytes, 16-byte aligned. Scalars
-      // use the low word; pointer stores are widened by FilPizlonator.
-      Value *Staging = Builder.CreateCall(
-          AllocCallee,
-          {ConstantInt::get(Int64Ty, NArgs * 16), ConstantInt::get(Int64Ty, 16)},
-          "staging");
-
-      // Each slot is a Fil-C pointer-sized (16-byte) cell. Store pointer
-      // operands as pointers so FilPizlonator preserves their capability;
-      // turning them into integers here would make the backend unable to
-      // validate or retain a kernel buffer. Scalars occupy the low word.
-      for (unsigned I = 0; I < NArgs; ++I) {
-        Value *Arg = CB->getArgOperand(I);
-        Type *ArgTy = Arg->getType();
-        Value *Slot = Builder.CreateGEP(
-            Int64Ty, Staging, {ConstantInt::get(Int64Ty, I * 2)});
-        if (ArgTy->isPointerTy()) {
-          Builder.CreateStore(Arg, Slot);
-          continue;
-        }
-        Value *IntVal = ConstantInt::get(Int64Ty, 0);
-        if (ArgTy->isIntegerTy() && ArgTy->getIntegerBitWidth() < 64)
-          IntVal = Builder.CreateZExt(Arg, Int64Ty);
-        else if (ArgTy->isIntegerTy() && ArgTy->getIntegerBitWidth() == 64)
-          IntVal = Arg;
-        Builder.CreateStore(IntVal, Slot);
-        Value *CapGEP = Builder.CreateGEP(
-            Int64Ty, Staging, {ConstantInt::get(Int64Ty, I * 2 + 1)});
-        Builder.CreateStore(ConstantInt::get(Int64Ty, 0), CapGEP);
-      }
-
-      // Opaque-pointer `ptr` operands -- no bitcasts; the globals and the
-      // renamed implementation pass straight through. Submit marks the
-      // producing buffer args pending from the descriptor's kinds, so the call
-      // site needs nothing else. The returned flight pair is the pending result
-      // pointer whose deref triggers the existing filc_resolve_pending hook;
-      // FilPizlonator pizlonates the return.
-      CallInst *Submit = Builder.CreateCall(
-          SubmitCallee,
-          {Meta, F, Opts, Staging, ConstantInt::get(Int64Ty, NArgs)},
-          "async_result");
-
-      if (IsVoid) {
-        CB->eraseFromParent();
-      } else {
-        // Replacement is a pure swap: both the fixture return and submit are
-        // opaque `ptr`. Non-ptr non-void was rejected above, pre-insertion.
-        CB->replaceAllUsesWith(Submit);
-        CB->eraseFromParent();
-      }
+      Calls.push_back(cast<CallInst>(CB));
     }
+    if (Calls.empty())
+      continue;
+
+    Function *Stub = emitStub(M, F, DesIt->second);
+    for (CallInst *CI : Calls)
+      CI->setCalledFunction(Stub);
   }
 }
 
@@ -630,10 +691,14 @@ PreservedAnalyses FilAsyncPass::run(Module &M, ModuleAnalysisManager &) {
     // The meta's name field holds the ORIGINAL name, so copy it before the
     // rename invalidates F's name storage.
     std::string OrigName = F->getName().str();
+    SmallVector<unsigned, 8> Kinds;
+    SmallVector<unsigned, 8> Deps;
+    unsigned Noped;
+    parseKinds(OrigName, F->getFunctionType(), *KV.second, Kinds, Deps, Noped);
     renameBody(F, OrigName);
     GlobalVariable *Opts = emitOpts(M, OrigName, *KV.second);
     GlobalVariable *Meta = emitMeta(F, OrigName, *KV.second, Opts);
-    Emitted[F] = {Opts, Meta, OrigName};
+    Emitted[F] = {Opts, Meta, OrigName, std::move(Kinds), std::move(Deps)};
     Metas.push_back(Meta);
   }
   emitMetaTableAndCtor(M, Metas);

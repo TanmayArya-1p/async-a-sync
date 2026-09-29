@@ -1,4 +1,5 @@
-/* Deterministic request completion exposes which dependency may dispatch next. */
+/* The generic framework against a mock runtime: dependency locks decide
+ * which call reaches the runtime next, and completion is deterministic. */
 #include <assert.h>
 #include <errno.h>
 #include <stdint.h>
@@ -6,9 +7,9 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "fasync.h"
 #include "filc_async.h"
 #include "filc_async_alloc.h"
+#include "filc_async_runtime.h"
 
 typedef union {
     void* ptr;
@@ -21,9 +22,6 @@ static unsigned issued;
 static int issue_fd[32];
 static unsigned char done[32];
 static int fail_next_fd = -1;
-
-/* single-threaded, so the real runtime's owner check has nothing to do */
-void fasync_check_thread(void) {}
 
 void* zgetlower(void* ptr)
 {
@@ -54,56 +52,42 @@ void* filc_async_alloc(size_t size, size_t align)
     return calloc(1, size);
 }
 
-static fasync_id issue(int fd)
-{
-    assert(issued + 1 < sizeof issue_fd / sizeof issue_fd[0]);
-    issue_fd[++issued] = fd;
-    return issued;
-}
+/* ---- The mock runtime: numbers each call it is handed, and completes call
+ * n once done[n] is set or someone blocks on it. ---- */
 
-fasync_id fasync_fsync(int fd)
+void filc_async_submit(void* task, const filc_async_meta* meta,
+                       filc_async_run_fn run, void* staged_args, size_t nargs)
 {
+    (void)meta;
+    (void)run;
+    (void)nargs;
+    int fd = (int)((staged_arg*)staged_args)[0].word;
     if (fd == fail_next_fd) {
         fail_next_fd = -1;
-        errno = EBADF;
-        return 0;
+        filc_async_complete(task, -EBADF);
+        return;
     }
-    return issue(fd);
+    assert(issued + 1 < sizeof issue_fd / sizeof issue_fd[0]);
+    issue_fd[++issued] = fd;
+    *filc_async_task_runtime_data(task) = (void*)(uintptr_t)issued;
 }
-fasync_id fasync_pwrite(int fd, void* buf, size_t len, unsigned long offset)
+
+bool filc_async_runtime_poll(void* task, enum filc_async_poll_mode mode)
 {
-    (void)buf;
-    (void)len;
-    (void)offset;
-    return issue(fd);
+    unsigned id = (unsigned)(uintptr_t)*filc_async_task_runtime_data(task);
+    if (!done[id]) {
+        if (mode != FILC_ASYNC_POLL_BLOCK)
+            return false;
+        done[id] = 1;
+    }
+    filc_async_complete(task, 0);
+    return true;
 }
-fasync_id fasync_pread(int fd, void* buf, size_t len, unsigned long offset)
+
+bool filc_async_runtime_validate(const filc_async_meta* meta)
 {
-    (void)buf;
-    (void)len;
-    (void)offset;
-    return issue(fd);
-}
-fasync_id fasync_openat(int fd, const char* path, int flags, int mode)
-{
-    (void)path;
-    (void)flags;
-    (void)mode;
-    return issue(fd);
-}
-fasync_id fasync_close(int fd) { return issue(fd); }
-int fasync_submit(void) { return 0; }
-int fasync_ready(fasync_id id) { return done[id]; }
-long fasync_result(fasync_id id) { done[id] = 1; return 0; }
-void* fasync_resolve_pending(void* ptr, size_t size)
-{
-    (void)size;
-    return ptr;
-}
-void fasync_get_stats(struct fasync_stats* out)
-{
-    memset(out, 0, sizeof *out);
-    out->sqes_queued = issued;
+    (void)meta;
+    return true;
 }
 
 static filc_async_meta* meta(const char* name, const char* const* opts,
@@ -123,12 +107,32 @@ static filc_async_meta* meta(const char* name, const char* const* opts,
     return m;
 }
 
+/* What a pass-emitted stub does: start the task, lock each dependency
+ * argument, hand the call to the runtime. */
+static void* stub(const filc_async_meta* m, staged_arg* a)
+{
+    void* task = filc_async_begin(m, a);
+    for (unsigned i = 0; i < m->nargs; ++i) {
+        unsigned dep = m->args[i].dependency;
+        unsigned mode = dep & (FILC_ASYNC_DEP_READ | FILC_ASYNC_DEP_WRITE);
+        if (!mode)
+            continue;
+        unsigned space = dep & ~(FILC_ASYNC_DEP_READ | FILC_ASYNC_DEP_WRITE);
+        if (dep & FILC_ASYNC_DEP_POINTER)
+            filc_async_lock_ptr(task, a[i].ptr, space, mode);
+        else
+            filc_async_lock_word(task, a[i].word, space, mode);
+    }
+    filc_async_submit(task, m, NULL, a, m->nargs);
+    return task;
+}
+
 static void* send_fd(const filc_async_meta* m, int fd)
 {
     staged_arg* a = filc_async_alloc(sizeof *a, 16);
     assert(a);
     a[0].word = (unsigned)fd;
-    return filc_async_submit(m, NULL, NULL, a, 1);
+    return stub(m, a);
 }
 
 static void* send_two(const filc_async_meta* m, int fd, void* ptr)
@@ -137,7 +141,7 @@ static void* send_two(const filc_async_meta* m, int fd, void* ptr)
     assert(a);
     a[0].word = (unsigned)fd;
     a[1].ptr = ptr;
-    return filc_async_submit(m, NULL, NULL, a, 4);
+    return stub(m, a);
 }
 
 static void finish(void* task, unsigned id)
@@ -208,7 +212,7 @@ int main(void)
     finish(p4, 10);
     finish(scalar_conflict, 11);
 
-    /* The second submit waits for the first task before returning its SQE. */
+    /* The second call waits in its stub for the first to release the lock. */
     void* wait_first = send_fd(write, 13);
     void* wait_second = send_fd(write, 13);
     assert(issued == 13 && done[12]);
@@ -270,7 +274,7 @@ int main(void)
     filc_async_stats stats;
     filc_async_get_stats(&stats);
     assert(stats.tasks_submitted == 21 && stats.tasks_completed == 21 &&
-           stats.tasks_failed == 1 && stats.sqes_queued == 20);
+           stats.tasks_failed == 1 && issued == 20);
     puts("CHECK_DEPENDENCIES PASS");
     return 0;
 }

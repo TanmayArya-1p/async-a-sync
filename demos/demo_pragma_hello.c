@@ -4,8 +4,9 @@
  * stands for pread(2), that argument 0 is the fd and that argument 1 is a
  * buffer the kernel fills. The compiler rewrites every call to it:
  *
- *   1. the call queues an io_uring request and returns at once; the body
- *      never runs and buf is marked pending;
+ *   1. the call marks buf pending and hands the call to the runtime, which
+ *      runs the body and queues an io_uring request; the call returns at
+ *      once;
  *   2. the first read of buf sends the request to the kernel and waits for
  *      it, through the check the compiler put in front of that load.
  *
@@ -35,7 +36,8 @@ int main(int argc, char** argv) {
   return hello_report(&h, first, n);
 }
 
-/* Never runs: it exists so the program links. */
+/* The runtime runs this before it issues the read; a program could log or
+ * instrument its calls here. */
 void* read_block(int fd, void* buf, size_t len, unsigned long offset) {
   pragma_body_calls++;
   return 0;

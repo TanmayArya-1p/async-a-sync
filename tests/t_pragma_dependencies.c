@@ -4,6 +4,7 @@
 #include <string.h>
 #include <unistd.h>
 
+#include "fasync.h"
 #include "filc_async.h"
 
 static volatile int body_calls;
@@ -60,12 +61,16 @@ int main(int argc, char** argv)
     long nr = finish(third);
     long nw1 = finish(first);
     long nw2 = finish(second);
+    /* Each call's body ran once, in the runtime, and each became one
+     * request; the later calls waited for the locks on fd. */
     filc_async_stats after;
     filc_async_get_stats(&after);
+    struct fasync_stats uring;
+    fasync_get_stats(&uring);
     int ok = nr == 5 && nw1 == 5 && nw2 == 5 &&
-             strcmp(buf, "last!") == 0 && body_calls == 0 &&
+             strcmp(buf, "last!") == 0 && body_calls == 3 &&
              after.tasks_completed == 3 && after.tasks_failed == 0 &&
-             after.sqes_queued == 3;
+             after.lock_waits == 2 && uring.sqes_queued == 3;
     close(fd);
     unlink(path);
     printf("T_PRAGMA_DEPENDENCIES %s\n", ok ? "PASS" : "FAIL");

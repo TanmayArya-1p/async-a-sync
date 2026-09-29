@@ -92,8 +92,9 @@ The `filc_async` annotation path also submits `op=pread`, `op=pwrite`,
 functions use the usual syscall argument order: `(fd, buffer, length, offset)`
 for reads and writes, `(dirfd, path, flags, mode)` for open, and `(fd)` for
 sync and close. Mark output buffers with `bout=`, input buffers and paths with
-`bin=`, and descriptor arguments with `fd=`. The renamed function body is not
-executed; the call returns a task pointer for `filc_async_poll` or
+`bin=`, and descriptor arguments with `fd=`. The io_uring runtime runs the
+function body before it issues the request, so the body can log or instrument
+the call; the call returns a task pointer for `filc_async_poll` or
 `filc_async_wait`. A read's output buffer can also resolve on its first access.
 The compiler currently rewrites pointer-returning and void call sites; scalar
 returning call sites remain direct calls.
@@ -110,10 +111,11 @@ pointer arguments into the same object share a key. A `:<name>` suffix, as in
 namespaces are different resources, and a key without a name is in a namespace
 of its own. Two dependency options on one argument must agree in mode and name. Calls with a matching key
 dispatch in call order whenever either side writes (read/write, write/read, or
-write/write). Two reads can be in flight together. A conflicting call waits
-for its predecessors before its own io_uring request is dispatched, so a
-returned task can still resolve its output buffer on access. The ordinary
-function implementation still links, but its body is not called by this backend.
+write/write). Two reads can be in flight together. Each call goes through a
+stub the compiler emits for its function, which locks every dependency
+argument's value before the call reaches the runtime: a read lock is shared, a
+write lock is exclusive, and a conflicting call waits in its stub until the
+holder completes and releases the lock.
 When compiling annotated code, use `-Werror=pragma-clang-attribute` so a
 pragma placed around a call is a compiler error.
 
@@ -131,7 +133,7 @@ and checks are in `demos/pragma_report.hh`.
 
 | Demo | Shows |
 |---|---|
-| `hello` | one annotated `pread`: the body never runs, the call only queues a request, and the first read of the buffer sends it |
+| `hello` | one annotated `pread`: the call marks the buffer, the runtime runs the body and queues a request, and the first read of the buffer sends it |
 | `lifecycle` | `openat`, `pwrite`, `fsync`, `pread`, `close` issued back to back and kept in order by `w_dep`/`r_dep` |
 | `ordering` | conflicting calls on one fd wait for each other; independent calls batch into one kernel submit |
 | `coldread` | the same loop calling `pread` and `async_pread` over 512 cold files, next to hand-written `fasync_*` |

@@ -5,6 +5,7 @@
 #include <string.h>
 #include <unistd.h>
 
+#include "fasync.h"
 #include "filc_async.h"
 
 static volatile int body_calls;
@@ -109,15 +110,21 @@ int main(int argc, char** argv)
     if (wait_result(async_close(fd)) != 0)
         return 12;
 
+    /* The runtime ran each body once. The second read into buf waited for
+     * the first, through buf's write lock or its pending mark. */
     filc_async_stats stats;
     filc_async_get_stats(&stats);
-    int ok = body_calls == 0 && stats.tasks_submitted == 8 &&
+    struct fasync_stats uring;
+    fasync_get_stats(&uring);
+    int ok = body_calls == 8 && stats.tasks_submitted == 8 &&
              stats.tasks_completed == 8 && stats.tasks_failed == 0 &&
-             stats.sqes_queued >= 8 && stats.pending_resolves >= 1;
+             uring.sqes_queued >= 8 &&
+             stats.lock_waits + stats.pending_resolves >= 1;
     free(buf);
     unlink(path);
-    printf("T_PRAGMA_IO_URING %s (submitted=%lu completed=%lu sqes=%lu)\n",
+    printf("T_PRAGMA_IO_URING %s (submitted=%lu completed=%lu sqes=%lu "
+           "body calls=%d)\n",
            ok ? "PASS" : "FAIL", stats.tasks_submitted,
-           stats.tasks_completed, stats.sqes_queued);
+           stats.tasks_completed, uring.sqes_queued, body_calls);
     return ok ? 0 : 13;
 }

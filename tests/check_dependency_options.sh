@@ -106,9 +106,11 @@ for name, dependencies in expected.items():
     meta = next((line for line in lines if line.startswith(prefix)), None)
     if meta is None or any(dep not in meta for dep in dependencies):
         raise SystemExit(f"FAIL: {name} has wrong dependency metadata")
-    submit = f"@filc_async_submit(ptr @__filc_meta_{name}"
+    if f"call ptr @__filc_async_stub_{name}(" not in ir:
+        raise SystemExit(f"FAIL: {name} call was not redirected to its stub")
+    submit = f"@__filc_meta_{name}, ptr @__filc_async_run_{name},"
     if submit not in ir:
-        raise SystemExit(f"FAIL: {name} call was not rewritten")
+        raise SystemExit(f"FAIL: {name} stub does not submit its meta and body")
 
 override = re.search(r"enrolled overridden\n((?:  [^\n]*\n)+)", debug)
 if override is None or "  op=fsync\n" not in override.group(1) or \

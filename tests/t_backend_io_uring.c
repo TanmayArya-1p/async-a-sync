@@ -1,4 +1,5 @@
-/* Exercise filc_async_submit directly, without the annotation compiler pass. */
+/* Drive the io_uring runtime directly, without the annotation compiler pass:
+ * the calls a pass-emitted stub would make, by hand. */
 #include <errno.h>
 #include <fcntl.h>
 #include <stdint.h>
@@ -7,8 +8,10 @@
 #include <string.h>
 #include <unistd.h>
 
+#include "fasync.h"
 #include "filc_async.h"
 #include "filc_async_alloc.h"
+#include "filc_async_runtime.h"
 
 typedef struct {
     union {
@@ -46,6 +49,15 @@ static filc_async_meta* make_meta(const char* name, const char* const* opts,
 static staged_arg* make_args(unsigned nargs)
 {
     return filc_async_alloc(nargs * sizeof(staged_arg), 16);
+}
+
+/* What a stub does: start a task, mark its output buffer, submit it. */
+static void* start(const filc_async_meta* m, staged_arg* a, void* out)
+{
+    void* task = filc_async_begin(m, a);
+    filc_async_mark_pending(task, out);
+    filc_async_submit(task, m, NULL, a, m->nargs);
+    return task;
 }
 
 static long finish(void* pending, unsigned char* state)
@@ -92,7 +104,7 @@ int main(int argc, char** argv)
     a[2].value.word = O_RDWR;
     a[3].value.word = 0;
     unsigned char state;
-    int fd = (int)finish(filc_async_submit(open_meta, NULL, NULL, a, 4), &state);
+    int fd = (int)finish(start(open_meta, a, NULL), &state);
     if (state != 0 || fd < 0)
         return 6;
 
@@ -107,8 +119,7 @@ int main(int argc, char** argv)
     a[1].value.ptr = buf;
     a[2].value.word = 8;
     a[3].value.word = 0;
-    filc_async_mark_pending(buf);
-    void* read_task = filc_async_submit(read_meta, NULL, NULL, a, 4);
+    void* read_task = start(read_meta, a, buf);
     if (!filc_async_is_pending(buf) || finish(read_task, &state) != 8 ||
         state != 0 || strcmp(buf, "initial!") != 0 || filc_async_is_pending(buf))
         return 9;
@@ -120,14 +131,14 @@ int main(int argc, char** argv)
     a[1].value.ptr = (void*)"updated!";
     a[2].value.word = 8;
     a[3].value.word = 0;
-    if (finish(filc_async_submit(write_meta, NULL, NULL, a, 4), &state) != 8 || state != 0)
+    if (finish(start(write_meta, a, NULL), &state) != 8 || state != 0)
         return 11;
 
     a = make_args(1);
     if (!a)
         return 12;
     a[0].value.word = (unsigned)fd;
-    if (finish(filc_async_submit(sync_meta, NULL, NULL, a, 1), &state) != 0 || state != 0)
+    if (finish(start(sync_meta, a, NULL), &state) != 0 || state != 0)
         return 13;
 
     memset(buf, 0, 16);
@@ -138,8 +149,7 @@ int main(int argc, char** argv)
     a[1].value.ptr = buf;
     a[2].value.word = 8;
     a[3].value.word = 0;
-    filc_async_mark_pending(buf);
-    if (finish(filc_async_submit(read_meta, NULL, NULL, a, 4), &state) != 8 ||
+    if (finish(start(read_meta, a, buf), &state) != 8 ||
         state != 0 || strcmp(buf, "updated!") != 0)
         return 15;
 
@@ -147,7 +157,7 @@ int main(int argc, char** argv)
     if (!a)
         return 16;
     a[0].value.word = (unsigned)fd;
-    if (finish(filc_async_submit(close_meta, NULL, NULL, a, 1), &state) != 0 || state != 0)
+    if (finish(start(close_meta, a, NULL), &state) != 0 || state != 0)
         return 17;
 
     a = make_args(4);
@@ -157,18 +167,19 @@ int main(int argc, char** argv)
     a[1].value.ptr = buf;
     a[2].value.word = 1;
     a[3].value.word = 0;
-    filc_async_mark_pending(buf);
-    if (finish(filc_async_submit(read_meta, NULL, NULL, a, 4), &state) != -EBADF ||
+    if (finish(start(read_meta, a, buf), &state) != -EBADF ||
         state != 2 || filc_async_is_pending(buf))
         return 19;
 
     filc_async_stats stats;
     filc_async_get_stats(&stats);
+    struct fasync_stats uring;
+    fasync_get_stats(&uring);
     int ok = stats.tasks_submitted == 7 && stats.tasks_completed == 7 &&
-             stats.tasks_failed == 1 && stats.sqes_queued >= 6;
+             stats.tasks_failed == 1 && uring.sqes_queued >= 6;
     free(buf);
     unlink(path);
     printf("T_BACKEND_IO_URING %s (tasks=%lu sqes=%lu)\n",
-           ok ? "PASS" : "FAIL", stats.tasks_completed, stats.sqes_queued);
+           ok ? "PASS" : "FAIL", stats.tasks_completed, uring.sqes_queued);
     return ok ? 0 : 20;
 }

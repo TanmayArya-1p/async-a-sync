@@ -173,30 +173,41 @@ expect_grep 'i32 65535, ptr @__filc_async_ctor' 'ctor registered at priority 655
 expect_grep '@__filc_opts_procread = internal constant [6 x ptr]' 'opts array [nopts+1 x ptr], internal linkage'
 expect_grep '@__filc_opts_procread = internal constant [6 x ptr] [ptr @' 'opts entries are real pointer constants'
 
-# ---- call-site rewriting ----
+# ---- call sites and stubs ----
+# Each call is redirected to a per-function stub, which stages the args,
+# starts a task, locks and marks what the annotation names, and submits the
+# meta and the run thunk to the runtime.
+expect_grep 'call ptr @__filc_async_stub_procread(' 'procread call goes to its stub'
+expect_grep 'call ptr @__filc_async_stub_uopenat(' 'uopenat call goes to its stub'
 expect_grep '@filc_async_alloc' 'staging alloc present (@filc_async_alloc)'
-expect_grep '@filc_async_submit' 'submit present (@filc_async_submit)'
-expect_grep '@filc_async_submit(ptr @__filc_meta_procread' 'procread call references its meta'
-expect_grep '@filc_async_submit(ptr @__filc_meta_uopenat' 'uopenat call references its meta'
-expect_grep '@filc_async_submit(ptr @__filc_meta_procread, ptr @procread, ptr @__filc_opts_procread' \
-  'submit passes meta, ordinary implementation, opts in order'
+expect_grep 'call ptr @filc_async_begin(ptr @__filc_meta_procread' 'procread stub starts a task with its meta'
+expect_grep 'call void @filc_async_lock_word(ptr %task, i64' 'r_dep=0 on the fd locks its value'
+expect_grep 'call void @filc_async_lock_ptr(ptr %task, ptr %1, i32 4, i32 2)' 'w_dep=1 write-locks the buffer object'
+expect_grep 'call void @filc_async_mark_pending(ptr %task, ptr %1)' 'bout=/buf= arguments are marked pending'
+expect_grep '@__filc_meta_procread, ptr @__filc_async_run_procread, ptr %staging, i64 3)' \
+  'procread stub submits its meta, run thunk and staging'
+expect_grep '@__filc_meta_uopenat, ptr @__filc_async_run_uopenat, ptr %staging, i64 4)' \
+  'uopenat stub submits its meta, run thunk and staging'
 
 # Staging stores: scalar words are extended; pointer stores keep the Fil-C
 # capability when FilPizlonator widens them.
 expect_grep 'zext i32 %' 'integer params zero-extended to intval (R4)'
 expect_grep 'store ptr %' 'pointer params staged with their capability'
 
-# Original direct calls to the annotated declarations are gone. Their
-# declarations remain, since submit passes the ordinary linker symbol.
-if grep -qE 'call [^@]*@procread\(' "$OUT"; then
-  fail 'direct call to @procread gone'
+# The only direct call left to each annotated function is its run thunk's,
+# which the runtime uses to run the body. The declarations keep their
+# ordinary linker names.
+if [ "$(grep -cE 'call [^@]*@procread\(' "$OUT")" = 1 ] &&
+   grep -A12 'define internal i64 @__filc_async_run_procread' "$OUT" |
+     grep -qE 'call [^@]*@procread\('; then
+  pass 'only the run thunk calls @procread'
 else
-  pass 'direct call to @procread gone'
+  fail 'only the run thunk calls @procread'
 fi
-if grep -qE 'call [^@]*@uopenat\(' "$OUT"; then
-  fail 'direct call to @uopenat gone'
+if [ "$(grep -cE 'call [^@]*@uopenat\(' "$OUT")" = 1 ]; then
+  pass 'only the run thunk calls @uopenat'
 else
-  pass 'direct call to @uopenat gone'
+  fail 'only the run thunk calls @uopenat'
 fi
 
 # ---- annotation erasure ----

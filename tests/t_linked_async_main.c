@@ -1,11 +1,14 @@
 /* A declaration-only annotation links the ordinary implementation in another
- * translation unit, plus generated metadata and runtime forwarders. */
+ * translation unit, plus generated metadata and runtime forwarders. The
+ * runtime runs that implementation once, through this unit's run thunk,
+ * before it issues the read. */
 #include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 
+#include "fasync.h"
 #include "filc_async.h"
 
 extern volatile int linked_body_calls;
@@ -38,13 +41,16 @@ int main(int argc, char** argv)
 
     filc_async_stats stats;
     filc_async_get_stats(&stats);
+    struct fasync_stats uring;
+    fasync_get_stats(&uring);
     int ok = r.state == 0 && r.result == 6 && strcmp(buf, "linked") == 0 &&
-             linked_body_calls == 0 && stats.tasks_submitted == 1 &&
-             stats.tasks_completed == 1 && stats.sqes_queued == 1;
+             linked_body_calls == 1 && stats.tasks_submitted == 1 &&
+             stats.tasks_completed == 1 && uring.sqes_queued == 1;
     free(buf);
     close(fd);
     unlink(path);
-    printf("T_LINKED_ASYNC %s (tasks=%lu sqes=%lu)\n",
-           ok ? "PASS" : "FAIL", stats.tasks_completed, stats.sqes_queued);
+    printf("T_LINKED_ASYNC %s (tasks=%lu sqes=%lu body calls=%d)\n",
+           ok ? "PASS" : "FAIL", stats.tasks_completed, uring.sqes_queued,
+           linked_body_calls);
     return ok ? 0 : 5;
 }

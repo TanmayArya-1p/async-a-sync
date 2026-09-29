@@ -14,13 +14,16 @@
  *   r_dep=<i>     argument i is a resource this call reads
  *   w_dep=<i>     argument i is a resource this call writes
  *
- * Calls that share a dependency key run in program order unless both only
- * read it. Here the key is the fd: a write, fsync or close waits for earlier
- * calls on the same fd, while reads of one fd may overlap each other.
+ * Each dependency option locks the argument's value: a read lock is shared
+ * and a write lock is exclusive. Here the key is the fd, so a write, fsync or
+ * close waits for earlier calls on the same fd, while reads of one fd may
+ * overlap each other.
  *
- * The FilAsync pass rewrites every call into filc_async_submit, which queues
- * an io_uring request and returns a task handle, so the bodies never run.
- * They count themselves in pragma_body_calls so a demo can show it is 0. */
+ * The FilAsync pass redirects every call to a stub that takes those locks,
+ * marks the output buffers pending and hands the call to the runtime, and
+ * returns a task handle. The io_uring runtime runs the body once, where a
+ * program could instrument its calls, then queues the request. The bodies
+ * count themselves in pragma_body_calls so a demo can show that. */
 
 #include <fcntl.h>
 #include <stdio.h>
@@ -143,6 +146,14 @@ static inline void pragma_check(const char* what, int ok) {
   }
   if (!ok)
     pragma_failures++;
+}
+
+/* The runtime runs the body of every annotated call once. */
+static inline void pragma_check_bodies(void) {
+  struct pragma_snap s;
+  pragma_snap(&s);
+  pragma_check("the runtime ran each annotated call's body once",
+               (unsigned long)pragma_body_calls == s.calls);
 }
 
 static inline void pragma_title(const char* title, const char* subtitle) {
