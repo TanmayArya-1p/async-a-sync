@@ -99,8 +99,8 @@ an SQE was queued.
 
 `tests/run.sh` runs host checks, stock Fil-C runtime tests, and patched
 compiler tests. The latter are skipped when the patched binary is absent, so
-check the summary and the skip message. A full run on kratos (Linux 7.0,
-x86-64) on 2026-09-29 passed 42 tests with no failures or skips.
+check the summary and the skip message. A full run on Linux 7.0, x86-64,
+with io_uring available passes with no failures or skips.
 
 | Symptom | Check |
 |---|---|

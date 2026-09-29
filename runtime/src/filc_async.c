@@ -370,10 +370,16 @@ static void refresh_task(struct filc_async_task* t, bool wait)
         complete_task(t, t->result);
         return;
     }
-    if (wait && fasync_submit() < 0)
-        filc_async_fatal("io_uring submission failed");
-    if (!wait && !fasync_ready(t->request))
-        return;
+    /* Submit only for a request that is still running. One the access hook
+     * already resolved needs nothing, and submitting would flush whatever the
+     * program queued since: one kernel entry per call that retires a stale
+     * mark, instead of one per batch. */
+    if (!fasync_ready(t->request)) {
+        if (!wait)
+            return;
+        if (fasync_submit() < 0)
+            filc_async_fatal("io_uring submission failed");
+    }
     complete_task(t, fasync_result(t->request));
 }
 
@@ -532,9 +538,14 @@ bool filc_async_poll(struct filc_async_result_s* out)
     struct filc_async_task* t = find_task(out->pending);
     if (!t)
         return false;
-    if (t->state == 1 && fasync_submit() < 0)
-        filc_async_fatal("io_uring submission failed");
+    /* Look before submitting, like refresh_task; a task still running gets
+     * the queue sent so a polling loop makes progress. */
     refresh_task(t, false);
+    if (t->state == 1) {
+        if (fasync_submit() < 0)
+            filc_async_fatal("io_uring submission failed");
+        refresh_task(t, false);
+    }
     result_fill(out, t);
     if (t->state == 1)
         return false;
