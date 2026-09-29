@@ -15,7 +15,7 @@
 #include <stdlib.h>
 #include "filc_async.h"
 
-#pragma clang attribute push(__attribute__((annotate("filc_async", "op=ignore", "bout=0", "buf=1", "bin=2"))), apply_to=function)
+#pragma clang attribute push(__attribute__((annotate("filc_async", "runtime=io_uring", "op=ignore", "bout=0", "buf=1", "bin=2"))), apply_to=function)
 __attribute__((noinline)) void* markfml(char* out, char* recv, const char* const_in, char* extra)
 {
     volatile char sink = *out + *recv + *const_in + *extra;

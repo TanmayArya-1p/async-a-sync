@@ -17,7 +17,7 @@
 #include <stdio.h>
 #include "filc_async.h"
 
-#pragma clang attribute push(__attribute__((annotate("filc_async", "op=ignore"))), apply_to=function)
+#pragma clang attribute push(__attribute__((annotate("filc_async", "runtime=io_uring", "op=ignore"))), apply_to=function)
 __attribute__((noinline)) void* somesuch(int a, int b)
 {
     volatile int sink = a + b;

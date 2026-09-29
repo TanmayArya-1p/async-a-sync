@@ -42,7 +42,7 @@ echo "### generating fixtures"
 "$HOST_CC" -S -emit-llvm -O0 -o "$GOOD" "$REPO/tests/t_annotate_smoke.c"
 printf '%s\n' \
   '/* unknown op=; the runtime is the authority for the op set */' \
-  '#pragma clang attribute push(__attribute__((annotate("filc_async", "op=somefutureop", "fd=0", "buf=1"))), apply_to=function)' \
+  '#pragma clang attribute push(__attribute__((annotate("filc_async", "runtime=io_uring", "op=somefutureop", "fd=0", "buf=1"))), apply_to=function)' \
   'int procread(int fd, void* buf, unsigned long n);' \
   '#pragma clang attribute pop' \
   'int main(void) { return procread(0, 0, 0); }' > "$BAD_SRC"

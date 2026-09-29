@@ -4,6 +4,10 @@
 
 typedef unsigned long fasync_id; /* one in-flight request */
 
+/* The io_uring runtime's descriptor: what runtime=io_uring names. */
+struct filc_async_runtime;
+extern const struct filc_async_runtime filc_async_runtime_io_uring;
+
 /* Threading: one io_uring ring and request table serve the process, behind
  * one lock, so any thread may issue requests and wait on them. The lock adds
  * safety, not parallelism: requests from all threads share the ring.

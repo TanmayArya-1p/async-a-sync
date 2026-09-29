@@ -7,7 +7,7 @@
 # undef), runs the pass under the Fil-C LLVM-20 opt, and asserts:
 #   - emission: the meta/opts/declaration/table/ctor greps, the meta
 #     field-order/initializer check ({name,nargs,noped_args,flags,result,
-#     opts,args[]} with a [nargs x {i32,i32}] tail), and the ctor's 65535
+#     opts,runtime,args[]} with a [nargs x {i32,i32}] tail), and the ctor's 65535
 #     priority;
 #   - rewrite: alloc/submit greps, each call referencing its meta, original
 #     direct calls gone, staging scalar/pointer stores;
@@ -51,11 +51,11 @@ fi
 # and NOT inferred from the op name. procread also declares two dependencies
 # on different arguments: a scalar read key and a pointer write key.
 cat > "$SRC" <<'EOF'
-#pragma clang attribute push(__attribute__((annotate("filc_async", "op=pread", "fd=0", "bout=1", "r_dep=0", "w_dep=1"))), apply_to=function)
+#pragma clang attribute push(__attribute__((annotate("filc_async", "runtime=io_uring", "op=pread", "fd=0", "bout=1", "r_dep=0", "w_dep=1"))), apply_to=function)
 void* procread(int fd, void* buf, unsigned long n);
 #pragma clang attribute pop
 
-#pragma clang attribute push(__attribute__((annotate("filc_async", "op=openat", "fd=0", "bin=1", "buf=2"))), apply_to=function)
+#pragma clang attribute push(__attribute__((annotate("filc_async", "runtime=io_uring", "op=openat", "fd=0", "bin=1", "buf=2"))), apply_to=function)
 void* uopenat(int dirfd, const char* path, char* scratch, int mode);
 #pragma clang attribute pop
 
@@ -124,18 +124,18 @@ expect_grep '@filc_async_validate_table' 'validator declared/called (@filc_async
 #             kinds: 4 (ARG_FD), 2 (ARG_BUFFER_IN via bin=),
 #             5 (ARG_PENDING via bare buf=, NOT inferred from op), 0
 # Struct field order must match the C header
-# {name, nargs, noped_args, flags, result, opts, args[]}.
+# {name, nargs, noped_args, flags, result, opts, runtime, args[]}.
 META_P=$(grep -F '@__filc_meta_procread =' "$OUT" || true)
 if [ -n "$META_P" ]; then
-  if echo "$META_P" | grep -qF -- '{ ptr, i32, i32, i32, i32, ptr, [3 x { i32, i32 }] }'; then
+  if echo "$META_P" | grep -qF -- '{ ptr, i32, i32, i32, i32, ptr, ptr, [3 x { i32, i32 }] }'; then
     pass 'procread meta struct field order + [nargs x {i32,i32}] tail'
   else
     fail 'procread meta struct field order + [nargs x {i32,i32}] tail'
   fi
-  if echo "$META_P" | grep -qF -- 'i32 3, i32 2, i32 0, i32 2, ptr @__filc_opts_procread'; then
-    pass 'procread meta values (nargs=3, noped=2, flags=0, result=PTR, opts)'
+  if echo "$META_P" | grep -qF -- 'i32 3, i32 2, i32 0, i32 2, ptr @__filc_opts_procread, ptr @filc_async_runtime_io_uring'; then
+    pass 'procread meta values (nargs=3, noped=2, flags=0, result=PTR, opts, runtime)'
   else
-    fail 'procread meta values (nargs=3, noped=2, flags=0, result=PTR, opts)'
+    fail 'procread meta values (nargs=3, noped=2, flags=0, result=PTR, opts, runtime)'
   fi
   if echo "$META_P" | grep -qF -- '[{ i32, i32 } { i32 4, i32 1 }, { i32, i32 } { i32 3, i32 6 }, { i32, i32 } zeroinitializer]'; then
     pass 'procread args kinds and dependency list (read fd, write buffer)'
@@ -148,15 +148,15 @@ fi
 
 META_U=$(grep -F '@__filc_meta_uopenat =' "$OUT" || true)
 if [ -n "$META_U" ]; then
-  if echo "$META_U" | grep -qF -- '{ ptr, i32, i32, i32, i32, ptr, [4 x { i32, i32 }] }'; then
+  if echo "$META_U" | grep -qF -- '{ ptr, i32, i32, i32, i32, ptr, ptr, [4 x { i32, i32 }] }'; then
     pass 'uopenat meta struct field order + [4 x {i32,i32}] tail'
   else
     fail 'uopenat meta struct field order + [4 x {i32,i32}] tail'
   fi
-  if echo "$META_U" | grep -qF -- 'i32 4, i32 3, i32 0, i32 2, ptr @__filc_opts_uopenat'; then
-    pass 'uopenat meta values (nargs=4, noped=3, flags=0, result=PTR, opts)'
+  if echo "$META_U" | grep -qF -- 'i32 4, i32 3, i32 0, i32 2, ptr @__filc_opts_uopenat, ptr @filc_async_runtime_io_uring'; then
+    pass 'uopenat meta values (nargs=4, noped=3, flags=0, result=PTR, opts, runtime)'
   else
-    fail 'uopenat meta values (nargs=4, noped=3, flags=0, result=PTR, opts)'
+    fail 'uopenat meta values (nargs=4, noped=3, flags=0, result=PTR, opts, runtime)'
   fi
   if echo "$META_U" | grep -qF -- '[{ i32, i32 } { i32 4, i32 0 }, { i32, i32 } { i32 2, i32 0 }, { i32, i32 } { i32 5, i32 0 }, { i32, i32 } zeroinitializer]'; then
     pass 'uopenat args kinds (FD, BUFFER_IN via bin=, PENDING via buf=, IGNORED)'
@@ -170,8 +170,8 @@ fi
 # The table ctor must be LAST in init order (priority 65535, not 0).
 expect_grep 'i32 65535, ptr @__filc_async_ctor' 'ctor registered at priority 65535 (Ruling-3)'
 # opts is [<nopts+1> x ptr], internal, trailing null.
-expect_grep '@__filc_opts_procread = internal constant [6 x ptr]' 'opts array [nopts+1 x ptr], internal linkage'
-expect_grep '@__filc_opts_procread = internal constant [6 x ptr] [ptr @' 'opts entries are real pointer constants'
+expect_grep '@__filc_opts_procread = internal constant [7 x ptr]' 'opts array [nopts+1 x ptr], internal linkage'
+expect_grep '@__filc_opts_procread = internal constant [7 x ptr] [ptr @' 'opts entries are real pointer constants'
 
 # ---- call sites and stubs ----
 # Each call is redirected to a per-function stub, which stages the args,
@@ -234,9 +234,9 @@ if grep -qF -- '@.str.1 = ' "$OUT"; then
 else
   pass 'annotation-file .str.1 erased (only-use was llvm.global.annotations)'
 fi
-expect_grep '@__filc_opts_procread = internal constant [6 x ptr] [ptr @.str' \
+expect_grep '@__filc_opts_procread = internal constant [7 x ptr] [ptr @.str' \
   'procread opts array still references its .str globals (retained)'
-expect_grep '@__filc_opts_uopenat = internal constant [5 x ptr] [ptr @.str' \
+expect_grep '@__filc_opts_uopenat = internal constant [6 x ptr] [ptr @.str' \
   'uopenat opts array still references its .str globals (retained)'
 
 # ---- debug gate: "enrolled ..." only under -filc-async-debug ----
@@ -259,7 +259,7 @@ cat > "$MIXED_SRC" <<'EOF'
 void* kr();
 int use_kr(void) { return kr(1) != 0; }
 
-#pragma clang attribute push(__attribute__((annotate("filc_async", "op=ignore", "fd=0"))), apply_to=function)
+#pragma clang attribute push(__attribute__((annotate("filc_async", "runtime=io_uring", "op=ignore", "fd=0"))), apply_to=function)
 void* kr(int a, int b) { return (void*)(long)(a + b); }
 #pragma clang attribute pop
 

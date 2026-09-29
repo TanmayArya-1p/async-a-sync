@@ -2,8 +2,8 @@
 //
 // Sibling pass of FilPizlonator. Reads the `filc_async` annotations a stock
 // clang records for `#pragma clang attribute`, renames each enrolled body to
-// `__filc_async_<name>`, emits a `filc_async_meta` global `@__filc_meta_<name>`,
-// an options array `@__filc_opts_<name>`, a per-TU `@__filc_async_meta_table`,
+// `__filc_async_<name>`, emits a `filc_async_meta` global `@__filc_meta_<name>`
+// that points at the runtime its runtime=<name> option names, an options array `@__filc_opts_<name>`, a per-TU `@__filc_async_meta_table`,
 // and a constructor calling `filc_async_validate_table` at startup; then
 // rewrites every direct call site into the staging alloc + submit sequence and
 // erases the consumed annotations. Loadable via
@@ -21,8 +21,10 @@
 
 #include "llvm/Transforms/Instrumentation/FilAsync.h"
 
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/ADT/Twine.h"
 #include "llvm/Config/llvm-config.h"
@@ -239,6 +241,38 @@ static void parseKinds(StringRef OrigName, FunctionType *FTy,
   }
 }
 
+// The runtime named by the one runtime=<name> option. Every annotated
+// function names its runtime; the descriptor points at the runtime's
+// `filc_async_runtime_<name>`, so the name must be a C identifier.
+static StringRef parseRuntime(StringRef OrigName,
+                              const FilAsyncPass::AnnotInfo &Info) {
+  StringRef Name;
+  for (StringRef Opt : Info.opts) {
+    if (!Opt.starts_with("runtime="))
+      continue;
+    StringRef N = Opt.drop_front(8);
+    bool Ident = !N.empty() && !isDigit(N.front()) &&
+                 llvm::all_of(N, [](char C) { return isAlnum(C) || C == '_'; });
+    if (!Ident) {
+      errs() << "FilAsync: '" << Opt << "' on " << OrigName
+             << " does not name a runtime; use runtime=<C identifier>\n";
+      report_fatal_error("FilAsync: malformed filc_async option");
+    }
+    if (!Name.empty() && Name != N) {
+      errs() << "FilAsync: " << OrigName << " names two runtimes, " << Name
+             << " and " << N << "\n";
+      report_fatal_error("FilAsync: malformed filc_async option");
+    }
+    Name = N;
+  }
+  if (Name.empty()) {
+    errs() << "FilAsync: " << OrigName
+           << " names no runtime; add runtime=<name>\n";
+    report_fatal_error("FilAsync: malformed filc_async option");
+  }
+  return Name;
+}
+
 static bool isFilcAsyncEntry(Value *E) {
   auto *Entry = dyn_cast<ConstantStruct>(E);
   return Entry && Entry->getNumOperands() == 5 &&
@@ -319,9 +353,15 @@ GlobalVariable *FilAsyncPass::emitMeta(Function *F, StringRef OrigName,
                                     GlobalValue::PrivateLinkage, NameInit,
                                     "__filc_async_name_" + OrigName.str());
 
+  // The runtime's descriptor, defined by the runtime the program links; a
+  // runtime that is not linked leaves filc_async_runtime_<name> undefined.
+  Constant *Runtime = M.getOrInsertGlobal(
+      ("filc_async_runtime_" + parseRuntime(OrigName, Info)).str(), PtrTy);
+
   // args[] tail: exactly nargs {i32,i32} pairs. Field order matches the C header
-  // {name, nargs, noped_args, flags, result, opts, args[]}; the 16-byte
-  // pointers and the offsets they imply materialize under FilPizlonator.
+  // {name, nargs, noped_args, flags, result, opts, runtime, args[]}; the
+  // 16-byte pointers and the offsets they imply materialize under
+  // FilPizlonator.
   SmallVector<Constant *, 8> ArgCs;
   for (unsigned I = 0; I < NArgs; ++I)
     ArgCs.push_back(ConstantStruct::get(
@@ -331,14 +371,14 @@ GlobalVariable *FilAsyncPass::emitMeta(Function *F, StringRef OrigName,
   Constant *ArgsInit = ConstantArray::get(ArgsTy, ArgCs);
 
   StructType *MetaTy = StructType::get(
-      Ctx, {PtrTy, I32Ty, I32Ty, I32Ty, I32Ty, PtrTy, ArgsTy},
+      Ctx, {PtrTy, I32Ty, I32Ty, I32Ty, I32Ty, PtrTy, PtrTy, ArgsTy},
       /*isPacked=*/false);
   // Real pointer-typed constants (no ptrtoint i64): InvisiCap relocation
   // requires pointer fields to be addressable.
   Constant *Init = ConstantStruct::get(
       MetaTy, {NameGV, ConstantInt::get(I32Ty, NArgs),
                ConstantInt::get(I32Ty, Noped), ConstantInt::get(I32Ty, 0),
-               ConstantInt::get(I32Ty, Result), Opts, ArgsInit});
+               ConstantInt::get(I32Ty, Result), Opts, Runtime, ArgsInit});
   return new GlobalVariable(M, MetaTy, /*isConstant=*/true,
                             GlobalValue::InternalLinkage, Init,
                             "__filc_meta_" + OrigName.str());

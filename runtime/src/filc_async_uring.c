@@ -6,8 +6,8 @@
 #include "filc_async_alloc.h"
 #include "filc_async_runtime.h"
 
-/* The io_uring runtime behind annotated calls: implements the runtime side
- * of filc_async_runtime.h on the fasync_* request layer. It knows the ops
+/* The io_uring runtime, runtime=io_uring: implements the runtime side of
+ * filc_async_runtime.h on the fasync_* request layer. It knows the ops
  * pread, pwrite, openat, fsync and close with their standard syscall
  * argument order, and op=ignore, a test-only op that completes with
  * -EOPNOTSUPP when polled. Submit runs the function's body, so a program can
@@ -119,7 +119,7 @@ static bool shape_ok(const filc_async_meta* m, enum uring_op op)
     }
 }
 
-bool filc_async_runtime_validate(const filc_async_meta* meta)
+static bool uring_validate(const filc_async_meta* meta)
 {
     if (!meta)
         return false;
@@ -225,7 +225,7 @@ void fasync_track_read(fasync_id id, void* buf)
     struct uring_call* c = (struct uring_call*)filc_async_alloc(sizeof *c, 16);
     if (!c)
         filc_async_fatal("fasync_pread: out of memory");
-    c->task = filc_async_begin(NULL, NULL);
+    c->task = filc_async_task_new(&filc_async_runtime_io_uring);
     c->request = id;
     c->op = URING_OP_READ;
     c->explicit_read = true;
@@ -289,11 +289,11 @@ static void queue(struct uring_call* c, const filc_async_meta* meta,
     *filc_async_task_runtime_data(c->task) = c;
 }
 
-void filc_async_submit(void* task, const filc_async_meta* meta,
-                       filc_async_run_fn run, void* staged_args, size_t nargs)
+static void uring_submit(void* task, const filc_async_meta* meta,
+                         filc_async_run_fn run, void* staged_args, size_t nargs)
 {
     if (!task || !meta || !staged_args || nargs != meta->nargs)
-        filc_async_fatal("filc_async_submit: bad call");
+        filc_async_fatal("io_uring runtime: bad submit");
 
     /* The body and any wait for a buffer the kernel will read run without the
      * runtime's lock: both may wait for other calls. */
@@ -301,7 +301,7 @@ void filc_async_submit(void* task, const filc_async_meta* meta,
 
     struct uring_call* c = (struct uring_call*)filc_async_alloc(sizeof *c, 16);
     if (!c)
-        filc_async_fatal("filc_async_submit: out of memory");
+        filc_async_fatal("io_uring runtime: out of memory");
     c->task = task;
     c->op = op_from(meta->opts);
 
@@ -318,7 +318,7 @@ void filc_async_submit(void* task, const filc_async_meta* meta,
 /* Requests are queued until something needs a result, so the whole batch
  * goes to the kernel in one entry: CHECK never sends the queue, PROGRESS
  * sends it so a polling loop moves on, and BLOCK sends it and waits. */
-bool filc_async_runtime_poll(void* task, enum filc_async_poll_mode mode)
+static bool uring_poll(void* task, enum filc_async_poll_mode mode)
 {
     fasync_lock();
     bool done = false;
@@ -348,3 +348,5 @@ bool filc_async_runtime_poll(void* task, enum filc_async_poll_mode mode)
     fasync_unlock();
     return done;
 }
+
+FILC_ASYNC_RUNTIME(io_uring, uring_submit, uring_poll, uring_validate);

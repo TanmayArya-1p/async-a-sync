@@ -10,7 +10,7 @@
 
 static volatile int body_calls;
 
-#pragma clang attribute push(__attribute__((annotate("filc_async", "op=openat", "fd=0", "bin=1"))), apply_to=function)
+#pragma clang attribute push(__attribute__((annotate("filc_async", "runtime=io_uring", "op=openat", "fd=0", "bin=1"))), apply_to=function)
 __attribute__((noinline)) void* async_openat(int dirfd, const char* path, int flags, int mode)
 {
     body_calls++;
@@ -18,7 +18,7 @@ __attribute__((noinline)) void* async_openat(int dirfd, const char* path, int fl
 }
 #pragma clang attribute pop
 
-#pragma clang attribute push(__attribute__((annotate("filc_async", "op=pread", "fd=0", "bout=1", "r_dep=0", "w_dep=1"))), apply_to=function)
+#pragma clang attribute push(__attribute__((annotate("filc_async", "runtime=io_uring", "op=pread", "fd=0", "bout=1", "r_dep=0", "w_dep=1"))), apply_to=function)
 __attribute__((noinline)) void* async_pread(int fd, void* buf, size_t len, unsigned long offset)
 {
     body_calls++;
@@ -26,7 +26,7 @@ __attribute__((noinline)) void* async_pread(int fd, void* buf, size_t len, unsig
 }
 #pragma clang attribute pop
 
-#pragma clang attribute push(__attribute__((annotate("filc_async", "op=pwrite", "fd=0", "bin=1", "w_dep=0"))), apply_to=function)
+#pragma clang attribute push(__attribute__((annotate("filc_async", "runtime=io_uring", "op=pwrite", "fd=0", "bin=1", "w_dep=0"))), apply_to=function)
 __attribute__((noinline)) void* async_pwrite(int fd, const void* buf, size_t len, unsigned long offset)
 {
     body_calls++;
@@ -34,7 +34,7 @@ __attribute__((noinline)) void* async_pwrite(int fd, const void* buf, size_t len
 }
 #pragma clang attribute pop
 
-#pragma clang attribute push(__attribute__((annotate("filc_async", "op=fsync", "fd=0"))), apply_to=function)
+#pragma clang attribute push(__attribute__((annotate("filc_async", "runtime=io_uring", "op=fsync", "fd=0"))), apply_to=function)
 __attribute__((noinline)) void* async_fsync(int fd)
 {
     body_calls++;
@@ -42,7 +42,7 @@ __attribute__((noinline)) void* async_fsync(int fd)
 }
 #pragma clang attribute pop
 
-#pragma clang attribute push(__attribute__((annotate("filc_async", "op=close", "fd=0"))), apply_to=function)
+#pragma clang attribute push(__attribute__((annotate("filc_async", "runtime=io_uring", "op=close", "fd=0"))), apply_to=function)
 __attribute__((noinline)) void* async_close(int fd)
 {
     body_calls++;

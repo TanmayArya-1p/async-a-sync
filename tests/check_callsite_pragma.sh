@@ -13,7 +13,7 @@ trap 'rm -rf "$TMP"' EXIT HUP INT TERM
 cat > "$TMP/callsite.c" <<'EOF'
 void *work(int key);
 void *caller(int key) {
-#pragma clang attribute push(__attribute__((annotate("filc_async", "op=fsync", "w_dep=0"))), apply_to=function)
+#pragma clang attribute push(__attribute__((annotate("filc_async", "runtime=io_uring", "op=fsync", "w_dep=0"))), apply_to=function)
     void *result = work(key);
 #pragma clang attribute pop
     return result;

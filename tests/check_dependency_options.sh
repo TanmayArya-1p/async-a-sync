@@ -1,7 +1,8 @@
 #!/bin/sh
 # Check r_dep/w_dep placement, the emitted dependency metadata including the
-# :<name> namespace hash, and the rejection of contradictory options and of a
-# buffer option on an argument that is not a pointer.
+# :<name> namespace hash, the runtime each descriptor names, and the rejection
+# of contradictory options, of a buffer option on an argument that is not a
+# pointer, and of a missing, malformed or doubled runtime=.
 set -eu
 ulimit -c 0
 
@@ -63,16 +64,29 @@ sed 's/w_dep=/write_dep=/g' "$SRC" > "$TMP/legacy_write.c"
 sed 's/:right/:/' "$HERE/t_dep_conflict.c" > "$TMP/empty_name.c"
 "$CLANG" -S -emit-llvm -O0 "$TMP/empty_name.c" -o "$TMP/empty_name.ll"
 printf '%s\n' \
-  '#pragma clang attribute push(__attribute__((annotate("filc_async", "op=pread", "fd=0", "bout=2"))), apply_to=function)' \
+  '#pragma clang attribute push(__attribute__((annotate("filc_async", "runtime=io_uring", "op=pread", "fd=0", "bout=2"))), apply_to=function)' \
   'void* scalar_buffer(int fd, void* buf, unsigned long len, unsigned long offset);' \
   '#pragma clang attribute pop' \
   'void* invoke(int fd, void* buf) { return scalar_buffer(fd, buf, 1, 0); }' \
   > "$TMP/scalar_buffer.c"
 "$CLANG" -S -emit-llvm -O0 "$TMP/scalar_buffer.c" -o "$TMP/scalar_buffer.ll"
+# The same well-formed call with its runtime= option dropped, malformed, or
+# given twice.
+for variant in none:'' bad:'"runtime=1bad", ' two:'"runtime=io_uring", "runtime=other", '; do
+  name=${variant%%:*}
+  printf '%s\n' \
+    "#pragma clang attribute push(__attribute__((annotate(\"filc_async\", ${variant#*:}\"op=pread\", \"fd=0\", \"bout=1\"))), apply_to=function)" \
+    'void* runtime_read(int fd, void* buf, unsigned long len, unsigned long offset);' \
+    '#pragma clang attribute pop' \
+    'void* invoke(int fd, void* buf) { return runtime_read(fd, buf, 1, 0); }' \
+    > "$TMP/runtime_$name.c"
+  "$CLANG" -S -emit-llvm -O0 "$TMP/runtime_$name.c" -o "$TMP/runtime_$name.ll"
+done
 
 python3 - "$TMP/placement_out.ll" "$TMP/placement_debug.err" "$OPT" "$PLUGIN" \
     "$TMP/legacy_read.ll" "$TMP/legacy_write.ll" "$TMP/conflict.ll" \
-    "$TMP/empty_name.ll" "$TMP/scalar_buffer.ll" <<'PY'
+    "$TMP/empty_name.ll" "$TMP/scalar_buffer.ll" "$TMP/runtime_none.ll" \
+    "$TMP/runtime_bad.ll" "$TMP/runtime_two.ll" <<'PY'
 import pathlib
 import re
 import subprocess
@@ -111,6 +125,10 @@ for name, dependencies in expected.items():
     submit = f"@__filc_meta_{name}, ptr @__filc_async_run_{name},"
     if submit not in ir:
         raise SystemExit(f"FAIL: {name} stub does not submit its meta and body")
+    if "ptr @filc_async_runtime_io_uring," not in meta:
+        raise SystemExit(f"FAIL: {name} descriptor does not name its runtime")
+if "@filc_async_runtime_io_uring = external" not in ir:
+    raise SystemExit("FAIL: the runtime descriptor is not an external reference")
 
 override = re.search(r"enrolled overridden\n((?:  [^\n]*\n)+)", debug)
 if override is None or "  op=fsync\n" not in override.group(1) or \
@@ -135,6 +153,12 @@ if not rejected(sys.argv[8], "has an empty namespace name"):
     raise SystemExit("FAIL: an empty namespace name was not rejected")
 if not rejected(sys.argv[9], "which is not a pointer"):
     raise SystemExit("FAIL: bout= on an integer argument was not rejected")
+if not rejected(sys.argv[10], "names no runtime; add runtime=<name>"):
+    raise SystemExit("FAIL: a function without runtime= was not rejected")
+if not rejected(sys.argv[11], "does not name a runtime"):
+    raise SystemExit("FAIL: a malformed runtime name was not rejected")
+if not rejected(sys.argv[12], "names two runtimes, io_uring and other"):
+    raise SystemExit("FAIL: two runtimes on one function were not rejected")
 
 print("CHECK_DEPENDENCY_OPTIONS PASS")
 PY

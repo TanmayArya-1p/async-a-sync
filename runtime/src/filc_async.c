@@ -16,9 +16,10 @@ void zasync_set_resolver(void (*resolver)(void*));
 
 /* The generic framework behind annotated calls. The pass-emitted stub of each
  * annotated function calls filc_async_begin, takes the call's dependency
- * locks, marks its output buffers, and hands the call to the runtime with
+ * locks, marks its output buffers, and hands the call to its runtime with
  * filc_async_submit. This file knows nothing about any op or runtime: it
- * reaches the runtime only through filc_async_runtime.h.
+ * reaches each task's runtime only through the filc_async_runtime descriptor
+ * its function names (filc_async_runtime.h), so one program may use several.
  *
  *   g_running      tasks the runtime has not completed, oldest first
  *   g_handles      tasks whose completion poll/wait has not delivered,
@@ -43,6 +44,7 @@ struct filc_async_hold;
 
 struct filc_async_task {
     const filc_async_meta* meta;
+    const filc_async_runtime* runtime; /* polled for this task's completion */
     void* staged_args;      /* keeps staged pointer capabilities alive */
     void* runtime_data;
     struct filc_async_task* newer;       /* g_running */
@@ -210,7 +212,7 @@ static void wait_for(struct filc_async_task* t)
 {
     while (t->state == 1) {
         unlock();
-        bool done = filc_async_runtime_poll(t, FILC_ASYNC_POLL_BLOCK);
+        bool done = t->runtime->poll(t, FILC_ASYNC_POLL_BLOCK);
         lock();
         if (!done && t->state == 1)
             wait_changed();
@@ -616,12 +618,17 @@ bool filc_async_is_pending(const void* buf)
 
 /* ---- Tasks ---- */
 
-void* filc_async_begin(const filc_async_meta* meta, void* staged_args)
+static struct filc_async_task* task_start(const filc_async_runtime* rt,
+                                          const filc_async_meta* meta,
+                                          void* staged_args)
 {
+    if (!rt)
+        filc_async_fatal("a task has no runtime");
     struct filc_async_task* t =
         (struct filc_async_task*)alloc_or_die(sizeof *t);
     /* The allocator returns zeroed memory. */
     t->meta = meta;
+    t->runtime = rt;
     t->staged_args = staged_args;
     t->state = 1;
     lock();
@@ -632,6 +639,24 @@ void* filc_async_begin(const filc_async_meta* meta, void* staged_args)
         ++g_submitted;
     unlock();
     return t;
+}
+
+void* filc_async_begin(const filc_async_meta* meta, void* staged_args)
+{
+    if (!meta)
+        filc_async_fatal("filc_async_begin: no descriptor");
+    return task_start(meta->runtime, meta, staged_args);
+}
+
+void* filc_async_task_new(const filc_async_runtime* rt)
+{
+    return task_start(rt, NULL, NULL);
+}
+
+void filc_async_submit(void* task, const filc_async_meta* meta,
+                       filc_async_run_fn run, void* staged_args, size_t nargs)
+{
+    meta->runtime->submit(task, meta, run, staged_args, nargs);
 }
 
 void filc_async_complete(void* task, long result)
@@ -694,7 +719,7 @@ bool filc_async_poll(struct filc_async_result_s* out)
     }
     if (t->state == 1) {
         unlock();
-        filc_async_runtime_poll(t, FILC_ASYNC_POLL_PROGRESS);
+        t->runtime->poll(t, FILC_ASYNC_POLL_PROGRESS);
         lock();
     }
     result_fill(out, t);
@@ -729,7 +754,7 @@ void filc_async_get_stats(filc_async_stats* out)
     for (struct filc_async_task* t = g_oldest; t; t = t->newer)
         if (t->state == 1) {
             unlock();
-            filc_async_runtime_poll(t, FILC_ASYNC_POLL_CHECK);
+            t->runtime->poll(t, FILC_ASYNC_POLL_CHECK);
             lock();
         }
     *out = (filc_async_stats){ 0 };
@@ -773,11 +798,12 @@ void filc_async_set_validator(filc_async_validator_fn fn)
 
 void filc_async_validate_table(const filc_async_meta* const* metas)
 {
-    filc_async_validator_fn validator =
-        g_validator ? g_validator : filc_async_runtime_validate;
     for (const filc_async_meta* const* p = metas; p && *p; ++p) {
         const filc_async_meta* m = *p;
-        if (!dependencies_ok(m) || !validator(m))
+        if (!m->runtime)
+            filc_async_fatal("function names no runtime");
+        bool ok = g_validator ? g_validator(m) : m->runtime->validate(m);
+        if (!dependencies_ok(m) || !ok)
             filc_async_fatal("function cannot be registered on this runtime");
     }
 }

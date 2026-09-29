@@ -68,8 +68,8 @@ void* filc_async_alloc(size_t size, size_t align)
 /* ---- The mock runtime: numbers each call it is handed, and completes call
  * n once done[n] is set or someone blocks on it. ---- */
 
-void filc_async_submit(void* task, const filc_async_meta* meta,
-                       filc_async_run_fn run, void* staged_args, size_t nargs)
+static void mock_submit(void* task, const filc_async_meta* meta,
+                        filc_async_run_fn run, void* staged_args, size_t nargs)
 {
     (void)meta;
     (void)run;
@@ -85,7 +85,7 @@ void filc_async_submit(void* task, const filc_async_meta* meta,
     *filc_async_task_runtime_data(task) = (void*)(uintptr_t)issued;
 }
 
-bool filc_async_runtime_poll(void* task, enum filc_async_poll_mode mode)
+static bool mock_poll(void* task, enum filc_async_poll_mode mode)
 {
     unsigned id = (unsigned)(uintptr_t)*filc_async_task_runtime_data(task);
     if (!done[id]) {
@@ -97,11 +97,13 @@ bool filc_async_runtime_poll(void* task, enum filc_async_poll_mode mode)
     return true;
 }
 
-bool filc_async_runtime_validate(const filc_async_meta* meta)
+static bool mock_validate(const filc_async_meta* meta)
 {
     (void)meta;
     return true;
 }
+
+FILC_ASYNC_RUNTIME(mock, mock_submit, mock_poll, mock_validate);
 
 static filc_async_meta* meta(const char* name, const char* const* opts,
                              unsigned nargs)
@@ -111,6 +113,7 @@ static filc_async_meta* meta(const char* name, const char* const* opts,
     assert(m);
     m->name = name;
     m->opts = opts;
+    m->runtime = &filc_async_runtime_mock;
     m->nargs = nargs;
     m->noped_args = nargs == 1 ? 1 : 2;
     m->result = FILC_ASYNC_RESULT_PTR;

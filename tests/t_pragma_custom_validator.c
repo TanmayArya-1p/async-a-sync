@@ -27,7 +27,7 @@ __attribute__((constructor(101))) static void install_validator(void)
 }
 
 /* Shaped exactly like a pread, so the only thing wrong is the op name. */
-#pragma clang attribute push(__attribute__((annotate("filc_async", "op=somefutureop", "fd=0", "bout=1"))), apply_to=function)
+#pragma clang attribute push(__attribute__((annotate("filc_async", "runtime=io_uring", "op=somefutureop", "fd=0", "bout=1"))), apply_to=function)
 void* futread(int fd, void* buf, size_t len, unsigned long offset)
 {
     (void)fd;

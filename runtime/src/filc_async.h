@@ -9,13 +9,14 @@
  * `__attribute__((annotate("filc_async", ...)))` is called through a stub the
  * FilAsync pass emits for it. The stub takes the call's dependency locks and
  * marks its output buffers pending through this framework, then hands the
- * call to the runtime (see filc_async_runtime.h). The framework never
- * interprets op= or argument shapes; which ops exist, and what they do, is up
- * to the linked runtime.
+ * call to the runtime its runtime=<name> option names (see
+ * filc_async_runtime.h). The framework never interprets op= or argument
+ * shapes; which ops exist, and what they do, is up to that runtime. A program
+ * may use several runtimes and links each one it names.
  *
  * filc_async_meta must match, byte for byte, the descriptor global the pass
- * emits (name at 0, nargs at 16, opts at 32, args[0] at 48 once the 16-byte
- * Fil-C pointers are in play). Do not change field order.
+ * emits (name at 0, nargs at 16, opts at 32, runtime at 48, args[0] at 64
+ * once the 16-byte Fil-C pointers are in play). Do not change field order.
  *
  * Dependencies: repeat r_dep=<i> or w_dep=<i> on an annotated function
  * declaration or definition for each argument that names a dependency. They
@@ -67,6 +68,8 @@
 #define FILC_ASYNC_DEP_NAMESPACE_SHIFT 8u
 #define FILC_ASYNC_DEP_NAMESPACE_MASK  0x00FFFFFFu
 
+struct filc_async_runtime;
+
 typedef struct {
     const char* name;
     uint32_t    nargs;
@@ -74,6 +77,7 @@ typedef struct {
     uint32_t    flags;
     uint32_t    result;
     const char* const* opts;
+    const struct filc_async_runtime* runtime; /* from runtime=<name> */
     struct {
         uint32_t kind;
         uint32_t dependency;
@@ -114,6 +118,15 @@ void  filc_async_lock_ptr(void* task, const void* ptr, uint32_t space,
  * it. With a NULL task the mark has no owner and only mark_resolved clears it. */
 void  filc_async_mark_pending(void* task, void* buf);
 
+/* Calls the annotated function's body with the staged arguments and returns
+ * its result as a word. Emitted by the pass; only runtimes call it, through
+ * filc_async_run. */
+typedef long (*filc_async_run_fn)(void* staged_args);
+
+/* Hands the call to meta->runtime's submit. */
+void  filc_async_submit(void* task, const filc_async_meta* meta,
+                        filc_async_run_fn run, void* staged_args, size_t nargs);
+
 /* ---- Program API ---- */
 
 /* Delivering a completion (poll returning true, or wait) retires the handle:
@@ -128,8 +141,8 @@ void  filc_async_get_stats(filc_async_stats* out);
 
 /* Startup validation: the pass-emitted per-TU constructor calls
  * filc_async_validate_table before main. It checks the dependency bits, then
- * asks the runtime (filc_async_runtime_validate) whether it can run each
- * function. The pass constructor runs last (priority 65535), so a program's
+ * asks each function's runtime (its validate function) whether it can run
+ * the function. The pass constructor runs last (priority 65535), so a program's
  * own constructor that calls filc_async_set_validator is installed first and
  * decides instead of the runtime.
  *

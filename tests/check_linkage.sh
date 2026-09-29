@@ -1,8 +1,8 @@
 #!/bin/sh
 # Check the two archives and the actual statically linked annotated binary:
 # the framework and the native bridges are in libpizlo.a, the io_uring runtime
-# in libfilc_async_uring.a, and the framework archive does not define what a
-# runtime must.
+# and its descriptor in libfilc_async_uring.a, and the framework neither
+# defines nor refers to anything of a runtime.
 # Usage: check_linkage.sh runtime/build/lib build/tests/t_linked_async
 set -eu
 
@@ -17,6 +17,8 @@ nm -g --defined-only "$LIB/libpizlo.a" | awk 'NF >= 2 { print $NF }' > "$TMP/fra
 nm -g --defined-only "$LIB/libfilc_async_uring.a" | awk 'NF >= 2 { print $NF }' > "$TMP/runtime_symbols"
 nm -g --defined-only "$BINARY" | awk 'NF >= 2 { print $NF }' > "$TMP/binary_symbols"
 nm -u "$BINARY" | awk 'NF >= 1 { print $NF }' > "$TMP/undefined_symbols"
+(cd "$TMP" && ar x "$LIB/libpizlo.a" fil-pizlo-async.o)
+nm -u "$TMP/fil-pizlo-async.o" | awk 'NF >= 1 { print $NF }' > "$TMP/framework_undefined"
 
 expect_exact() {
   if ! grep -qxF "$3" "$2"; then
@@ -44,12 +46,12 @@ done
 # Fil-C compiled functions may carry a pizlonatedFIP signature prefix. The
 # native bridges and generated forwarders have stable, unmangled names.
 for symbol in filc_async_begin filc_async_poll filc_async_wait \
-              filc_async_mark_pending filc_async_complete; do
+              filc_async_mark_pending filc_async_complete filc_async_submit \
+              filc_async_task_new; do
   expect_compiled "$TMP/framework_symbols" "$symbol"
   expect_compiled "$TMP/binary_symbols" "$symbol"
 done
-for symbol in filc_async_submit filc_async_runtime_poll \
-              filc_async_runtime_validate fasync_pread; do
+for symbol in filc_async_runtime_io_uring fasync_pread; do
   expect_compiled "$TMP/runtime_symbols" "$symbol"
   expect_compiled "$TMP/binary_symbols" "$symbol"
   # A Fil-C caller carries its own call thunk for a function it calls
@@ -59,6 +61,13 @@ for symbol in filc_async_submit filc_async_runtime_poll \
     exit 1
   fi
 done
+# The framework reaches a runtime only through the descriptor a task's
+# function names, so its object refers to no runtime at all.
+if grep -Eq "(filc_async_runtime_|fasync_|uring)" "$TMP/framework_undefined"; then
+  echo "the framework refers to a runtime:" >&2
+  grep -E "(filc_async_runtime_|fasync_|uring)" "$TMP/framework_undefined" >&2
+  exit 1
+fi
 
 for symbol in filc_resolve_pending \
               filc_native_zsys_io_uring_setup filc_native_zsys_io_uring_enter \
@@ -72,7 +81,8 @@ for symbol in filc_resolve_pending \
 done
 
 expect_compiled "$TMP/binary_symbols" 'linked_pread'
-for symbol in filc_async_submit filc_async_wait filc_resolve_pending \
+for symbol in filc_async_submit filc_async_runtime_io_uring filc_async_wait \
+              filc_resolve_pending \
               pizlonated_zsys_io_uring_setup pizlonated_zsys_io_uring_enter; do
   if grep -Eq "(^|_)${symbol}$" "$TMP/undefined_symbols"; then
     echo "unresolved implementation in executable: $symbol" >&2

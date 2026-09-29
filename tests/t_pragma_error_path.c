@@ -23,7 +23,7 @@
 
 #define SZ (64u << 10)
 
-#pragma clang attribute push(__attribute__((annotate("filc_async", "op=pread", "fd=0", "bout=1"))), apply_to=function)
+#pragma clang attribute push(__attribute__((annotate("filc_async", "runtime=io_uring", "op=pread", "fd=0", "bout=1"))), apply_to=function)
 void* async_pread(int fd, void* buf, size_t len, unsigned long offset)
 {
     (void)fd;
@@ -34,7 +34,7 @@ void* async_pread(int fd, void* buf, size_t len, unsigned long offset)
 }
 #pragma clang attribute pop
 
-#pragma clang attribute push(__attribute__((annotate("filc_async", "op=fsync", "fd=0"))), apply_to=function)
+#pragma clang attribute push(__attribute__((annotate("filc_async", "runtime=io_uring", "op=fsync", "fd=0"))), apply_to=function)
 void* async_fsync(int fd)
 {
     (void)fd;

@@ -14,7 +14,7 @@
 #include <stdio.h>
 #include "filc_async.h"
 
-#pragma clang attribute push(__attribute__((annotate("filc_async", "op=somefutureop", "fd=0"))), apply_to=function)
+#pragma clang attribute push(__attribute__((annotate("filc_async", "runtime=io_uring", "op=somefutureop", "fd=0"))), apply_to=function)
 __attribute__((noinline)) void* futcall(int fd)
 {
     volatile int sink = fd;

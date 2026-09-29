@@ -44,21 +44,21 @@ demo-plain: runtime
 	@mkdir -p $(OUT_DIR)
 	@$(PATCHED_CC) -O2 -static -DFASYNC_IMPLICIT -DFASYNC_COMPILER_INSERTS_CHECKS \
 		-I$(REPO_DIR)/runtime/src -I$(REPO_DIR)/demos -L$(REPO_DIR)/runtime/build/lib \
-		-o $(OUT_DIR)/demo_plain_io $(REPO_DIR)/demos/demo_plain_io.c -lpizlo -lfilc_async_uring -lpizlo -lc
+		-o $(OUT_DIR)/demo_plain_io $(REPO_DIR)/demos/demo_plain_io.c -lfilc_async_uring -lpizlo -lc
 	@$(OUT_DIR)/demo_plain_io $(OUT_DIR)
 
 demo-async: runtime
 	@mkdir -p $(OUT_DIR)
 	@$(PATCHED_CC) -O2 -static -DFASYNC_IMPLICIT -DFASYNC_COMPILER_INSERTS_CHECKS \
 		-I$(REPO_DIR)/runtime/src -I$(REPO_DIR)/demos -L$(REPO_DIR)/runtime/build/lib \
-		-o $(OUT_DIR)/demo_async_io $(REPO_DIR)/demos/demo_async_io.c -lpizlo -lfilc_async_uring -lpizlo -lc
+		-o $(OUT_DIR)/demo_async_io $(REPO_DIR)/demos/demo_async_io.c -lfilc_async_uring -lpizlo -lc
 	@$(OUT_DIR)/demo_async_io $(OUT_DIR)
 
 demo-provenance: runtime
 	@mkdir -p $(OUT_DIR)
 	@$(PATCHED_CC) -O2 -static -DFASYNC_IMPLICIT -DFASYNC_COMPILER_INSERTS_CHECKS \
 		-I$(REPO_DIR)/runtime/src -I$(REPO_DIR)/demos -L$(REPO_DIR)/runtime/build/lib \
-		-o $(OUT_DIR)/demo_provenance $(REPO_DIR)/demos/demo_provenance.c -lpizlo -lfilc_async_uring -lpizlo -lc
+		-o $(OUT_DIR)/demo_provenance $(REPO_DIR)/demos/demo_provenance.c -lfilc_async_uring -lpizlo -lc
 	@$(OUT_DIR)/demo_provenance $(OUT_DIR)
 
 all-demos: demo-wordcount demo-plain demo-async demo-provenance
@@ -76,7 +76,7 @@ demo-pragma: $(addprefix demo-pragma-,$(PRAGMA_DEMOS))
 demo-pragma-%: runtime
 	@mkdir -p $(OUT_DIR)
 	@$(PATCHED_CC) $(PRAGMA_FLAGS) -o $(OUT_DIR)/demo_pragma_$* \
-		$(REPO_DIR)/demos/demo_pragma_$*.c -lpizlo -lfilc_async_uring -lpizlo -lc
+		$(REPO_DIR)/demos/demo_pragma_$*.c -lfilc_async_uring -lpizlo -lc
 	@$(OUT_DIR)/demo_pragma_$* $(OUT_DIR) $(ARGS)
 
 disasm:

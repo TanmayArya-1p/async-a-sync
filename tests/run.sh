@@ -92,7 +92,7 @@ run_filc_test() {
   echo "### $name (Fil-C)"
   # shellcheck disable=SC2086
   if "$FILCC" -O2 -static $WARN -I"$REPO/runtime/src" -L"$REPO/runtime/build/lib" \
-       -o "$OUT/$name" "$HERE/$name.c" -lpizlo -lfilc_async_uring -lpizlo -lc; then
+       -o "$OUT/$name" "$HERE/$name.c" -lfilc_async_uring -lpizlo -lc; then
     if "$OUT/$name" "$@"; then
       PASSED=$((PASSED + 1))
     else
@@ -196,7 +196,7 @@ run_patched() {
        -DFASYNC_COMPILER_INSERTS_CHECKS \
        $RUN_PATCHED_FLAGS \
        -I"$REPO/runtime/src" -L"$REPO/runtime/build/lib" \
-       -o "$OUT/$name" "$src" -lpizlo -lfilc_async_uring -lpizlo -lc; then
+       -o "$OUT/$name" "$src" -lfilc_async_uring -lpizlo -lc; then
     if "$OUT/$name" "$@"; then
       PASSED=$((PASSED + 1))
     else
@@ -223,7 +223,7 @@ run_patched_linked() {
        -I"$REPO/runtime/src" -L"$REPO/runtime/build/lib" \
        -o "$OUT/$name" \
        "$HERE/t_linked_async_main.c" "$HERE/t_linked_async_def.c" \
-       -lpizlo -lfilc_async_uring -lpizlo -lc; then
+       -lfilc_async_uring -lpizlo -lc; then
     if "$HERE/check_linkage.sh" "$REPO/runtime/build/lib" \
          "$OUT/$name" && "$OUT/$name" "$OUT"; then
       PASSED=$((PASSED + 1))
@@ -278,7 +278,7 @@ run_patched_neg() {
        -DFASYNC_COMPILER_INSERTS_CHECKS \
        $RUN_PATCHED_FLAGS \
        -I"$REPO/runtime/src" -L"$REPO/runtime/build/lib" \
-       -o "$OUT/$name" "$src" -lpizlo -lfilc_async_uring -lpizlo -lc; then
+       -o "$OUT/$name" "$src" -lfilc_async_uring -lpizlo -lc; then
     if err_out=$("$OUT/$name" 2>&1); then
       echo "!!! $name exited 0; runtime should have rejected the op"
       FAILED=$((FAILED + 1))

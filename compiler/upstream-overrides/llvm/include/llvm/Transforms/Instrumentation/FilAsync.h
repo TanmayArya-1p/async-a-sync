@@ -18,7 +18,8 @@ class Module;
 // annotations (`#pragma clang attribute` + `annotate("filc_async", ...)`) a
 // stock clang records on a pre-pizlonated module, renames each enrolled body
 // to `__filc_async_<name>`, emits a `filc_async_meta` global
-// `@__filc_meta_<name>` and an options array `@__filc_opts_<name>`, and a
+// `@__filc_meta_<name>`, which points at the runtime its runtime=<name>
+// option names, and an options array `@__filc_opts_<name>`, and a
 // per-TU meta table plus a startup constructor feeding it to
 // `filc_async_validate_table`. Direct calls of an enrolled function are then
 // redirected to an internal stub `@__filc_async_stub_<name>` with the same
@@ -56,8 +57,9 @@ public:
   // annotation's existing .str globals (no duplicate strings), trailing null.
   GlobalVariable *emitOpts(Module &M, StringRef OrigName, const AnnotInfo &Info);
   // Meta: `@__filc_meta_<name>` = internal constant typed exactly like the C
-  // `filc_async_meta` {name, nargs, noped_args, flags, result, opts, args[]},
-  // pointer fields as real pointers.
+  // `filc_async_meta` {name, nargs, noped_args, flags, result, opts, runtime,
+  // args[]}, pointer fields as real pointers. `runtime` points at the external
+  // `filc_async_runtime_<name>` of the required runtime=<name> option.
   GlobalVariable *emitMeta(Function *F, StringRef OrigName, const AnnotInfo &Info,
                            GlobalVariable *Opts);
   // Renames a defined F to `__filc_async_<OrigName>` and, unless F is local,

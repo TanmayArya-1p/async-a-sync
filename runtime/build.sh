@@ -94,9 +94,10 @@ echo "== compiling async runtime (filcc, memory-safe, capability-checked)"
   -c -o "$OBJ/fil-pizlo-async-uring.o" "$HERE/src/filc_async_uring.c"
 # The framework and the native bridges (syscall forwarders, the io_uring
 # syscalls, the pending flag) go into the private libpizlo.a; the io_uring
-# runtime is a library of its own, so a program can link another runtime
-# instead. The two need each other, so libpizlo is named on both sides of it:
-# -lpizlo -lfilc_async_uring -lpizlo -lc.
+# runtime is a library of its own, which a program links when its annotations
+# name runtime=io_uring, beside any other runtime it names. A runtime calls the
+# framework but not the other way round, so runtimes come first:
+# -lfilc_async_uring -lpizlo -lc.
 echo "== splicing the framework into a private copy of libpizlo.a"
 cp "$FILC_ROOT/pizfix/lib/libpizlo.a" "$LIB/libpizlo.a"
 ( cd "$LIB" && ar r libpizlo.a \
@@ -118,4 +119,4 @@ echo "== done"
 echo "   $LIB/libpizlo.a"
 echo "   $LIB/libfilc_async_uring.a"
 echo
-echo "   filcc -static -I$HERE/src -L$LIB ... -lpizlo -lfilc_async_uring -lpizlo -lc"
+echo "   filcc -static -I$HERE/src -L$LIB ... -lfilc_async_uring -lpizlo -lc"
