@@ -13,47 +13,50 @@
  * fasync_*. The annotated body is retained for linking but is not executed.
  * Tasks and staged arguments live in the allocator arena.
  *
- * g_tasks lists the tasks still in flight, newest first; dependency ordering
- * and every scan for work only walk this list. A task moves to g_done when it
- * completes and leaves that list once poll/wait delivers its completion. A
- * program that only ever touches its buffers never delivers, so g_done can
- * grow, but nothing walks it except a poll/wait looking up its handle. */
+ * Every per-call operation here costs the same however many calls are in
+ * flight, because a program can have a thousand in flight at once:
+ *
+ *   g_tasks        the tasks in flight, newest first, doubly linked; only
+ *                  reclaiming, statistics and rare waits walk it
+ *   g_handles      the tasks whose completion poll/wait has not delivered,
+ *                  hashed by address, so a handle is found without a walk
+ *   g_mark_buckets pending marks, hashed by the marked object
+ *   g_dep_buckets  in-flight tasks by dependency key, for ordering
+ *
+ * A program that only ever touches its buffers never delivers, so g_handles
+ * can grow; nothing but a poll/wait looking up its handle reads it. */
 
 struct filc_async_task;
+struct filc_async_mark;
+struct filc_async_dep_ref;
+
 static struct filc_async_task* g_tasks;
-static struct filc_async_task* g_done;
-
-// pending-buffer registry. mark_pending/mark_resolved flip marks; is_pending
-// tests range overlap so aliases of a marked buffer probe true. a mark holds
-// the real buffer pointer (so resolve keeps its capability); bounds are derived
-// via zgetlower/zgetupper. re-marking resolves the prior mark first.
-#define FASYNC_PENDING_REGISTRY_CAPACITY FASYNC_MAX_INFLIGHT
-
-typedef struct {
-    void* buf;
-    struct filc_async_task* owner;
-} filc_async_pending_mark;
-
-static filc_async_pending_mark g_pending[FASYNC_PENDING_REGISTRY_CAPACITY];
-static size_t g_npending;
-
-// mark_pending bumped once per stale mark it resolved before re-marking.
-static unsigned long g_pending_resolves;
+static unsigned long g_seq;      /* submission order */
+static size_t g_unstarted;       /* tasks in g_tasks not started yet */
 
 static unsigned long g_submitted;
 static unsigned long g_completed;
 static unsigned long g_failed;
 
+// mark_pending bumped once per stale mark it resolved before re-marking.
+static unsigned long g_pending_resolves;
+
 struct filc_async_task {
-    struct filc_async_task* next;      /* g_tasks, while in flight */
-    struct filc_async_task* done_next; /* g_done, once complete */
+    struct filc_async_task* next;        /* g_tasks: older */
+    struct filc_async_task* prev;        /* g_tasks: newer */
+    struct filc_async_task* handle_next; /* g_handles bucket */
     void* impl;
     void* opts;
     const filc_async_meta* meta;
     void* staged_args;      /* keeps staged pointer capabilities alive */
+    unsigned long seq;      /* submission order */
+    struct filc_async_mark* marks;     /* pending marks this task owns */
+    struct filc_async_dep_ref* deps;   /* its dependency keys, ndeps long */
+    unsigned ndeps;
     unsigned char state;    /* 0 done, 1 pending, 2 failed */
     unsigned char started;  /* an SQE has been issued (or an error recorded) */
     unsigned char resolved; /* auto-resolve already ran for this task */
+    unsigned char handled;  /* in g_handles */
     fasync_id request;
     long result;
 };
@@ -149,32 +152,111 @@ static bool default_validator(const filc_async_meta* m)
 
 static filc_async_register_fn g_register_fn;
 
+/* Multiplicative hashing: the top `bits` bits of key * 2^64/phi. */
+static size_t hash_bits(uintptr_t key, unsigned bits)
+{
+    return (size_t)(((uint64_t)key * 0x9E3779B97F4A7C15ULL) >> (64 - bits));
+}
+
+/* ---- Handles not yet delivered ---- */
+
+static struct filc_async_task** g_handles;
+static unsigned g_handle_bits;
+static size_t g_nhandles;
+
+/* Doubles the table. The old one stays with the allocator, like tasks. */
+static void handles_grow(void)
+{
+    unsigned bits = g_handles ? g_handle_bits + 1 : 10;
+    size_t n = (size_t)1 << bits;
+    struct filc_async_task** table =
+        (struct filc_async_task**)filc_async_alloc(n * sizeof *table, 16);
+    if (!table)
+        filc_async_fatal("filc_async_submit: out of memory");
+    for (size_t i = 0; g_handles && i < ((size_t)1 << g_handle_bits); ++i) {
+        struct filc_async_task* t = g_handles[i];
+        while (t) {
+            struct filc_async_task* next = t->handle_next;
+            size_t b = hash_bits((uintptr_t)t, bits);
+            t->handle_next = table[b];
+            table[b] = t;
+            t = next;
+        }
+    }
+    g_handles = table;
+    g_handle_bits = bits;
+}
+
+static void handle_add(struct filc_async_task* t)
+{
+    if (!g_handles || g_nhandles >= ((size_t)1 << g_handle_bits))
+        handles_grow();
+    size_t b = hash_bits((uintptr_t)t, g_handle_bits);
+    t->handle_next = g_handles[b];
+    g_handles[b] = t;
+    t->handled = 1;
+    ++g_nhandles;
+}
+
 static struct filc_async_task* find_task(const void* pending)
 {
-    for (struct filc_async_task* t = g_tasks; t; t = t->next) {
-        if ((const void*)t == pending) {
+    if (!g_handles)
+        return NULL;
+    size_t b = hash_bits((uintptr_t)pending, g_handle_bits);
+    for (struct filc_async_task* t = g_handles[b]; t; t = t->handle_next)
+        if ((const void*)t == pending)
             return t;
-        }
-    }
-    for (struct filc_async_task* t = g_done; t; t = t->done_next) {
-        if ((const void*)t == pending) {
-            return t;
-        }
-    }
     return NULL;
 }
 
-/* A task whose completion has been delivered leaves g_done; later poll/wait
- * calls on its handle find nothing and leave the caller's result alone. */
+/* A task whose completion has been delivered leaves g_handles; later
+ * poll/wait calls on its handle find nothing and leave the caller's result
+ * alone. A task still in flight keeps its handle. */
 static void retire_task(struct filc_async_task* t)
 {
-    for (struct filc_async_task** link = &g_done; *link;
-         link = &(*link)->done_next) {
-        if (*link == t) {
-            *link = t->done_next;
-            break;
-        }
-    }
+    if (t->state == 1 || !t->handled)
+        return;
+    struct filc_async_task** link =
+        &g_handles[hash_bits((uintptr_t)t, g_handle_bits)];
+    while (*link != t)
+        link = &(*link)->handle_next;
+    *link = t->handle_next;
+    t->handled = 0;
+    --g_nhandles;
+}
+
+/* ---- The in-flight list ---- */
+
+static void tasks_push(struct filc_async_task* t)
+{
+    t->prev = NULL;
+    t->next = g_tasks;
+    if (g_tasks)
+        g_tasks->prev = t;
+    g_tasks = t;
+}
+
+/* t->next is left intact so a walker already standing on t still reaches the
+ * rest of g_tasks. */
+static void tasks_unlink(struct filc_async_task* t)
+{
+    if (t->prev)
+        t->prev->next = t->next;
+    else
+        g_tasks = t->next;
+    if (t->next)
+        t->next->prev = t->prev;
+}
+
+static void set_started(struct filc_async_task* t, unsigned char started)
+{
+    if (t->started == started)
+        return;
+    t->started = started;
+    if (started)
+        --g_unstarted;
+    else
+        ++g_unstarted;
 }
 
 /* The staged array has one Fil-C pointer-sized cell per argument. Scalars
@@ -198,68 +280,261 @@ static void* arg_ptr(const filc_async_arg* args, size_t index)
     return args[index].value.ptr;
 }
 
-/* Dependency claims: submission order assigns the call order, and completion
- * retires a task's claims. The runtime is single-threaded (see
- * fasync_check_thread), so none of this state is locked. */
+/* ---- Dependency index ----
+ *
+ * Submission order assigns the call order, and completion retires a task's
+ * claims. Each in-flight task has one ref per dependency argument, filed
+ * under that argument's key in a readers or a writers list, newest first.
+ * Two calls conflict when they share a key and one of them writes it, so a
+ * call's newest conflicting predecessor is at or near the head of its keys'
+ * lists, however many unrelated calls are in flight. The runtime is
+ * single-threaded (see fasync_check_thread), so none of this is locked. */
 
-/* FIXME: scalar keys depend on the declared integer width.
+struct filc_async_dep_key {
+    struct filc_async_dep_key* bucket_next; /* same bucket, or free list */
+    uint64_t word;
+    unsigned char pointer;
+    struct filc_async_dep_ref* readers;     /* in flight, newest first */
+    struct filc_async_dep_ref* writers;
+};
+
+struct filc_async_dep_ref {
+    struct filc_async_task* task;
+    struct filc_async_dep_key* key;
+    struct filc_async_dep_ref* newer;
+    struct filc_async_dep_ref* older;
+    unsigned char write;
+};
+
+#define DEP_BUCKET_BITS 10
+static struct filc_async_dep_key* g_dep_buckets[1u << DEP_BUCKET_BITS];
+static struct filc_async_dep_key* g_free_keys;
+
+/* The key of dependency argument i. Scalar keys compare by value; pointer
+ * keys compare by object identity, so they key on the object's lower bound.
+ *
+ * FIXME: scalar keys depend on the declared integer width.
  *
  * FilAsync stages an integer narrower than 64 bits zero-extended
- * (Builder.CreateZExt in FilAsync.cpp's call rewriting), and the scalar
- * comparison below compares the full 64-bit words. The same value declared
- * with different widths therefore does not always match. For example, a
- * pending-open handle -2 is 0x00000000FFFFFFFE as an `int fd` argument and
- * 0xFFFFFFFFFFFFFFFE as a `long fd` argument, so a w_dep=0 call taking
- * `int` and an r_dep=0 call taking `long` on that handle are not ordered.
- * Non-negative values are unaffected.
+ * (Builder.CreateZExt in FilAsync.cpp's call rewriting), and scalar keys are
+ * the full 64-bit words. The same value declared with different widths
+ * therefore does not always match. For example, a pending-open handle -2 is
+ * 0x00000000FFFFFFFE as an `int fd` argument and 0xFFFFFFFFFFFFFFFE as a
+ * `long fd` argument, so a w_dep=0 call taking `int` and an r_dep=0 call
+ * taking `long` on that handle are not ordered. Non-negative values are
+ * unaffected.
  *
  * A fix needs the signedness the pass does not record today: stage signed
  * arguments sign-extended, or record each dependency argument's width and
  * sign in the descriptor and normalize here. It is left alone for now because
  * it only bites when one resource is declared with two different integer
  * types; declare dependency arguments with one type until then. */
-static bool same_dependency_key(const struct filc_async_task* a, size_t ai,
-                                const struct filc_async_task* b, size_t bi)
+static uint64_t dep_key_word(const filc_async_arg* args, size_t i, unsigned dep)
 {
-    unsigned ad = a->meta->args[ai].dependency;
-    unsigned bd = b->meta->args[bi].dependency;
-    if ((ad & FILC_ASYNC_DEP_POINTER) != (bd & FILC_ASYNC_DEP_POINTER))
-        return false;
-    const filc_async_arg* aa = (const filc_async_arg*)a->staged_args;
-    const filc_async_arg* ba = (const filc_async_arg*)b->staged_args;
-    if (ad & FILC_ASYNC_DEP_POINTER) {
-        void* ap = arg_ptr(aa, ai);
-        void* bp = arg_ptr(ba, bi);
-        return (ap ? zgetlower(ap) : NULL) == (bp ? zgetlower(bp) : NULL);
+    if (dep & FILC_ASYNC_DEP_POINTER) {
+        void* p = arg_ptr(args, i);
+        return (uint64_t)(uintptr_t)(p ? zgetlower(p) : NULL);
     }
-    return arg_word(aa, ai) == arg_word(ba, bi);
+    return arg_word(args, i);
 }
 
-static bool tasks_conflict(const struct filc_async_task* a,
-                           const struct filc_async_task* b)
+static struct filc_async_dep_key* dep_key_get(uint64_t word, unsigned char pointer)
 {
-    for (size_t ai = 0; ai < a->meta->nargs; ++ai) {
-        unsigned am = a->meta->args[ai].dependency & ~FILC_ASYNC_DEP_POINTER;
-        if (!am)
+    struct filc_async_dep_key** bucket =
+        &g_dep_buckets[hash_bits((uintptr_t)(word ^ pointer), DEP_BUCKET_BITS)];
+    for (struct filc_async_dep_key* k = *bucket; k; k = k->bucket_next)
+        if (k->word == word && k->pointer == pointer)
+            return k;
+    struct filc_async_dep_key* k = g_free_keys;
+    if (k)
+        g_free_keys = k->bucket_next;
+    else
+        k = (struct filc_async_dep_key*)filc_async_alloc(sizeof *k, 16);
+    if (!k)
+        filc_async_fatal("filc_async_submit: out of memory");
+    k->word = word;
+    k->pointer = pointer;
+    k->readers = NULL;
+    k->writers = NULL;
+    k->bucket_next = *bucket;
+    *bucket = k;
+    return k;
+}
+
+/* Files t's dependency arguments under their keys. */
+static void deps_index(struct filc_async_task* t)
+{
+    const filc_async_meta* m = t->meta;
+    const filc_async_arg* args = (const filc_async_arg*)t->staged_args;
+    unsigned n = 0;
+    for (size_t i = 0; i < m->nargs; ++i)
+        n += (m->args[i].dependency & ~FILC_ASYNC_DEP_POINTER) != 0;
+    if (!n)
+        return;
+    t->deps = (struct filc_async_dep_ref*)filc_async_alloc(n * sizeof *t->deps, 16);
+    if (!t->deps)
+        filc_async_fatal("filc_async_submit: out of memory");
+    for (size_t i = 0; i < m->nargs; ++i) {
+        unsigned dep = m->args[i].dependency;
+        unsigned mode = dep & ~FILC_ASYNC_DEP_POINTER;
+        if (!mode)
             continue;
-        for (size_t bi = 0; bi < b->meta->nargs; ++bi) {
-            unsigned bm = b->meta->args[bi].dependency & ~FILC_ASYNC_DEP_POINTER;
-            if (bm && (am == FILC_ASYNC_DEP_WRITE ||
-                       bm == FILC_ASYNC_DEP_WRITE) &&
-                same_dependency_key(a, ai, b, bi))
-                return true;
-        }
+        struct filc_async_dep_ref* r = &t->deps[t->ndeps++];
+        r->task = t;
+        r->write = mode == FILC_ASYNC_DEP_WRITE;
+        r->key = dep_key_get(dep_key_word(args, i, dep),
+                             (dep & FILC_ASYNC_DEP_POINTER) != 0);
+        struct filc_async_dep_ref** head =
+            r->write ? &r->key->writers : &r->key->readers;
+        r->newer = NULL;
+        r->older = *head;
+        if (*head)
+            (*head)->newer = r;
+        *head = r;
     }
-    return false;
+}
+
+/* Takes t's refs out of the index; a key nobody uses goes back to the free
+ * list. */
+static void deps_unindex(struct filc_async_task* t)
+{
+    for (unsigned i = 0; i < t->ndeps; ++i) {
+        struct filc_async_dep_ref* r = &t->deps[i];
+        struct filc_async_dep_key* k = r->key;
+        if (r->newer)
+            r->newer->older = r->older;
+        else if (r->write)
+            k->writers = r->older;
+        else
+            k->readers = r->older;
+        if (r->older)
+            r->older->newer = r->newer;
+        if (k->readers || k->writers)
+            continue;
+        struct filc_async_dep_key** link =
+            &g_dep_buckets[hash_bits((uintptr_t)(k->word ^ k->pointer),
+                                     DEP_BUCKET_BITS)];
+        while (*link != k)
+            link = &(*link)->bucket_next;
+        *link = k->bucket_next;
+        k->bucket_next = g_free_keys;
+        g_free_keys = k;
+    }
+    t->ndeps = 0;
+}
+
+/* The newest task in `list` submitted before `before`. Every task in the
+ * index is in flight. */
+static struct filc_async_task* newest_before(const struct filc_async_dep_ref* list,
+                                             unsigned long before)
+{
+    for (; list; list = list->older)
+        if (list->task->seq < before)
+            return list->task;
+    return NULL;
+}
+
+/* The newest in-flight task submitted before `before` that conflicts with t:
+ * one that writes a key t uses, or uses a key t writes. */
+static struct filc_async_task* conflict_before(const struct filc_async_task* t,
+                                               unsigned long before)
+{
+    struct filc_async_task* best = NULL;
+    for (unsigned i = 0; i < t->ndeps; ++i) {
+        const struct filc_async_dep_ref* r = &t->deps[i];
+        struct filc_async_task* p = newest_before(r->key->writers, before);
+        if (p && (!best || p->seq > best->seq))
+            best = p;
+        if (!r->write)
+            continue;
+        p = newest_before(r->key->readers, before);
+        if (p && (!best || p->seq > best->seq))
+            best = p;
+    }
+    return best;
 }
 
 static struct filc_async_task* predecessor(const struct filc_async_task* t)
 {
-    /* The list is newest first; t->next contains exactly the earlier calls. */
-    for (struct filc_async_task* p = t->next; p; p = p->next)
-        if (p->state == 1 && tasks_conflict(p, t))
-            return p;
+    return conflict_before(t, t->seq);
+}
+
+/* ---- Pending-buffer registry ----
+ *
+ * mark_pending/mark_resolved add and remove marks; is_pending tests range
+ * overlap so aliases of a marked buffer probe true. A mark covers the whole
+ * object, [zgetlower, zgetupper), and holds the real buffer pointer so a
+ * resolve keeps its capability. Live objects never overlap, so a mark that
+ * overlaps an object's range has that object's lower bound: marks are hashed
+ * by it, and every lookup reads one bucket. Re-marking resolves the prior
+ * mark first. */
+#define FASYNC_PENDING_REGISTRY_CAPACITY FASYNC_MAX_INFLIGHT
+#define MARK_BUCKET_BITS 11
+
+typedef struct filc_async_mark {
+    void* buf;
+    uintptr_t lower;
+    uintptr_t upper;
+    struct filc_async_task* owner;
+    struct filc_async_mark* bucket_next; /* same bucket */
+    struct filc_async_mark* owner_next;  /* the owner's marks, or free list */
+} filc_async_mark;
+
+static filc_async_mark g_marks[FASYNC_PENDING_REGISTRY_CAPACITY];
+static size_t g_marks_carved; /* g_marks entries ever handed out */
+static filc_async_mark* g_free_marks;
+static filc_async_mark* g_mark_buckets[1u << MARK_BUCKET_BITS];
+static size_t g_npending;
+
+static filc_async_mark** mark_bucket(uintptr_t lower)
+{
+    return &g_mark_buckets[hash_bits(lower, MARK_BUCKET_BITS)];
+}
+
+static filc_async_mark* mark_find_overlap(uintptr_t lower, uintptr_t upper)
+{
+    for (filc_async_mark* m = *mark_bucket(lower); m; m = m->bucket_next)
+        if (lower < m->upper && m->lower < upper)
+            return m;
     return NULL;
+}
+
+/* The caller has checked g_npending against the capacity. */
+static void mark_add(void* buf, uintptr_t lower, uintptr_t upper)
+{
+    filc_async_mark* m = g_free_marks;
+    if (m)
+        g_free_marks = m->owner_next;
+    else
+        m = &g_marks[g_marks_carved++];
+    m->buf = buf;
+    m->lower = lower;
+    m->upper = upper;
+    m->owner = NULL;
+    m->owner_next = NULL;
+    filc_async_mark** bucket = mark_bucket(lower);
+    m->bucket_next = *bucket;
+    *bucket = m;
+    ++g_npending;
+}
+
+static void mark_remove(filc_async_mark* m)
+{
+    filc_async_mark** link = mark_bucket(m->lower);
+    while (*link != m)
+        link = &(*link)->bucket_next;
+    *link = m->bucket_next;
+    if (m->owner) {
+        filc_async_mark** own = &m->owner->marks;
+        while (*own != m)
+            own = &(*own)->owner_next;
+        *own = m->owner_next;
+    }
+    m->buf = NULL;
+    m->owner = NULL;
+    m->owner_next = g_free_marks;
+    g_free_marks = m;
+    --g_npending;
 }
 
 static bool is_output_kind(uint32_t kind)
@@ -341,16 +616,8 @@ static void complete_task(struct filc_async_task* t, long result)
     if (result < 0)
         ++g_failed;
     auto_resolve_buffers(t);
-    /* Move t from g_tasks to g_done. t->next is left intact so a walker
-     * already standing on t still reaches the rest of g_tasks. */
-    for (struct filc_async_task** link = &g_tasks; *link; link = &(*link)->next) {
-        if (*link == t) {
-            *link = t->next;
-            break;
-        }
-    }
-    t->done_next = g_done;
-    g_done = t;
+    deps_unindex(t);
+    tasks_unlink(t);
     start_ready_tasks();
 }
 
@@ -359,9 +626,13 @@ static void refresh_task(struct filc_async_task* t, bool wait)
     if (t->state != 1)
         return;
     if (!t->started) {
-        for (struct filc_async_task* p = t->next; p; p = p->next)
-            if (p->state == 1 && tasks_conflict(p, t))
-                refresh_task(p, wait);
+        /* Each conflicting predecessor once, newest first. */
+        unsigned long before = t->seq;
+        struct filc_async_task* p;
+        while ((p = conflict_before(t, before))) {
+            before = p->seq;
+            refresh_task(p, wait);
+        }
         start_ready_tasks();
         if (!t->started)
             return;
@@ -392,7 +663,7 @@ static bool start_task(struct filc_async_task* t)
     if (!ready) {
         return true;
     }
-    t->started = 1;
+    set_started(t, 1);
 
     const filc_async_arg* args = (const filc_async_arg*)t->staged_args;
     enum fasync_op op = opcode_from(t->meta->opts);
@@ -412,7 +683,7 @@ static bool start_task(struct filc_async_task* t)
             failure = errno ? -errno : -EIO;
     }
     if (failure == -EAGAIN) {
-        t->started = 0;
+        set_started(t, 0);
         return false;
     }
     if (failure)
@@ -420,10 +691,17 @@ static bool start_task(struct filc_async_task* t)
     return true;
 }
 
+/* Tasks start inside their own submit unless a predecessor holds them, so
+ * the unstarted ones are the newest few; stop once all have been tried. */
 static void start_ready_tasks(void)
 {
-    for (struct filc_async_task* t = g_tasks; t; t = t->next)
+    size_t left = g_unstarted;
+    for (struct filc_async_task* t = g_tasks; t && left; t = t->next) {
+        if (t->state != 1 || t->started)
+            continue;
+        --left;
         start_task(t);
+    }
 }
 
 /* Complete in-flight tasks whose requests have finished without anyone
@@ -463,28 +741,36 @@ void* filc_async_submit(const filc_async_meta* meta, void* impl, void* opts,
     if (!t)
         filc_async_fatal("filc_async_submit: out of memory");
 
+    /* The allocator returns zeroed memory. */
     t->impl = impl;
     t->opts = opts;
     t->meta = meta;
     t->staged_args = staged_args;
-    t->resolved = 0;
+    t->seq = ++g_seq;
     t->state = 1;
-    t->started = 0;
+    ++g_unstarted;
+    tasks_push(t);
+    handle_add(t);
+    deps_index(t);
+    ++g_submitted;
 
     // The compiler marks output buffers just before calling submit. Attach
     // those marks to this request so re-marking can wait for the right owner.
     const filc_async_arg* args = (const filc_async_arg*)staged_args;
-    t->next = g_tasks;
-    g_tasks = t;
-    ++g_submitted;
     for (size_t i = 0; i < nargs; ++i) {
         uint32_t kind = meta->args[i].kind;
         if (kind != FILC_ASYNC_ARG_BUFFER_OUT && kind != FILC_ASYNC_ARG_PENDING)
             continue;
         void* buf = arg_ptr(args, i);
-        for (size_t j = 0; j < g_npending; ++j)
-            if (g_pending[j].buf == buf && !g_pending[j].owner)
-                g_pending[j].owner = t;
+        if (!buf)
+            continue;
+        for (filc_async_mark* m = *mark_bucket((uintptr_t)zgetlower(buf)); m;
+             m = m->bucket_next)
+            if (m->buf == buf && !m->owner) {
+                m->owner = t;
+                m->owner_next = t->marks;
+                t->marks = m;
+            }
     }
     start_ready_tasks();
 
@@ -500,7 +786,7 @@ void* filc_async_submit(const filc_async_meta* meta, void* impl, void* opts,
             refresh_task(prior, true);
         } else if (!start_task(t) && !reclaim_tasks()) {
             /* The table is full of requests this runtime does not own. */
-            t->started = 1;
+            set_started(t, 1);
             complete_task(t, -EAGAIN);
         }
     }
@@ -516,12 +802,8 @@ static void auto_resolve_buffers(struct filc_async_task* t)
     if (t->resolved)
         return;
     t->resolved = 1;
-    for (size_t j = 0; j < g_npending;)
-        if (g_pending[j].owner == t) {
-            g_pending[j] = g_pending[--g_npending];
-        } else {
-            ++j;
-        }
+    while (t->marks)
+        mark_remove(t->marks);
 }
 
 static void result_fill(struct filc_async_result_s* out, struct filc_async_task* t)
@@ -575,38 +857,24 @@ void filc_async_mark_pending(void* buf)
     uintptr_t upper = (uintptr_t)zgetupper(buf);
 
     // Waiting for the owner of an overlapping mark retires that mark, so the
-    // loop rescans until the buffer can be marked.
+    // loop looks again until the buffer can be marked.
     for (;;) {
-        size_t i = 0;
-        for (; i < g_npending; ++i) {
-            uintptr_t ilower = (uintptr_t)zgetlower(g_pending[i].buf);
-            uintptr_t iupper = (uintptr_t)zgetupper(g_pending[i].buf);
-            if (lower < iupper && ilower < upper)
-                break;
-        }
-        if (i == g_npending) {
+        filc_async_mark* m = mark_find_overlap(lower, upper);
+        if (!m) {
             if (g_npending >= FASYNC_PENDING_REGISTRY_CAPACITY) {
                 if (!reclaim_tasks())
                     filc_async_fatal("too many pending buffers");
                 continue;
             }
-            g_pending[g_npending].buf = buf;
-            g_pending[g_npending].owner = NULL;
-            g_npending++;
+            mark_add(buf, lower, upper);
             return;
         }
-        filc_async_pending_mark mark = g_pending[i];
-
-        if (mark.owner) {
-            refresh_task(mark.owner, true);
+        if (m->owner) {
+            refresh_task(m->owner, true);
         } else {
             // Standalone marks may describe an explicit fasync request.
-            fasync_resolve_pending(mark.buf, 1);
-            for (size_t j = 0; j < g_npending; ++j)
-                if (g_pending[j].buf == mark.buf && !g_pending[j].owner) {
-                    g_pending[j] = g_pending[--g_npending];
-                    break;
-                }
+            fasync_resolve_pending(m->buf, 1);
+            mark_remove(m);
         }
         g_pending_resolves++;
     }
@@ -618,10 +886,9 @@ void filc_async_mark_resolved(void* buf)
     if (!buf)
         return;
     uintptr_t lower = (uintptr_t)zgetlower(buf);
-    for (size_t i = 0; i < g_npending; ++i)
-        if ((uintptr_t)zgetlower(g_pending[i].buf) == lower) {
-            g_pending[i] = g_pending[g_npending - 1];
-            g_npending--;
+    for (filc_async_mark* m = *mark_bucket(lower); m; m = m->bucket_next)
+        if (m->lower == lower) {
+            mark_remove(m);
             return;
         }
 }
@@ -631,26 +898,16 @@ bool filc_async_is_pending(const void* buf)
     fasync_check_thread();
     if (!buf)
         return false;
-    // The compiler's access hook may have reaped a CQE without entering this
-    // API. Observe those completions before reporting registry state.
-    for (size_t i = 0; i < g_npending;) {
-        struct filc_async_task* owner = g_pending[i].owner;
-        if (owner && owner->request && owner->state == 1)
-            refresh_task(owner, false);
-        /* completing owner removed its marks; slot i may now hold another */
-        if (i < g_npending && g_pending[i].owner == owner)
-            ++i;
-    }
     uintptr_t lower = (uintptr_t)zgetlower((void*)buf);
     uintptr_t upper = (uintptr_t)zgetupper((void*)buf);
-    for (size_t i = 0; i < g_npending; ++i) {
-        uintptr_t ilower = (uintptr_t)zgetlower(g_pending[i].buf);
-        uintptr_t iupper = (uintptr_t)zgetupper(g_pending[i].buf);
-        if (lower < iupper && ilower < upper) {
-            return true;
-        }
+    filc_async_mark* m = mark_find_overlap(lower, upper);
+    // The compiler's access hook may have reaped the owner's CQE without
+    // entering this API. Observe that before reporting registry state.
+    if (m && m->owner && m->owner->request && m->owner->state == 1) {
+        refresh_task(m->owner, false);
+        m = mark_find_overlap(lower, upper);
     }
-    return false;
+    return m != NULL;
 }
 
 void filc_async_capabilities(unsigned long* syscall_shaped, unsigned long* executes_bodies)
