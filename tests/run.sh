@@ -264,6 +264,55 @@ run_mock_runtime() {
   fi
 }
 
+# run_two_runtimes: builds t_two_runtimes with both the io_uring runtime and
+# tests/mock_runtime.c, checks that both descriptors reached the binary, then
+# runs it.
+run_two_runtimes() {
+  name=t_two_runtimes
+  echo
+  echo "### $name (patched compiler, io_uring and mock runtimes together)"
+  # shellcheck disable=SC2086
+  if "$PATCHED_CC" -O2 -static $WARN -Werror=pragma-clang-attribute \
+       -DFASYNC_COMPILER_INSERTS_CHECKS \
+       -I"$REPO/runtime/src" -L"$REPO/runtime/build/lib" \
+       -o "$OUT/$name" "$HERE/$name.c" "$HERE/mock_runtime.c" \
+       -lfilc_async_uring -lpizlo -lc; then
+    if ! nm "$OUT/$name" | grep -q 'filc_async_runtime_io_uring$' ||
+       ! nm "$OUT/$name" | grep -q 'filc_async_runtime_mock$'; then
+      echo "!!! $name does not hold both runtime descriptors"
+      FAILED=$((FAILED + 1))
+    elif "$OUT/$name" "$OUT"; then
+      PASSED=$((PASSED + 1))
+    else
+      echo "!!! $name exited non-zero"
+      FAILED=$((FAILED + 1))
+    fi
+  else
+    echo "!!! $name failed to build"
+    FAILED=$((FAILED + 1))
+  fi
+}
+
+# run_unlinked_runtime: a function naming a runtime the program does not link
+# must fail to link, naming the missing descriptor.
+run_unlinked_runtime() {
+  name=t_unlinked_runtime
+  echo
+  echo "### $name (patched compiler, expects a link failure)"
+  # shellcheck disable=SC2086
+  if err_out=$("$PATCHED_CC" -O2 -static $WARN -Werror=pragma-clang-attribute \
+       -I"$REPO/runtime/src" -L"$REPO/runtime/build/lib" \
+       -o "$OUT/$name" "$HERE/$name.c" -lfilc_async_uring -lpizlo -lc 2>&1); then
+    echo "!!! $name linked without the runtime it names"
+    FAILED=$((FAILED + 1))
+  elif echo "$err_out" | grep -q 'undefined.*filc_async_runtime_nosuch'; then
+    PASSED=$((PASSED + 1))
+  else
+    echo "!!! $name failed for another reason: $(echo "$err_out" | head -1)"
+    FAILED=$((FAILED + 1))
+  fi
+}
+
 # run_patched_neg <name> <source>: builds like run_patched but expects the
 # program to be rejected at startup (runtime-side op validation). Passes only
 # when it dies with the validator's rejection message.
@@ -328,6 +377,8 @@ if [ "$PATCHED_READY" -eq 1 ]; then
   needs_io_uring run_patched t_thread_compute "$HERE/t_thread_compute.c" "$OUT"
   needs_io_uring run_patched t_threads "$HERE/t_threads.c" "$OUT"
   run_mock_runtime
+  needs_io_uring run_two_runtimes
+  run_unlinked_runtime
   # Negative control: an unknown op= is accepted by the pass and rejected by
   # the runtime's startup validator (the runtime is the authority).
   run_patched_neg t_pragma_unknownop "$HERE/t_pragma_unknownop.c"
