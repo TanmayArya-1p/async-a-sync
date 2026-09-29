@@ -131,6 +131,20 @@ and checks are in `demos/pragma_report.hh`.
 | `hello` | one annotated `pread`: the body never runs, the call only queues a request, and the first read of the buffer sends it |
 | `lifecycle` | `openat`, `pwrite`, `fsync`, `pread`, `close` issued back to back and kept in order by `w_dep`/`r_dep` |
 | `ordering` | conflicting calls on one fd wait for each other; independent calls batch into one kernel submit |
+| `coldread` | the same loop calling `pread` and `async_pread` over 512 cold files, next to hand-written `fasync_*` |
+| `scaling` | that comparison for 1 to 2048 files, with the time spent inside each annotated call |
+| `overlap` | reading and hashing 256 files, with the reads and the hashing also timed alone |
+
+On a Linux machine with an NVMe SSD, `coldread` is about 2.7x faster than
+blocking `pread` and as fast as the hand-written `fasync_*` version, and
+`overlap` is about 1.8x faster. In `scaling` an annotated call costs 1-2 us
+with up to 1024 calls in flight. At 2048 files the gain is lower and varies
+more between runs: calls wait for room in the 1024-entry request table, and
+the word count runs while the second half of the reads is still in flight,
+when every memory access goes through the access hook's slower check. The
+numbers depend on the storage device and on other I/O on the machine. Each
+timing demo first checks that dropping the page cache makes reads slower, and
+warns if it does not, because then there is no device latency to overlap.
 
 
 ## Results

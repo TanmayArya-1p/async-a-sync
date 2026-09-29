@@ -25,6 +25,9 @@ help:
 	@echo " make demo-pragma-hello      : One annotated call, step by step"
 	@echo " make demo-pragma-lifecycle  : open, write, fsync, read, close as annotated calls"
 	@echo " make demo-pragma-ordering   : r_dep/w_dep ordering vs independent calls batching"
+	@echo " make demo-pragma-coldread   : Cold-cache reads: blocking vs annotated vs hand-written"
+	@echo " make demo-pragma-scaling    : The same comparison for 1 to 2048 files"
+	@echo " make demo-pragma-overlap    : Read + hash: blocking vs annotated, overlapped"
 	@echo "------------------------------------------------------------------"
 	@echo " make disasm           : Inspect disassembly (GCC raw load vs Fil-C hook)"
 	@echo " make cfg              : Generate CFG graph (PNG image & AST dump)"
@@ -64,7 +67,7 @@ PRAGMA_FLAGS := -O2 -static -Werror=pragma-clang-attribute -DFASYNC_IMPLICIT \
 	-DFASYNC_COMPILER_INSERTS_CHECKS -I$(REPO_DIR)/runtime/src -I$(REPO_DIR)/demos \
 	-L$(REPO_DIR)/runtime/build/lib
 
-PRAGMA_DEMOS := hello lifecycle ordering
+PRAGMA_DEMOS := hello lifecycle ordering coldread scaling overlap
 
 demo-pragma: $(addprefix demo-pragma-,$(PRAGMA_DEMOS))
 

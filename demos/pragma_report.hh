@@ -293,3 +293,398 @@ static inline int ordering_report(int* fd) {
   pragma_check("no annotated body ran", pragma_body_calls == 0);
   return pragma_finish();
 }
+
+/* ---- demo_pragma_coldread and demo_pragma_scaling ---- */
+
+#define READS_FILE_BYTES 4096
+#define PRAGMA_MAX_PASSES 15
+
+typedef size_t (*read_fn)(int n);
+
+struct pass {
+  double ms;
+  double issue_ms; /* read_annotated: time spent inside the calls */
+  size_t words;
+  struct pragma_snap used;
+};
+
+struct timing {
+  int files; /* scaling: the most files */
+  int passes;
+  int regime_ok;
+  struct pass blocking[PRAGMA_MAX_PASSES];
+  struct pass annotated[PRAGMA_MAX_PASSES];
+  struct pass by_hand[PRAGMA_MAX_PASSES];
+
+  /* scaling's running results */
+  int words_ok;
+  int batched;
+  double best;
+  int best_n;
+  double last_call_us;
+  double last_speedup;
+  int last_n;
+};
+
+/* Parses [dir] [files] [passes]. */
+static inline struct timing timing_args(int argc, char** argv, int files,
+                                        int passes) {
+  struct timing t = {0};
+  t.files = argc > 2 ? atoi(argv[2]) : files;
+  t.passes = argc > 3 ? atoi(argv[3]) : passes;
+  t.words_ok = 1;
+  t.batched = 1;
+  if (t.files < 1 || t.files > DEMO_MAX_FILES || t.passes < 1 ||
+      t.passes > PRAGMA_MAX_PASSES) {
+    fprintf(stderr, "usage: %s [dir] [files 1..%d] [passes 1..%d]\n", argv[0],
+            DEMO_MAX_FILES, PRAGMA_MAX_PASSES);
+    exit(2);
+  }
+  return t;
+}
+
+/* Creates the files and checks that dropping the page cache adds device
+ * latency. */
+static inline void timing_prepare(struct timing* t, int argc, char** argv) {
+  pragma_raise_fd_limit();
+  if (demo_files(pragma_dir(argc, argv), t->files, READS_FILE_BYTES) < 0)
+    exit(1);
+  t->regime_ok = pragma_regime();
+
+  /* The first request sets up the io_uring ring; keep that out of the passes. */
+  pragma_wait(async_pread(demo_fd[0], demo_buf[0], demo_bytes, 0));
+}
+
+/* Times one pass of `read` over the first n files, from empty buffers and a
+ * dropped page cache. */
+static inline void time_pass(struct pass* p, read_fn read, int n) {
+  memset(p, 0, sizeof(*p));
+  for (int i = 0; i < n; i++)
+    memset(demo_buf[i], 0, demo_bytes);
+  demo_cold();
+  struct pragma_snap start;
+  pragma_snap(&start);
+  pragma_issue_ms = 0;
+  demo_start();
+  p->words = read(n);
+  p->ms = demo_elapsed();
+  p->issue_ms = pragma_issue_ms;
+  p->used = pragma_since(&start);
+}
+
+enum pass_field { F_MS, F_ISSUE_MS, F_ENTRIES, F_SLEEPS };
+
+static inline double pass_value(const struct pass* p, enum pass_field f) {
+  switch (f) {
+  case F_MS:
+    return p->ms;
+  case F_ISSUE_MS:
+    return p->issue_ms;
+  case F_ENTRIES:
+    return (double)(p->used.submits + p->used.waits);
+  case F_SLEEPS:
+    return (double)p->used.sleeps;
+  }
+  return 0;
+}
+
+/* The median of one field across a way's passes. */
+static inline double pass_median(const struct pass* passes, int n,
+                                 enum pass_field f) {
+  double v[PRAGMA_MAX_PASSES];
+  for (int i = 0; i < n; i++)
+    v[i] = pass_value(&passes[i], f);
+  return pragma_median(v, n);
+}
+
+static inline int words_counted(const struct pass* passes, int n, int files) {
+  size_t expect = 0;
+  for (int i = 0; i < files; i++)
+    expect += demo_expect[i];
+  int ok = 1;
+  for (int i = 0; i < n; i++)
+    ok &= passes[i].words == expect;
+  return ok;
+}
+
+static inline double ratio(double a, double b) {
+  return a / (b > 0 ? b : 1e-9);
+}
+
+static inline struct timing coldread_setup(int argc, char** argv) {
+  pragma_title("coldread: the same loop, blocking and annotated", 0);
+  struct timing t = timing_args(argc, argv, 512, 5);
+  printf("  Word count over %d cold files of %d bytes, median of %d passes.\n"
+         "  B is A's loop with pread renamed to async_pread.\n\n",
+         t.files, READS_FILE_BYTES, t.passes);
+  timing_prepare(&t, argc, argv);
+  return t;
+}
+
+static inline int coldread_report(struct timing* t) {
+  static const char* const name[] = {"A blocking pread",
+                                     "B annotated async_pread",
+                                     "C hand-written fasync_*"};
+  const struct pass* way[] = {t->blocking, t->annotated, t->by_hand};
+  double ms[3];
+  for (int w = 0; w < 3; w++)
+    ms[w] = pass_median(way[w], t->passes, F_MS);
+
+  /* kernel entries: one per pread for A; io_uring_enter submits + waits for
+   * B and C. sleeps: times this thread blocked (voluntary context switches
+   * from getrusage). */
+  printf("  %-26s %8s %7s %15s %7s\n", "arm", "ms", "vs A", "kernel entries",
+         "sleeps");
+  for (int w = 0; w < 3; w++) {
+    double entries =
+        w == 0 ? t->files : pass_median(way[w], t->passes, F_ENTRIES);
+    printf("  %-26s %8.2f %6.2fx %15.0f %7.0f\n", name[w], ms[w],
+           ratio(ms[0], ms[w]), entries,
+           pass_median(way[w], t->passes, F_SLEEPS));
+  }
+  printf("\n  => %.2fx faster than blocking pread over %d cold files, same "
+         "loop\n",
+         ratio(ms[0], ms[1]), t->files);
+
+  int words_ok = 1;
+  for (int w = 0; w < 3; w++)
+    words_ok &= words_counted(way[w], t->passes, t->files);
+  pragma_check("every pass of every arm counted every word", words_ok);
+  pragma_check("no annotated body ran", pragma_body_calls == 0);
+  pragma_check("B entered the kernel far less than once per file",
+               pass_median(t->annotated, t->passes, F_ENTRIES) <
+                   t->files / 4.0 + 1);
+  if (t->regime_ok)
+    pragma_check("B beat A on an uncached device", ms[1] < ms[0]);
+  else
+    printf("  (B vs A not checked: dropping the cache added no device latency)\n");
+
+  demo_finish();
+  return pragma_finish();
+}
+
+static inline struct timing scaling_setup(int argc, char** argv) {
+  pragma_title("scaling: the gain as the number of reads grows", 0);
+  struct timing t = timing_args(argc, argv, 2048, 3);
+  printf("  Word count over N cold files of %d bytes, N = 1..%d, median of %d\n"
+         "  passes. us/call is the time inside each annotated call.\n\n",
+         READS_FILE_BYTES, t.files, t.passes);
+  timing_prepare(&t, argc, argv);
+  printf("  %6s %12s %12s %12s %8s %8s\n", "files", "A pread ms",
+         "B async ms", "C by hand ms", "B vs A", "us/call");
+  return t;
+}
+
+/* Prints the row for n files from the passes just run. */
+static inline void scaling_row(struct timing* t, int n) {
+  double a = pass_median(t->blocking, t->passes, F_MS);
+  double b = pass_median(t->annotated, t->passes, F_MS);
+  double c = pass_median(t->by_hand, t->passes, F_MS);
+  double call_us = pass_median(t->annotated, t->passes, F_ISSUE_MS) * 1000.0 / n;
+  double speedup = ratio(a, b);
+  printf("  %6d %12.2f %12.2f %12.2f %7.2fx %8.1f\n", n, a, b, c, speedup,
+         call_us);
+
+  t->words_ok &= words_counted(t->blocking, t->passes, n) &&
+                 words_counted(t->annotated, t->passes, n) &&
+                 words_counted(t->by_hand, t->passes, n);
+  /* Below 64 files a pass takes well under a millisecond and the ratio is
+   * mostly noise, so the headline's best size is chosen from 64 up. */
+  if (n >= 64) {
+    t->batched &= pass_median(t->annotated, t->passes, F_ENTRIES) <= n / 4.0 + 2;
+    if (speedup > t->best) {
+      t->best = speedup;
+      t->best_n = n;
+    }
+  }
+  t->last_call_us = call_us;
+  t->last_speedup = speedup;
+  t->last_n = n;
+}
+
+static inline int scaling_report(struct timing* t) {
+  /* Above 1024 files the request table is full, so us/call includes waiting
+   * for room in it. */
+  if (t->best_n)
+    printf("\n  => %.2fx faster than blocking at %d files, %.2fx at %d (%.1f us "
+           "per call)\n",
+           t->best, t->best_n, t->last_speedup, t->last_n, t->last_call_us);
+
+  pragma_check("every pass counted every word", t->words_ok);
+  pragma_check("no annotated body ran", pragma_body_calls == 0);
+  pragma_check("from 64 files up, B batched its reads into few entries",
+               t->batched);
+  if (t->regime_ok && t->best_n)
+    pragma_check("B beat A at some size from 64 up on an uncached device",
+                 t->best > 1.0);
+  else
+    printf("  (B vs A not checked: dropping the cache added no device latency)\n");
+
+  demo_finish();
+  return pragma_finish();
+}
+
+/* ---- demo_pragma_overlap ---- */
+
+#define OVERLAP_FILE_BYTES 4096
+
+/* How many times the demo's hash mixes each 8-byte word; overlap_calibrate
+ * sizes it so hashing every file takes as long as reading them with blocking
+ * pread. */
+static int hash_rounds = 1;
+
+typedef unsigned long (*overlap_fn)(int n);
+
+enum {
+  READS_ONLY,
+  ASYNC_READS_ONLY,
+  HASH_ONLY,
+  READ_THEN_HASH,
+  ASYNC_THEN_HASH,
+  N_OVERLAP_RUNS
+};
+
+static const char* const overlap_name[N_OVERLAP_RUNS] = {
+    "reads only, pread",
+    "reads only, async_pread",
+    "hashing only (data in memory)",
+    "A  pread + hash, file by file",
+    "B  async_pread all, then hash",
+};
+
+struct overlap_run {
+  double ms;
+  unsigned long hash;
+  unsigned long waits; /* io_uring_enter calls that slept */
+};
+
+struct overlap {
+  int files;
+  int passes;
+  int fixed_rounds;
+  int regime_ok;
+  unsigned long expect;
+  struct overlap_run run[N_OVERLAP_RUNS][PRAGMA_MAX_PASSES];
+};
+
+/* Parses [dir] [files] [passes] [rounds] and creates the files. */
+static inline struct overlap overlap_setup(int argc, char** argv) {
+  struct overlap o = {0};
+  o.files = argc > 2 ? atoi(argv[2]) : 256;
+  o.passes = argc > 3 ? atoi(argv[3]) : 5;
+  o.fixed_rounds = argc > 4 ? atoi(argv[4]) : 0;
+  if (o.files < 1 || o.files > DEMO_MAX_FILES || o.passes < 1 ||
+      o.passes > PRAGMA_MAX_PASSES || o.fixed_rounds < 0) {
+    fprintf(stderr, "usage: %s [dir] [files 1..%d] [passes 1..%d] [rounds]\n",
+            argv[0], DEMO_MAX_FILES, PRAGMA_MAX_PASSES);
+    exit(2);
+  }
+
+  pragma_title("overlap: the reads run while the program hashes", 0);
+  printf("  Read %d cold files of %d bytes and hash each one, median of %d\n"
+         "  passes. The hash is sized to take as long as the blocking reads.\n\n",
+         o.files, OVERLAP_FILE_BYTES, o.passes);
+
+  pragma_raise_fd_limit();
+  if (demo_files(pragma_dir(argc, argv), o.files, OVERLAP_FILE_BYTES) < 0)
+    exit(1);
+  o.regime_ok = pragma_regime();
+
+  /* The first request sets up the io_uring ring; keep that out of the runs. */
+  pragma_wait(async_pread(demo_fd[0], demo_buf[0], demo_bytes, 0));
+  return o;
+}
+
+/* Times one run. HASH_ONLY needs the data in memory, so it reads it first,
+ * untimed; every other run starts from empty buffers and a dropped cache. */
+static inline struct overlap_run overlap_time(struct overlap* o, int which,
+                                              overlap_fn fn) {
+  if (which == HASH_ONLY) {
+    for (int i = 0; i < o->files; i++)
+      pread(demo_fd[i], demo_buf[i], demo_bytes, 0);
+  } else {
+    for (int i = 0; i < o->files; i++)
+      memset(demo_buf[i], 0, demo_bytes);
+    demo_cold();
+  }
+  /* The snapshot also lets the runtime observe the previous run's
+   * completions, so every run starts from the same state. */
+  struct pragma_snap start;
+  pragma_snap(&start);
+  demo_start();
+  struct overlap_run r;
+  r.hash = fn(o->files);
+  r.ms = demo_elapsed();
+  r.waits = pragma_since(&start).waits;
+  return r;
+}
+
+static inline void time_run(struct overlap* o, int pass, int which,
+                            overlap_fn fn) {
+  o->run[which][pass] = overlap_time(o, which, fn);
+}
+
+/* Sizes hash_rounds so hashing costs about as much as the blocking reads,
+ * then records the reference hash. Two points, because each word also costs
+ * something besides its rounds. */
+static inline void overlap_calibrate(struct overlap* o, overlap_fn reads_only,
+                                     overlap_fn hash_only) {
+  if (o->fixed_rounds) {
+    hash_rounds = o->fixed_rounds;
+  } else {
+    double reads[3];
+    for (int i = 0; i < 3; i++)
+      reads[i] = overlap_time(o, READS_ONLY, reads_only).ms;
+    double reads_ms = pragma_median(reads, 3);
+    hash_rounds = 16;
+    double at16 = overlap_time(o, HASH_ONLY, hash_only).ms;
+    hash_rounds = 64;
+    double at64 = overlap_time(o, HASH_ONLY, hash_only).ms;
+    double per_round = (at64 - at16) / 48;
+    double base = at16 - 16 * per_round;
+    hash_rounds = (int)((reads_ms - base) / (per_round > 0 ? per_round : 1e-9) + 0.5);
+    if (hash_rounds < 1)
+      hash_rounds = 1;
+  }
+  o->expect = overlap_time(o, HASH_ONLY, hash_only).hash;
+}
+
+static inline int overlap_report(struct overlap* o) {
+  double med[N_OVERLAP_RUNS];
+  printf("  %-32s %8s\n", "run", "ms");
+  for (int w = 0; w < N_OVERLAP_RUNS; w++) {
+    double v[PRAGMA_MAX_PASSES];
+    for (int i = 0; i < o->passes; i++)
+      v[i] = o->run[w][i].ms;
+    med[w] = pragma_median(v, o->passes);
+    printf("  %-32s %8.2f\n", overlap_name[w], med[w]);
+  }
+
+  /* B's sleeps waiting for a read: the most over any pass. */
+  unsigned long b_sleeps = 0;
+  int hashes_ok = 1;
+  for (int i = 0; i < o->passes; i++) {
+    if (o->run[ASYNC_THEN_HASH][i].waits > b_sleeps)
+      b_sleeps = o->run[ASYNC_THEN_HASH][i].waits;
+    hashes_ok &= o->run[READ_THEN_HASH][i].hash == o->expect &&
+                 o->run[ASYNC_THEN_HASH][i].hash == o->expect;
+  }
+
+  double a = med[READ_THEN_HASH];
+  double b = med[ASYNC_THEN_HASH];
+  printf("\n  => %.2fx faster than blocking; the hash loop waited on the "
+         "device %lu times\n",
+         ratio(a, b), b_sleeps);
+
+  pragma_check("A and B hashed the same bytes as the reference", hashes_ok);
+  pragma_check("no annotated body ran", pragma_body_calls == 0);
+  if (o->regime_ok) {
+    pragma_check("B beat A on an uncached device", b < a);
+    pragma_check("B's hash loop never slept waiting for a read", b_sleeps == 0);
+  } else {
+    printf("  (timings not checked: dropping the cache added no device latency)\n");
+  }
+
+  demo_finish();
+  return pragma_finish();
+}

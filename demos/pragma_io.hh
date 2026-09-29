@@ -163,3 +163,63 @@ static inline int pragma_finish(void) {
   printf("\n%s\n", pragma_failures ? "DEMO FAILED" : "DEMO OK");
   return pragma_failures ? 1 : 0;
 }
+
+/* ---- Used by the timing demos only ---- */
+
+/* When the annotated calls of a pass returned, set by read_annotated in
+ * pragma_reads.hh, so the scaling demo can report the time spent inside them. */
+static double pragma_issue_ms;
+
+static inline void pragma_mark_issued(void) {
+  pragma_issue_ms = demo_elapsed();
+}
+
+static inline int pragma_cmp_double(const void* a, const void* b) {
+  double x = *(const double*)a;
+  double y = *(const double*)b;
+  return (x > y) - (x < y);
+}
+
+static inline double pragma_median(double* v, int n) {
+  qsort(v, (size_t)n, sizeof(double), pragma_cmp_double);
+  return n % 2 ? v[n / 2] : (v[n / 2 - 1] + v[n / 2]) / 2.0;
+}
+
+/* demo_files keeps every file open, and the usual soft limit of 1024 fds is
+ * below DEMO_MAX_FILES. Raise it to the hard limit. */
+static inline void pragma_raise_fd_limit(void) {
+  struct rlimit rl;
+  if (getrlimit(RLIMIT_NOFILE, &rl) == 0 && rl.rlim_cur < rl.rlim_max) {
+    rl.rlim_cur = rl.rlim_max;
+    setrlimit(RLIMIT_NOFILE, &rl);
+  }
+}
+
+/* Reads every demo file once with blocking pread, uncached and then cached,
+ * and reports whether dropping the cache adds device latency. Without it the
+ * async arms have nothing to overlap and the speedups mean nothing. */
+static inline int pragma_regime(void) {
+  demo_cold();
+  demo_start();
+  for (int i = 0; i < demo_n; i++)
+    if (pread(demo_fd[i], demo_buf[i], demo_bytes, 0) != (ssize_t)demo_bytes)
+      return 0;
+  double cold = demo_elapsed();
+  demo_start();
+  for (int i = 0; i < demo_n; i++)
+    if (pread(demo_fd[i], demo_buf[i], demo_bytes, 0) != (ssize_t)demo_bytes)
+      return 0;
+  double warm = demo_elapsed();
+
+  double ratio = cold / (warm > 0 ? warm : 1e-9);
+  if (ratio <= 1.5) {
+    printf("  !! dropping the page cache made no difference here (%.2f vs %.2f ms),\n"
+           "     so there is no device latency to overlap and the speedups below\n"
+           "     mean nothing.\n\n",
+           cold, warm);
+    return 0;
+  }
+  printf("  page cache dropped: cold reads are %.0fx slower than cached ones\n\n",
+         ratio);
+  return 1;
+}
