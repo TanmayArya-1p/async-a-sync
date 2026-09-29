@@ -202,7 +202,8 @@ incorrect. See `compiler/README.md` for build and link troubleshooting.
 - `./tests/run.sh` covers `demos/run_wordcount.sh`, but it does not run the
   Makefile targets, `demos/run_wordcount_3way.sh`, or
   `demos/inspect_disasm_cfg.sh`. Their link commands carry the trailing
-  `-lpizlo -lc`; run them by hand after changing the runtime.
+  `-lpizlo -lfilc_async_uring -lpizlo -lc`; run them by hand after changing
+  the runtime.
 - The io_uring runtime serializes all threads' I/O on one ring. A ring per
   thread is what would scale I/O across cores.
 - The `deluge` branch can move. The upstream SROA patch and compiler

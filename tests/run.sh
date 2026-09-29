@@ -92,7 +92,7 @@ run_filc_test() {
   echo "### $name (Fil-C)"
   # shellcheck disable=SC2086
   if "$FILCC" -O2 -static $WARN -I"$REPO/runtime/src" -L"$REPO/runtime/build/lib" \
-       -o "$OUT/$name" "$HERE/$name.c" -lpizlo -lc; then
+       -o "$OUT/$name" "$HERE/$name.c" -lpizlo -lfilc_async_uring -lpizlo -lc; then
     if "$OUT/$name" "$@"; then
       PASSED=$((PASSED + 1))
     else
@@ -196,7 +196,7 @@ run_patched() {
        -DFASYNC_COMPILER_INSERTS_CHECKS \
        $RUN_PATCHED_FLAGS \
        -I"$REPO/runtime/src" -L"$REPO/runtime/build/lib" \
-       -o "$OUT/$name" "$src" -lpizlo -lc; then
+       -o "$OUT/$name" "$src" -lpizlo -lfilc_async_uring -lpizlo -lc; then
     if "$OUT/$name" "$@"; then
       PASSED=$((PASSED + 1))
     else
@@ -223,8 +223,8 @@ run_patched_linked() {
        -I"$REPO/runtime/src" -L"$REPO/runtime/build/lib" \
        -o "$OUT/$name" \
        "$HERE/t_linked_async_main.c" "$HERE/t_linked_async_def.c" \
-       -lpizlo -lc; then
-    if "$HERE/check_linkage.sh" "$REPO/runtime/build/lib/libpizlo.a" \
+       -lpizlo -lfilc_async_uring -lpizlo -lc; then
+    if "$HERE/check_linkage.sh" "$REPO/runtime/build/lib" \
          "$OUT/$name" && "$OUT/$name" "$OUT"; then
       PASSED=$((PASSED + 1))
     else
@@ -233,6 +233,33 @@ run_patched_linked() {
     fi
   else
     echo "!!! $name failed to link"
+    FAILED=$((FAILED + 1))
+  fi
+}
+
+# run_mock_runtime: builds t_mock_runtime with tests/mock_runtime.c as its
+# runtime and without the io_uring runtime library, checks that no io_uring
+# runtime symbol reached the binary, then runs it.
+run_mock_runtime() {
+  name=t_mock_runtime
+  echo
+  echo "### $name (patched compiler, mock runtime instead of io_uring)"
+  # shellcheck disable=SC2086
+  if "$PATCHED_CC" -O2 -static $WARN -Werror=pragma-clang-attribute \
+       -DFASYNC_COMPILER_INSERTS_CHECKS \
+       -I"$REPO/runtime/src" -L"$REPO/runtime/build/lib" \
+       -o "$OUT/$name" "$HERE/$name.c" "$HERE/mock_runtime.c" -lpizlo -lc; then
+    if nm "$OUT/$name" | grep -Eq "(fasync_(pread|submit|result)|filc_async_uring)"; then
+      echo "!!! $name linked parts of the io_uring runtime"
+      FAILED=$((FAILED + 1))
+    elif "$OUT/$name"; then
+      PASSED=$((PASSED + 1))
+    else
+      echo "!!! $name exited non-zero"
+      FAILED=$((FAILED + 1))
+    fi
+  else
+    echo "!!! $name failed to build"
     FAILED=$((FAILED + 1))
   fi
 }
@@ -251,7 +278,7 @@ run_patched_neg() {
        -DFASYNC_COMPILER_INSERTS_CHECKS \
        $RUN_PATCHED_FLAGS \
        -I"$REPO/runtime/src" -L"$REPO/runtime/build/lib" \
-       -o "$OUT/$name" "$src" -lpizlo -lc; then
+       -o "$OUT/$name" "$src" -lpizlo -lfilc_async_uring -lpizlo -lc; then
     if err_out=$("$OUT/$name" 2>&1); then
       echo "!!! $name exited 0; runtime should have rejected the op"
       FAILED=$((FAILED + 1))
@@ -300,6 +327,7 @@ if [ "$PATCHED_READY" -eq 1 ]; then
   needs_io_uring run_patched t_pragma_repeat_read "$HERE/t_pragma_repeat_read.c" "$OUT"
   needs_io_uring run_patched t_thread_compute "$HERE/t_thread_compute.c" "$OUT"
   needs_io_uring run_patched t_threads "$HERE/t_threads.c" "$OUT"
+  run_mock_runtime
   # Negative control: an unknown op= is accepted by the pass and rejected by
   # the runtime's startup validator (the runtime is the authority).
   run_patched_neg t_pragma_unknownop "$HERE/t_pragma_unknownop.c"

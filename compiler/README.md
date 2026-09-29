@@ -74,14 +74,17 @@ source or object files:
 ```sh
 vendor/fil-c-src/build/bin/filcc -O2 -static \
   -Werror=pragma-clang-attribute -Iruntime/src -Lruntime/build/lib \
-  -o app app.c -lpizlo -lc
+  -o app app.c -lpizlo -lfilc_async_uring -lpizlo -lc
 ```
 
-The driver itself appends `-lpizlo -lc -lpizlo`, so the runtime's objects are
-pulled in after its libc scan. The runtime calls Fil-C's pthread functions
-for its locks, so a link without the trailing `-lc` fails with undefined
-`pizlonated_pthread_mutex_lock` and similar symbols; keep `-lpizlo -lc` after
-the program's objects, as the repository's scripts do.
+`libpizlo.a` holds the async framework and the native bridges;
+`libfilc_async_uring.a` holds the io_uring runtime. They need each other, so
+`libpizlo` is named on both sides of the runtime. To use another runtime,
+link its objects or library in place of `-lfilc_async_uring`, as
+`tests/t_mock_runtime.c` does with `tests/mock_runtime.c`. The framework and
+the runtime call Fil-C's pthread functions for their locks, so a link without
+the trailing `-lc` fails with undefined `pizlonated_pthread_mutex_lock` and
+similar symbols.
 
 ## ABI and test boundaries
 
@@ -103,7 +106,8 @@ with io_uring available passes with no failures or skips.
 | Symptom | Check |
 |---|---|
 | Missing `crtbegin.o`, `filc_crt.o`, or `-lyolort` | Check `vendor/fil-c-src/pizfix` points to the distribution's `pizfix`. |
-| Undefined `pizlonated_pthread_mutex_*` | Put `-lpizlo -lc` after the program's objects. |
+| Undefined `pizlonated_pthread_mutex_*` | Put `-lpizlo -lfilc_async_uring -lpizlo -lc` after the program's objects. |
+| Undefined `pizlonated_filc_async_submit` or `_runtime_poll` | No runtime is linked: add `-lfilc_async_uring`, or another runtime's objects. |
 | Annotated request returns `-75` with no SQE | Check the 16-byte staged argument stride. `-75` is `EOVERFLOW`. |
 | `io_uring_setup: Operation not permitted` | The execution environment blocks io_uring; run the suite where that syscall is allowed. |
 | `SROA.cpp`: `AI` undeclared in Release | Ensure `compiler/build.sh` applied the SROA patch to the source checkout. |

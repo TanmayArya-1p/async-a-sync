@@ -21,7 +21,7 @@ fi
 "$REPO/runtime/build.sh" >/dev/null
 "$PATCHED_CC" -O2 -static -DFASYNC_IMPLICIT -DFASYNC_COMPILER_INSERTS_CHECKS \
   -I "$REPO/runtime/src" -I "$REPO/demos" -L "$REPO/runtime/build/lib" \
-  -o "$BUILD_DIR/wc_filc_implicit" "$REPO/demos/demo_wordcount.c" -lpizlo -lc
+  -o "$BUILD_DIR/wc_filc_implicit" "$REPO/demos/demo_wordcount.c" -lpizlo -lfilc_async_uring -lpizlo -lc
 
 echo "Done building binaries."
 echo

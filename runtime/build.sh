@@ -92,21 +92,30 @@ echo "== compiling async runtime (filcc, memory-safe, capability-checked)"
   -c -o "$OBJ/fil-pizlo-async.o" "$HERE/src/filc_async.c"
 "$FILCC" -O3 -g -W -Werror -I"$HERE/src" \
   -c -o "$OBJ/fil-pizlo-async-uring.o" "$HERE/src/filc_async_uring.c"
-echo "== splicing into a private copy of libpizlo.a"
+# The framework and the native bridges (syscall forwarders, the io_uring
+# syscalls, the pending flag) go into the private libpizlo.a; the io_uring
+# runtime is a library of its own, so a program can link another runtime
+# instead. The two need each other, so libpizlo is named on both sides of it:
+# -lpizlo -lfilc_async_uring -lpizlo -lc.
+echo "== splicing the framework into a private copy of libpizlo.a"
 cp "$FILC_ROOT/pizfix/lib/libpizlo.a" "$LIB/libpizlo.a"
 ( cd "$LIB" && ar r libpizlo.a \
     "$OBJ/pas-pizlo-release-filc_native_forwarders.o" \
     "$OBJ/fil-pizlo-async-native.o" \
     "$OBJ/fil-pizlo-filc-async-native.o" \
-    "$OBJ/fil-pizlo-fasync.o" \
     "$OBJ/fil-pizlo-arena.o" \
-    "$OBJ/fil-pizlo-async.o" \
+    "$OBJ/fil-pizlo-async.o" >/dev/null && ranlib libpizlo.a )
+echo "== archiving the io_uring runtime as libfilc_async_uring.a"
+rm -f "$LIB/libfilc_async_uring.a"
+( cd "$LIB" && ar rc libfilc_async_uring.a \
+    "$OBJ/fil-pizlo-fasync.o" \
     "$OBJ/fil-pizlo-async-uring.o" \
     "$OBJ/fil-pizlo-syscalls.o" \
     "$OBJ/fil-pizlo-token.o" \
-    "$OBJ/fil-pizlo-dep.o" >/dev/null && ranlib libpizlo.a )
+    "$OBJ/fil-pizlo-dep.o" && ranlib libfilc_async_uring.a )
 
 echo "== done"
 echo "   $LIB/libpizlo.a"
+echo "   $LIB/libfilc_async_uring.a"
 echo
-echo "   filcc -static -I$HERE/src -L$LIB ..."
+echo "   filcc -static -I$HERE/src -L$LIB ... -lpizlo -lfilc_async_uring -lpizlo -lc"
