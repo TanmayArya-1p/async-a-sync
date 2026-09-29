@@ -17,6 +17,10 @@ FILC_SRC=${FILC_SRC:-$REPO/vendor/fil-c-src}
 BUILD_DIR=${BUILD_DIR:-$FILC_SRC/build}
 JOBS=${JOBS:-$(nproc)}
 BUILD_TYPE=${BUILD_TYPE:-Release}
+case "$(uname -m)" in
+  aarch64|arm64) LLVM_TARGET=AArch64 ;;
+  *) LLVM_TARGET=X86 ;;
+esac
 
 OVERRIDE=$HERE/upstream-overrides/FilPizlonator.cpp
 PASS=$FILC_SRC/llvm/lib/Transforms/Instrumentation/FilPizlonator.cpp
@@ -62,8 +66,9 @@ if [ ! -f "$BUILD_DIR/build.ninja" ]; then
     -DCMAKE_BUILD_TYPE="$BUILD_TYPE" \
     -DLLVM_ENABLE_PROJECTS=clang \
     -DLLVM_ENABLE_LLD=ON \
-    -DLLVM_TARGETS_TO_BUILD=X86 \
-    -DLLVM_ENABLE_ASSERTIONS=OFF
+    -DLLVM_TARGETS_TO_BUILD="$LLVM_TARGET" \
+    -DLLVM_ENABLE_ASSERTIONS=OFF \
+    -DLLVM_ENABLE_DUMP=ON
 fi
 
 echo "== building clang (this is the long part)"
