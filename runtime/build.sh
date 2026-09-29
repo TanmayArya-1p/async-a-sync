@@ -72,6 +72,10 @@ echo "== compiling native io_uring implementations (host clang, unsafe)"
 # shellcheck disable=SC2086
 "$HOST_CLANG" -O3 -fPIC -pthread $PAS_INCLUDES \
   -c -o "$OBJ/fil-pizlo-async-native.o" "$HERE/src/fasync_native.c"
+echo "== compiling the async framework's native half (host clang, unsafe)"
+# shellcheck disable=SC2086
+"$HOST_CLANG" -O3 -fPIC -pthread $PAS_INCLUDES \
+  -c -o "$OBJ/fil-pizlo-filc-async-native.o" "$HERE/src/filc_async_native.c"
 
 echo "== compiling async runtime (filcc, memory-safe, capability-checked)"
 "$FILCC" -O3 -g -W -Werror -I"$HERE/src" \
@@ -93,6 +97,7 @@ cp "$FILC_ROOT/pizfix/lib/libpizlo.a" "$LIB/libpizlo.a"
 ( cd "$LIB" && ar r libpizlo.a \
     "$OBJ/pas-pizlo-release-filc_native_forwarders.o" \
     "$OBJ/fil-pizlo-async-native.o" \
+    "$OBJ/fil-pizlo-filc-async-native.o" \
     "$OBJ/fil-pizlo-fasync.o" \
     "$OBJ/fil-pizlo-arena.o" \
     "$OBJ/fil-pizlo-async.o" \

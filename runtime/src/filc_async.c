@@ -6,6 +6,12 @@
 #include "filc_async_alloc.h"
 #include "filc_async_runtime.h"
 
+/* The framework's native half (filc_async_native.c): the pending flag in an
+ * object's header, which the compiler's access hook tests inline, and the
+ * resolver that hook calls when it finds the flag set. */
+void zasync_set_pending(void* buf, int pending);
+void zasync_set_resolver(void (*resolver)(void*));
+
 /* The generic framework behind annotated calls. The pass-emitted stub of each
  * annotated function calls filc_async_begin, takes the call's dependency
  * locks, marks its output buffers, and hands the call to the runtime with
@@ -49,6 +55,7 @@ static unsigned long g_completed;
 static unsigned long g_failed;
 static unsigned long g_pending_resolves;
 static unsigned long g_lock_waits;
+static unsigned long g_hook_resolves;
 
 /* The task whose body filc_async_run is running. */
 static struct filc_async_task* g_running_body;
@@ -313,7 +320,13 @@ void filc_async_lock_ptr(void* task, const void* ptr, uint32_t space,
  * A mark covers the whole object, [zgetlower, zgetupper), and holds the real
  * buffer pointer so a resolve keeps its capability. Live objects never
  * overlap, so a mark that overlaps an object's range has that object's lower
- * bound: marks are hashed by it, and every lookup reads one bucket. */
+ * bound: marks are hashed by it, and every lookup reads one bucket.
+ *
+ * While an object has a mark, its header carries the pending flag, so the
+ * compiler's access hook only calls in for objects that have one. An
+ * annotated call's marks are exclusive: marking waits for every other owner.
+ * A runtime may add shared marks, so several of its requests can own one
+ * object; an access then waits for all of them. */
 
 #define MARK_BUCKET_BITS 11
 
@@ -328,6 +341,9 @@ typedef struct filc_async_mark {
 
 static filc_async_mark* g_free_marks;
 static filc_async_mark* g_mark_buckets[1u << MARK_BUCKET_BITS];
+static bool g_resolver_set;
+
+static void resolve_access(void* object);
 
 static filc_async_mark** mark_bucket(uintptr_t lower)
 {
@@ -342,9 +358,34 @@ static filc_async_mark* mark_find(uintptr_t lower, uintptr_t upper)
     return NULL;
 }
 
+/* A mark on the object that `t` does not own, if any. With no task, every
+ * mark is another's, so re-marking without an owner replaces the old mark. */
+static filc_async_mark* mark_find_other(uintptr_t lower, uintptr_t upper,
+                                        const struct filc_async_task* t)
+{
+    for (filc_async_mark* m = *mark_bucket(lower); m; m = m->bucket_next)
+        if (lower < m->upper && m->lower < upper && (!t || m->owner != t))
+            return m;
+    return NULL;
+}
+
+static bool mark_owned(uintptr_t lower, const struct filc_async_task* t)
+{
+    for (filc_async_mark* m = *mark_bucket(lower); m; m = m->bucket_next)
+        if (m->lower == lower && m->owner == t)
+            return true;
+    return false;
+}
+
 static void mark_add(void* buf, uintptr_t lower, uintptr_t upper,
                      struct filc_async_task* owner)
 {
+    if (!g_resolver_set) {
+        zasync_set_resolver(resolve_access);
+        g_resolver_set = true;
+    }
+    if (!mark_find(lower, upper))
+        zasync_set_pending(buf, 1);
     filc_async_mark* m = g_free_marks;
     if (m)
         g_free_marks = m->owner_next;
@@ -376,6 +417,8 @@ static void mark_remove(filc_async_mark* m)
             own = &(*own)->owner_next;
         *own = m->owner_next;
     }
+    if (!mark_find(m->lower, m->upper))
+        zasync_set_pending(m->buf, 0);
     m->buf = NULL;
     m->owner = NULL;
     m->owner_next = g_free_marks;
@@ -390,22 +433,61 @@ void filc_async_mark_pending(void* task, void* buf)
     uintptr_t lower = (uintptr_t)zgetlower(buf);
     uintptr_t upper = (uintptr_t)zgetupper(buf);
 
-    /* Waiting for the owner of an overlapping mark retires that mark, so the
-     * loop looks again until the buffer can be marked. */
+    /* Waiting for another owner retires its mark, so the loop looks again
+     * until only `t` holds the object. */
     for (;;) {
-        filc_async_mark* m = mark_find(lower, upper);
+        filc_async_mark* m = mark_find_other(lower, upper, t);
         if (!m)
             break;
-        if (m->owner == t && t)
-            return;
-        if (m->owner) {
+        if (m->owner)
             wait_for(m->owner);
-        } else {
+        else
             mark_remove(m);
-        }
         ++g_pending_resolves;
     }
-    mark_add(buf, lower, upper, t);
+    if (!t || !mark_owned(lower, t))
+        mark_add(buf, lower, upper, t);
+}
+
+void filc_async_mark_shared(void* task, void* buf)
+{
+    if (!buf || !task)
+        return;
+    uintptr_t lower = (uintptr_t)zgetlower(buf);
+    if (!mark_owned(lower, (struct filc_async_task*)task))
+        mark_add(buf, lower, (uintptr_t)zgetupper(buf),
+                 (struct filc_async_task*)task);
+}
+
+/* Waits until no call but `task`, and not the call whose body this thread is
+ * running, owns the object `buf` points into. Marks without an owner have
+ * nothing to wait for. */
+void filc_async_wait_buffer(void* task, const void* buf)
+{
+    if (!buf)
+        return;
+    uintptr_t lower = (uintptr_t)zgetlower((void*)buf);
+    uintptr_t upper = (uintptr_t)zgetupper((void*)buf);
+    for (;;) {
+        struct filc_async_task* owner = NULL;
+        for (filc_async_mark* m = *mark_bucket(lower); m; m = m->bucket_next)
+            if (lower < m->upper && m->lower < upper && m->owner &&
+                m->owner != task && m->owner != g_running_body) {
+                owner = m->owner;
+                break;
+            }
+        if (!owner)
+            return;
+        wait_for(owner);
+    }
+}
+
+/* The access hook's slow path: an access reached an object whose pending
+ * flag is set. */
+static void resolve_access(void* object)
+{
+    ++g_hook_resolves;
+    filc_async_wait_buffer(NULL, object);
 }
 
 void filc_async_mark_resolved(void* buf)
@@ -438,22 +520,13 @@ bool filc_async_is_pending(const void* buf)
         return false;
     uintptr_t lower = (uintptr_t)zgetlower((void*)buf);
     uintptr_t upper = (uintptr_t)zgetupper((void*)buf);
-    filc_async_mark* m = mark_find(lower, upper);
-    /* The owner may have finished without anyone asking; ask the runtime
-     * without waiting before reporting. */
-    if (m && m->owner && m->owner->state == 1) {
-        filc_async_runtime_poll(m->owner, FILC_ASYNC_POLL_CHECK);
-        m = mark_find(lower, upper);
-    }
-    return m != NULL;
+    return mark_find(lower, upper) != NULL;
 }
 
 /* ---- Tasks ---- */
 
 void* filc_async_begin(const filc_async_meta* meta, void* staged_args)
 {
-    if (!meta || !staged_args)
-        filc_async_fatal("filc_async_begin: bad call");
     struct filc_async_task* t =
         (struct filc_async_task*)alloc_or_die(sizeof *t);
     /* The allocator returns zeroed memory. */
@@ -462,7 +535,9 @@ void* filc_async_begin(const filc_async_meta* meta, void* staged_args)
     t->state = 1;
     running_add(t);
     handle_add(t);
-    ++g_submitted;
+    /* The counts cover annotated calls, not tasks a runtime starts itself. */
+    if (meta)
+        ++g_submitted;
     return t;
 }
 
@@ -473,9 +548,11 @@ void filc_async_complete(void* task, long result)
         return;
     t->result = result;
     t->state = result < 0 ? 2 : 0;
-    ++g_completed;
-    if (result < 0)
-        ++g_failed;
+    if (t->meta) {
+        ++g_completed;
+        if (result < 0)
+            ++g_failed;
+    }
     while (t->marks)
         mark_remove(t->marks);
     locks_release(t);
@@ -548,6 +625,7 @@ void filc_async_get_stats(filc_async_stats* out)
     out->tasks_failed = g_failed;
     out->pending_resolves = g_pending_resolves;
     out->lock_waits = g_lock_waits;
+    out->hook_resolves = g_hook_resolves;
 }
 
 /* ---- Startup validation ---- */

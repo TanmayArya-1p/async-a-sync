@@ -21,6 +21,7 @@
 #include <unistd.h>
 
 #include "fasync.h"
+#include "filc_async.h"
 
 #define ACCESSES 100000
 #define WORDS 256
@@ -57,16 +58,16 @@ int main(int argc, char** argv)
     if (!fasync_pread(fd, buf, 8, 0))
         return 1;
 
-    struct fasync_stats before, after;
-    fasync_get_stats(&before);
+    filc_async_stats before, after;
+    filc_async_get_stats(&before);
     pthread_t t;
     if (pthread_create(&t, NULL, compute, words) != 0)
         return 1;
     pthread_join(t, NULL);
-    fasync_get_stats(&after);
+    filc_async_get_stats(&after);
     /* The owner's own few accesses between the two snapshots count too;
      * the compute thread's would add about ACCESSES. */
-    unsigned long resolves = after.resolve_calls - before.resolve_calls;
+    unsigned long resolves = after.hook_resolves - before.hook_resolves;
 
     int read_ok = 1;
     for (int i = 0; i < 8; i++)

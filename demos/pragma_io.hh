@@ -112,7 +112,7 @@ static inline void pragma_snap(struct pragma_snap* s) {
   s->sqes = f.sqes_queued;
   s->submits = f.kernel_submit_entries;
   s->waits = f.kernel_wait_entries;
-  s->hook_resolves = f.resolve_calls;
+  s->hook_resolves = a.hook_resolves;
   s->sleeps = (unsigned long)ru.ru_nvcsw;
 }
 

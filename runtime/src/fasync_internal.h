@@ -23,6 +23,19 @@ long fasync_req_wait(struct fasync_req_shared* r);
  * from any other thread abort here. A no-op until the ring exists. */
 void fasync_check_thread(void);
 
-/* nonzero when the caller is not the ring's owner (resolution from other
- * threads is a no-op, like the compiler's access hook) */
+/* nonzero when the caller is not the ring's owner */
 int fasync_foreign_thread(void);
+
+/* The requests behind the fasync_* calls, without their bookkeeping for the
+ * async framework: the io_uring runtime issues annotated calls with these.
+ * `task` is the call that issues them, which a source or path buffer never
+ * waits for; NULL for none. */
+fasync_id fasync_do_pread(int fd, void* buf, size_t len, unsigned long offset);
+fasync_id fasync_do_pwrite(void* task, int fd, void* buf, size_t len,
+                           unsigned long offset);
+fasync_id fasync_do_openat(void* task, int dirfd, const char* path, int flags,
+                           int mode);
+
+/* Gives an explicit fasync_pread a task of its own and marks its buffer
+ * pending for it (filc_async_uring.c). */
+void fasync_track_read(fasync_id id, void* buf);

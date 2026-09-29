@@ -144,9 +144,7 @@ On a Linux machine with an NVMe SSD, `coldread` is about 2.7x faster than
 blocking `pread` and as fast as the hand-written `fasync_*` version, and
 `overlap` is about 1.8x faster. In `scaling` an annotated call costs 1-2 us
 with up to 1024 calls in flight. At 2048 files the gain is lower and varies
-more between runs: calls wait for room in the 1024-entry request table, and
-the word count runs while the second half of the reads is still in flight,
-when every memory access goes through the access hook's slower check. The
+more between runs: calls wait for room in the 1024-entry request table. The
 numbers depend on the storage device and on other I/O on the machine. Each
 timing demo first checks that dropping the page cache makes reads slower, and
 warns if it does not, because then there is no device latency to overlap.

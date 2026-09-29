@@ -302,7 +302,6 @@ run_patched_neg() {
 # say so rather than quoting a ratio they cannot support.
 if [ "$PATCHED_READY" -eq 1 ]; then
   needs_io_uring run_patched stage4_compiler_hook "$HERE/stage4_compiler_hook.c"
-  needs_io_uring run_patched t_hook_memo "$HERE/t_hook_memo.c" "$OUT"
   needs_io_uring run_patched stage8_latency "$HERE/stage8_latency.c" "$OUT"
   RUN_PATCHED_FLAGS="-DFASYNC_IMPLICIT" needs_io_uring run_patched \
     demo_plain_io "$REPO/demos/demo_plain_io.c" "$OUT"

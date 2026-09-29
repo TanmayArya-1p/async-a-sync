@@ -318,6 +318,11 @@ addSig nil, "void", "fasync_publish_state", "filc_ptr"
 # policy now lives in fasync.c, where it only needs fasync_poll/fasync_block.
 addSig nil, "void", "fasync_poll"
 addSig nil, "void", "fasync_block"
+# The async framework's pending flag in a Fil-C object's header, and the
+# resolver the compiler-inserted access hook calls when it finds the flag set
+# (filc_async_native.c).
+addSig nil, "void", "zasync_set_pending", "filc_ptr", "int"
+addSig nil, "void", "zasync_set_resolver", "filc_ptr"
 addSig nil, "int", "zsys_ftruncate", "int", "long"
 addSig nil, "filc_ptr", "zsys_getcwd", "filc_ptr", "size_t"
 addSig nil, "filc_ptr", "zsys_dlopen", "filc_ptr", "int"

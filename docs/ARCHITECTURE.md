@@ -67,14 +67,15 @@ Clang function annotation
    The pass does not rewrite indirect calls. Declaration and definition
    annotations follow the same option handling; if both are annotated, the
    definition's options apply. See `tests/check_dependency_options.sh`.
-5. `FilPizlonatorPass` widens pointer operations to Fil-C capabilities and
-   calls `filc_resolve_pending(ptr, 1)` before capability checks on escaping
-   pointer accesses. The hook is intentionally at the access site. It does
-   not change the pointer address: the kernel writes into the original
-   buffer. The native hook in `runtime/src/fasync_native.c` uses an in-flight
-   counter for its fast path, searches for a covering request, publishes the
-   queued batch, drains CQEs in userspace, then blocks at a safepoint if
-   spinning does not finish the request.
+5. `FilPizlonatorPass` widens pointer operations to Fil-C capabilities and,
+   before the capability check on an escaping pointer access, tests the
+   async framework's pending flag in the header of the object the pointer's
+   capability names. Only when the flag is set does it call
+   `filc_resolve_pending(ptr, lower)`. The hook is intentionally at the access
+   site. It does not change the pointer address: the kernel writes into the
+   original buffer. The native hook in `runtime/src/filc_async_native.c`
+   calls the framework's resolver, which waits, through the runtime's poll,
+   for every call that still owns the object.
 
 ### ABI between compiler and runtime
 
@@ -110,32 +111,29 @@ private `runtime/build/lib/libpizlo.a`. The bridge in
 addresses to the kernel. The safe side in `runtime/src/fasync.c` allocates
 GC-pinned, page-aligned ring memory and uses `IORING_SETUP_NO_MMAP`; its SQEs
 are queued first and normally published to the kernel on demand. The request
-table is shared with the native access hook. `runtime/src/fasync_syscalls.c`
+table is shared with the native completion drain. `runtime/src/fasync_syscalls.c`
 validates buffer and path bounds, handles supported operations, and provides
 negative temporary fd handles for pending opens in the explicit API.
 
-For the annotated API, `runtime/src/filc_async.c` validates each descriptor's
-argument kinds at startup. Supported syscall shapes are `pread(fd, buf,
+For the annotated API, the io_uring runtime (`runtime/src/filc_async_uring.c`)
+validates each descriptor's argument kinds at startup. Supported syscall shapes are `pread(fd, buf,
 len, offset)`, `pwrite(fd, buf, len, offset)`, `openat(dirfd, path, flags,
 mode)`, `fsync(fd)`, and `close(fd)`. The compiler treats `op=` as an option
 string; the runtime decides whether the operation exists.
 
-`filc_async_submit` marks `bout=`, bare `buf=`, and unannotated pointer
-arguments as pending before it queues the request, working from the kinds in
-the descriptor, so a call site needs nothing but the submit. The pass only
-accepts `bin=`, `bout=` and `buf=` on pointer arguments. `bin=` is an input
-and is not marked. The
-runtime's pending registry compares Fil-C object ranges using `zgetlower`
-and `zgetupper`. A new mark overlapping an earlier one resolves that owner
-first. Completed annotated tasks retire their marks and request slots when
-observed through poll, wait, or a later pending-state check. A program that
-only touches its buffers never does any of those, so when the request table or
-the mark registry is full the runtime completes the finished tasks itself, or
-waits for the oldest one (`tests/t_pragma_lazy_many.c`). In-flight tasks sit
-on one list, which dependency checks walk; completed ones move to a second
-list until poll/wait delivers them. The staged argument allocation
-and task are kept reachable so the kernel's borrowed buffer pointers remain
-valid while requests are in flight.
+The stub marks `bout=`, bare `buf=`, and unannotated pointer arguments
+pending before it hands the call to the runtime. The pass only accepts
+`bin=`, `bout=` and `buf=` on pointer arguments. `bin=` is an input and is
+not marked. A mark covers the whole Fil-C object (`zgetlower` to `zgetupper`)
+and sets the object's pending flag, which the access hook tests; marking an
+object another call owns waits for that call first. The explicit `fasync_pread`
+marks its buffer too, with a shared mark, so several explicit reads can own
+one object. When a call completes, its marks and locks go. A program that
+only touches its buffers never polls, so when the io_uring request table is
+full the runtime completes the finished calls itself, or waits for the oldest
+one (`tests/t_pragma_lazy_many.c`). The staged argument allocation and task
+are kept reachable so the kernel's borrowed buffer pointers remain valid
+while requests are in flight.
 
 ### Dependency ordering
 
@@ -196,11 +194,8 @@ incorrect. See `compiler/README.md` for build and link troubleshooting.
 - Only code compiled by the patched compiler resolves pending buffers on
   access. Fil-C's libc is not, so `memcmp`, `strlen`, `write` and the like
   read a pending buffer as it stands; touch it first or poll/wait.
-- The access hook checks one byte at the access pointer. A pointer beginning
-  outside a pending buffer and straddling into it is not detected by that
-  lookup. Review this before broadening memory operations.
-- At most 1024 requests and 1024 pending marks can be outstanding at once;
-  beyond that an annotated call waits for an earlier one. The explicit
+- At most 1024 io_uring requests can be outstanding at once; beyond that an
+  annotated call waits for an earlier one. The explicit
   pending-fd table has 64 entries. Completed annotated tasks that are never
   polled or waited on stay allocated in the arena. There is no general fallback when io_uring is blocked.
 - `./tests/run.sh` covers `demos/run_wordcount.sh`, but it does not run the

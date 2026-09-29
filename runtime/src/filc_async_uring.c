@@ -32,6 +32,7 @@ struct uring_call {
     void* task;
     fasync_id request;       /* 0 for op=ignore */
     enum uring_op op;
+    bool explicit_read;      /* a fasync_pread; its caller collects the result */
     struct uring_call* newer; /* calls with a request in flight, oldest first */
     struct uring_call* older;
 };
@@ -150,19 +151,20 @@ static void* arg_ptr(const staged_arg* args, size_t index)
     return args[index].value.ptr;
 }
 
-static fasync_id dispatch(enum uring_op op, const staged_arg* args)
+static fasync_id dispatch(void* task, enum uring_op op, const staged_arg* args)
 {
     int fd = (int)arg_word(args, 0);
     switch (op) {
     case URING_OP_READ:
-        return fasync_pread(fd, arg_ptr(args, 1), (size_t)arg_word(args, 2),
-                            (unsigned long)arg_word(args, 3));
+        return fasync_do_pread(fd, arg_ptr(args, 1), (size_t)arg_word(args, 2),
+                               (unsigned long)arg_word(args, 3));
     case URING_OP_WRITE:
-        return fasync_pwrite(fd, arg_ptr(args, 1), (size_t)arg_word(args, 2),
-                             (unsigned long)arg_word(args, 3));
+        return fasync_do_pwrite(task, fd, arg_ptr(args, 1),
+                                (size_t)arg_word(args, 2),
+                                (unsigned long)arg_word(args, 3));
     case URING_OP_OPENAT:
-        return fasync_openat(fd, (const char*)arg_ptr(args, 1),
-                             (int)arg_word(args, 2), (int)arg_word(args, 3));
+        return fasync_do_openat(task, fd, (const char*)arg_ptr(args, 1),
+                                (int)arg_word(args, 2), (int)arg_word(args, 3));
     case URING_OP_FSYNC:
         return fasync_fsync(fd);
     case URING_OP_CLOSE:
@@ -195,14 +197,37 @@ static void list_remove(struct uring_call* c)
         g_oldest = c->newer;
 }
 
-/* Collects the request's result, which frees its slot, and reports it. */
+/* Collects the request's result, which frees its slot, and reports it. An
+ * explicit read keeps its slot for the caller's fasync_result. */
 static void finish(struct uring_call* c)
 {
+    if (c->explicit_read) {
+        struct fasync_req_shared* r = fasync_req_lookup(c->request);
+        filc_async_complete(c->task, r ? fasync_req_wait(r) : -EINVAL);
+        return;
+    }
     long result = c->op == URING_OP_IGNORE ? -EOPNOTSUPP
                                            : fasync_result(c->request);
     if (c->request)
         list_remove(c);
     filc_async_complete(c->task, result);
+}
+
+void fasync_track_read(fasync_id id, void* buf)
+{
+    struct fasync_req_shared* r = fasync_req_lookup(id);
+    if (!r)
+        return;
+    struct uring_call* c = (struct uring_call*)filc_async_alloc(sizeof *c, 16);
+    if (!c)
+        filc_async_fatal("fasync_pread: out of memory");
+    c->task = filc_async_begin(NULL, NULL);
+    c->request = id;
+    c->op = URING_OP_READ;
+    c->explicit_read = true;
+    *filc_async_task_runtime_data(c->task) = c;
+    r->task = c->task;
+    filc_async_mark_shared(c->task, buf);
 }
 
 /* Frees request slots when the table is full: completes the calls whose
@@ -256,7 +281,7 @@ void filc_async_submit(void* task, const filc_async_meta* meta,
     }
     for (;;) {
         errno = 0;
-        c->request = dispatch(c->op, args);
+        c->request = dispatch(task, c->op, args);
         if (c->request)
             break;
         if (errno == EAGAIN && reclaim())

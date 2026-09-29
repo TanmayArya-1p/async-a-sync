@@ -6,15 +6,16 @@ typedef unsigned long fasync_id; /* one in-flight request */
 
 /* Threading: the runtime is single-threaded. One io_uring ring and request
  * table serve the process, without locks. The thread that makes the first
- * request owns them; a request or wait from any other thread stops the
- * program. Other threads may compute, and resolving an address from them is a
- * no-op, so a buffer with a request in flight must be touched or waited on by
- * the owner before another thread reads it. */
+ * request owns them; a request, a wait, or an access to a buffer with a
+ * request in flight from any other thread stops the program. Other threads
+ * may compute on memory of their own.
+ *
+ * A buffer passed to fasync_pread is pending until its read completes: the
+ * compiler's access hook, through the async framework, waits for it on first
+ * access. Code the patched compiler did not build calls fasync_resolve_pending
+ * (or FASYNC_ACCESS) before touching such a buffer. */
 
 void* fasync_resolve_pending(void* ptr, size_t size);
-
-/* hook the patched compiler emits */
-void* filc_resolve_pending(void* ptr, size_t size);
 
 /* no-op with the patched compiler */
 #ifdef FASYNC_COMPILER_INSERTS_CHECKS
@@ -62,12 +63,8 @@ struct fasync_stats {
   unsigned long kernel_submit_entries;
   unsigned long kernel_wait_entries; /* context switches actually taken */
   unsigned long userspace_cq_polls;
-  unsigned long resolve_calls;
-  unsigned long fast_path_hits;
-  unsigned long spin_rounds;
   unsigned long parks;
   unsigned long completions_reaped;
-  unsigned long memo_hits;
 };
 void fasync_get_stats(struct fasync_stats* out);
 void fasync_reset_stats(void);

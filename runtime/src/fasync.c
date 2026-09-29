@@ -9,12 +9,10 @@
 #include "fasync_syscalls.h"
 #include "fasync_shared.h"
 #include "fasync_internal.h"
+#include "filc_async_runtime.h"
 
 /* ring depth matches request table */
 #define FASYNC_RING_ENTRIES 1024
-
-/* must match native spin limit */
-#define FASYNC_SPIN_LIMIT 20000
 
 static struct fasync_req_shared req_slots[FASYNC_MAX_INFLIGHT];
 
@@ -143,21 +141,10 @@ static int fasync_ring_init(void) {
   g_shared.cq_tail = g_ring.cq_tail;
   g_shared.cq_mask = g_ring.cq_mask;
   g_shared.local_cq_head = &g_ring.local_cq_head;
-  g_shared.sq_tail = g_ring.sq_tail;
-  g_shared.sq_mask = g_ring.sq_mask;
-  g_shared.sq_array = g_ring.sq_array;
-  g_shared.sqe_head = &g_ring.sqe_head;
-  g_shared.sqe_tail = &g_ring.sqe_tail;
-  g_shared.queued = &g_ring.queued;
   g_shared.userspace_cq_polls = &g_stats.userspace_cq_polls;
-  g_shared.resolve_calls = &g_stats.resolve_calls;
-  g_shared.fast_path_hits = &g_stats.fast_path_hits;
-  g_shared.spin_rounds = &g_stats.spin_rounds;
   g_shared.parks = &g_stats.parks;
   g_shared.kernel_wait_entries = &g_stats.kernel_wait_entries;
-  g_shared.kernel_submit_entries = &g_stats.kernel_submit_entries;
   g_shared.completions_reaped = &g_stats.completions_reaped;
-  g_shared.memo_hits = &g_stats.memo_hits;
 
   g_owner_tid = zthread_self_id();
   fasync_publish_state(&g_shared);
@@ -184,9 +171,6 @@ static void fasync_slot_mark(unsigned int index, int allocated) {
 
 static void fasync_req_table_init(void) {
   memset(g_shared.alloc_bits, 0, sizeof(g_shared.alloc_bits));
-  memset(g_shared.memo, 0, sizeof(g_shared.memo));
-  g_shared.memo_next = 0;
-  g_shared.alloc_epoch = 1;
   for (unsigned int i = 0; i < FASYNC_MAX_INFLIGHT; i++) {
     req_slots[i].state = FASYNC_REQ_FREE;
     /* one based so slot i links to slot i+1 */
@@ -213,6 +197,7 @@ static struct fasync_req_shared* fasync_req_alloc(void) {
   r->state = FASYNC_REQ_PENDING;
   r->result = 0;
   r->linked = 0;
+  r->task = 0;
   fasync_slot_mark(index, 1);
   return r;
 }
@@ -236,10 +221,21 @@ struct fasync_req_shared* fasync_req_lookup(fasync_id id) {
   return r;
 }
 
+/* The pending request whose result buffer covers [ptr, ptr + size). */
 static struct fasync_req_shared* fasync_find_covering(const void* ptr, size_t size) {
   if (!g_ring.ready)
     return 0;
-  return fasync_shared_find(&g_shared, ptr, size);
+  const char* p = (const char*)ptr;
+  for (unsigned long i = 0; i < FASYNC_MAX_INFLIGHT; i++) {
+    if (!(g_shared.alloc_bits[i / 64] & (1UL << (i % 64))))
+      continue;
+    struct fasync_req_shared* r = &req_slots[i];
+    const char* start = (const char*)r->buf;
+    if (r->state == FASYNC_REQ_PENDING && start && p >= start &&
+        p + size <= start + r->len)
+      return r;
+  }
+  return 0;
 }
 
 static struct fasync_sqe* fasync_get_sqe(void) {
@@ -312,7 +308,6 @@ fasync_id fasync_push_sqe(unsigned char op, int fd, unsigned long addr,
   r->linked = (sqe_flags & FASYNC_SQE_IO_LINK) ? 1 : 0;
 
   /* publish state before the count becomes visible */
-  g_shared.alloc_epoch++;
   __atomic_add_fetch(&g_inflight, 1, __ATOMIC_RELEASE);
   return r->id;
 }
@@ -348,39 +343,11 @@ int fasync_submit(void) {
   return (int)n;
 }
 
+/* Code the patched compiler did not build has no access hook: it asks the
+ * framework to wait for whatever call still owns the buffer. */
 void* fasync_resolve_pending(void* ptr, size_t size) {
-  if (!ptr)
-    return ptr;
-
-  if (__atomic_load_n(&g_inflight, __ATOMIC_ACQUIRE) == 0) {
-    g_stats.fast_path_hits++;
-    return ptr;
-  }
-  /* other threads never touch the ring, like the native hook */
-  if (fasync_foreign_thread())
-    return ptr;
-
-  g_stats.resolve_calls++;
-
-  struct fasync_req_shared* r = fasync_find_covering(ptr, size);
-  if (!r)
-    return ptr;
-
-  /* lazy batch publishes in one enter */
-  fasync_submit();
-
-  for (unsigned int spin = 0; spin < FASYNC_SPIN_LIMIT; spin++) {
-    if (r->state != FASYNC_REQ_PENDING)
-      return ptr;
-    g_stats.spin_rounds++;
-    fasync_poll();
-  }
-
-  while (r->state == FASYNC_REQ_PENDING) {
-    g_stats.parks++;
-    fasync_block();
-    fasync_poll();
-  }
+  (void)size;
+  filc_async_wait_buffer(NULL, ptr);
   return ptr;
 }
 

@@ -18,6 +18,7 @@
 #include <time.h>
 
 #include "fasync.h"
+#include "filc_async.h"
 
 /* Arm C is only implicit if the compiler inserts the hook; without it nothing
  * resolves the buffers and the checksum comes out short. Refuse. */
@@ -193,6 +194,8 @@ int main(int argc, char** argv) {
   drop_caches();
   fasync_reset_stats();
 
+  filc_async_stats hook_before;
+  filc_async_get_stats(&hook_before);
   double t_c = now_ms();
   {
     fasync_id ids[N_FILES];
@@ -222,6 +225,9 @@ int main(int argc, char** argv) {
     }
   }
   double c_ms = now_ms() - t_c;
+  filc_async_stats hook_after;
+  filc_async_get_stats(&hook_after);
+  unsigned long hooked = hook_after.hook_resolves - hook_before.hook_resolves;
   struct fasync_stats sc;
   fasync_get_stats(&sc);
 
@@ -242,11 +248,10 @@ int main(int argc, char** argv) {
          sb.kernel_submit_entries, sc.kernel_submit_entries, N_FILES);
   printf("  kernel waits,   B: %lu   C: %lu\n", sb.kernel_wait_entries,
          sc.kernel_wait_entries);
-  printf("  accesses answered by the range memo, C: %lu\n", sc.memo_hits);
 
   check("all three arms read the same bytes", sum_a == sum_b && sum_b == sum_c);
   check("arm A read the whole payload", sum_a == expect * N_FILES);
-  check("the compiler's hook resolved arm C's buffers", sc.resolve_calls > 0);
+  check("the compiler's hook resolved arm C's buffers", hooked > 0);
   check("the implicit arm used far fewer kernel entries than one per read",
         sc.kernel_submit_entries + sc.kernel_wait_entries < (unsigned long)N_FILES);
   check("the implicit arm never waited at submission", sc.kernel_wait_entries == 0);

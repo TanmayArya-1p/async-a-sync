@@ -10,6 +10,7 @@
 #include "fasync_syscalls.h"
 #include "fasync_shared.h"
 #include "fasync_internal.h"
+#include "filc_async_runtime.h"
 
 /* pending opens return negative handle from -2 */
 #define FASYNC_MAX_PENDING_FDS 64
@@ -44,6 +45,21 @@ static struct fasync_pending_fd* fasync_pending_fd_lookup(int fd) {
 }
 
 fasync_id fasync_pread(int fd, void* buf, size_t len, unsigned long offset) {
+  fasync_id id = fasync_do_pread(fd, buf, len, offset);
+  if (id)
+    fasync_track_read(id, buf);
+  return id;
+}
+
+fasync_id fasync_pwrite(int fd, void* buf, size_t len, unsigned long offset) {
+  return fasync_do_pwrite(NULL, fd, buf, len, offset);
+}
+
+fasync_id fasync_openat(int dirfd, const char* path, int flags, int mode) {
+  return fasync_do_openat(NULL, dirfd, path, flags, mode);
+}
+
+fasync_id fasync_do_pread(int fd, void* buf, size_t len, unsigned long offset) {
   long real = fasync_fd_resolve(fd); /* may wait on a pending open */
   if (real < 0) {
     errno = (int)-real;
@@ -55,7 +71,8 @@ fasync_id fasync_pread(int fd, void* buf, size_t len, unsigned long offset) {
   return fasync_push_buf(FASYNC_OP_READ, fd, buf, len, offset, 0);
 }
 
-fasync_id fasync_pwrite(int fd, void* buf, size_t len, unsigned long offset) {
+fasync_id fasync_do_pwrite(void* task, int fd, void* buf, size_t len,
+                           unsigned long offset) {
   long real = fasync_fd_resolve(fd);
   if (real < 0) {
     errno = (int)-real;
@@ -66,7 +83,7 @@ fasync_id fasync_pwrite(int fd, void* buf, size_t len, unsigned long offset) {
   zcheck_readonly(buf, len); /* the kernel only reads it */
 
   /* kernel reads the source at execute time */
-  fasync_resolve_pending(buf, len);
+  filc_async_wait_buffer(task, buf);
 
   return fasync_push_sqe(FASYNC_OP_WRITE, fd, (unsigned long)(size_t)buf, len,
                          offset, 0, 0, 0);
@@ -106,7 +123,8 @@ int fasync_open_pending(int dirfd, const char* path, int flags, int mode) {
   return fasync_pending_fd_new(id);
 }
 
-fasync_id fasync_openat(int dirfd, const char* path, int flags, int mode) {
+fasync_id fasync_do_openat(void* task, int dirfd, const char* path, int flags,
+                           int mode) {
   if (!path) {
     errno = EFAULT;
     return 0;
@@ -124,16 +142,13 @@ fasync_id fasync_openat(int dirfd, const char* path, int flags, int mode) {
     available = 4096;
   zcheck_readonly((void*)path, available);
 
-  /* The kernel reads the path later. Any part of it may still be produced by
-   * an earlier asynchronous read, so finish those reads byte by byte up to
-   * the terminator; a lookup only finds a read covering the whole range it
-   * is given, and one read can start past the first byte. */
+  /* The kernel reads the path later, and any part of it may still be
+   * produced by an earlier asynchronous read: finish every read into the
+   * path's object before looking for the terminator. */
+  filc_async_wait_buffer(task, path);
   size_t i = 0;
-  for (; i < available; i++) {
-    fasync_resolve_pending((void*)(path + i), 1);
-    if (!path[i])
-      break;
-  }
+  while (i < available && path[i])
+    i++;
   if (i == available) {
     errno = ENAMETOOLONG;
     return 0;
@@ -174,6 +189,12 @@ long fasync_result(fasync_id id) {
     return -EINVAL;
 
   long result = fasync_req_wait(r);
+  /* an explicit read's buffer resolves with it */
+  if (r->task) {
+    void* task = r->task;
+    r->task = 0;
+    filc_async_complete(task, result);
+  }
   fasync_req_release(r);
   return result;
 }

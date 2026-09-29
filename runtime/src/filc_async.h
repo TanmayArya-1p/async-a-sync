@@ -94,6 +94,7 @@ typedef struct {
     unsigned long tasks_failed;
     unsigned long pending_resolves; /* marking waited for a buffer's owner */
     unsigned long lock_waits;       /* a lock waited for a conflicting call */
+    unsigned long hook_resolves;    /* an access found its object pending */
 } filc_async_stats;
 
 /* ---- Called by the stubs the pass emits ---- */

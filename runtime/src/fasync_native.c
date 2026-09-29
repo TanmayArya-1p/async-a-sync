@@ -86,20 +86,15 @@ PAS_API long filc_native_zsys_io_uring_register(filc_thread* my_thread,
   return fasync_finish(ret);
 }
 
-/* hook native because pizlonated entry is a stub */
+/* The completion ring is drained natively: the Fil-C half cannot map the
+ * kernel's ring memory with its own capabilities. */
 #include "fasync_shared.h"
 
 static struct fasync_shared* volatile fasync_published;
 
-#define FASYNC_NATIVE_SPIN_LIMIT 20000
-
-/* The ring's owner publishes the state when it sets the ring up. The runtime
- * is single-threaded, so only that thread may touch the shared state. */
-static filc_thread* fasync_owner;
-
 PAS_API void filc_native_fasync_publish_state(filc_thread* my_thread,
                                               filc_ptr state) {
-  fasync_owner = my_thread;
+  PAS_UNUSED_PARAM(my_thread);
   fasync_published = (struct fasync_shared*)filc_ptr_ptr(state);
 }
 
@@ -135,93 +130,6 @@ static void fasync_native_drain(struct fasync_shared* sh) {
   *sh->local_cq_head = head;
   __atomic_store_n(sh->cq_head, head, __ATOMIC_RELEASE);
   *sh->completions_reaped += count;
-}
-
-static struct fasync_req_shared* fasync_native_find(struct fasync_shared* sh,
-                                                    const void* ptr,
-                                                    size_t size) {
-  return fasync_shared_find(sh, ptr, size);
-}
-
-static void fasync_native_submit(struct fasync_shared* sh) {
-  if (!sh->sq_array)
-    return;
-  unsigned long n = __atomic_load_n(sh->queued, __ATOMIC_ACQUIRE);
-  if (!n)
-    return;
-
-  unsigned int mask = *sh->sq_mask;
-  unsigned int head = *sh->sqe_head;
-  unsigned int tail = *sh->sqe_tail;
-  for (unsigned int i = head; i != tail; i++)
-    sh->sq_array[i & mask] = i & mask;
-
-  /* the store that hands the batch to the kernel */
-  __atomic_store_n(sh->sq_tail, tail, __ATOMIC_RELEASE);
-  *sh->sqe_head = tail;
-  __atomic_sub_fetch(sh->queued, n, __ATOMIC_RELAXED);
-
-  (*sh->kernel_submit_entries)++;
-  fasync_syscall6(FASYNC_SYS_io_uring_enter, (long)sh->ring_fd, (long)n, 0L,
-                  0L, 0L, 0L);
-}
-
-// RUNS ON EVERY ACCESS
-PAS_API void* filc_resolve_pending(void* ptr, size_t size) {
-  if (!ptr)
-    return ptr;
-
-  struct fasync_shared* sh = fasync_published;
-  if (!sh)
-    return ptr;
-
-  if (__atomic_load_n(sh->inflight, __ATOMIC_ACQUIRE) == 0) {
-    (*sh->fast_path_hits)++;
-    return ptr;
-  }
-
-  /* Other threads only compute: the memo, counters and rings below are
-   * unlocked, so they leave them alone. A buffer with a request in flight
-   * must be touched or waited on by the owner before another thread reads
-   * it. */
-  if (filc_get_my_thread() != fasync_owner)
-    return ptr;
-
-  (*sh->resolve_calls)++;
-
-  struct fasync_req_shared* r = fasync_native_find(sh, ptr, size);
-  if (!r)
-    return ptr;
-
-  fasync_native_submit(sh);
-
-  for (unsigned int spin = 0; spin < FASYNC_NATIVE_SPIN_LIMIT; spin++) {
-    if (r->state != FASYNC_REQ_PENDING)
-      return ptr;
-    (*sh->spin_rounds)++;
-    fasync_native_drain(sh);
-    if (r->state != FASYNC_REQ_PENDING)
-      return ptr;
-#ifdef __x86_64__
-    __builtin_ia32_pause();
-#endif
-  }
-
-  /* spin budget out so sleep with the safepoint */
-  while (r->state == FASYNC_REQ_PENDING) {
-    (*sh->parks)++;
-    (*sh->kernel_wait_entries)++;
-    filc_thread* my_thread = filc_get_my_thread();
-    if (my_thread)
-      filc_exit(my_thread);
-    fasync_syscall6(FASYNC_SYS_io_uring_enter, (long)sh->ring_fd, 0L, 1L,
-                    FASYNC_ENTER_GETEVENTS, 0L, 0L);
-    if (my_thread)
-      filc_enter(my_thread);
-    fasync_native_drain(sh);
-  }
-
-  return ptr;
 }
 
 PAS_API void filc_native_fasync_poll(filc_thread* my_thread) {

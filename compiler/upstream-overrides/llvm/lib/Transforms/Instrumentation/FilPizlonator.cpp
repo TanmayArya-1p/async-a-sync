@@ -69,6 +69,10 @@ static constexpr size_t WordSizeShift = 3;
 
 static constexpr uintptr_t ObjectAuxPtrMask = 0xfffffffffffflu;
 static constexpr uintptr_t ObjectAuxFlagsShift = 48;
+// async-a-sync: the object flag the async framework sets while a call still
+// owns the object; must match FILC_OBJECT_FLAG_ASYNC_PENDING in
+// runtime/src/filc_async_native.c.
+static constexpr uintptr_t ObjectFlagAsyncPending = 64;
 
 static constexpr size_t ObjectSize = 16;
 
@@ -3540,36 +3544,47 @@ class Pizlonator {
       };
 
       /* async-a-sync: if this access goes through an escaping pointer, make sure any
-         pending async syscall covering it has resolved before the access
-         happens.
+         asynchronous call still producing the object has finished before the
+         access happens.
 
          This is placed here, immediately alongside the capability check that
          FilPizlonator already emits for every access, rather than as a second
          separate instrumentation pass (idea.md section 2.6).
 
-         Note what this does NOT do: it does not rebind the pointer. Resolution in
-         this design flips the pending bit in place rather than moving the data,
-         because the kernel was already told where to write, so the pointer's
-         value is unchanged and every existing check and address computation stays
+         Note what this does NOT do: it does not rebind the pointer. The kernel
+         or runtime was already told where to write, so the pointer's value is
+         unchanged and every existing check and address computation stays
          valid. The compiler only has to guarantee that resolution has happened
          first.
 
-         The size argument is 1: a derived pointer into a pending buffer always
-         starts inside it, so containment of its first byte is what detection
-         needs. A pointer that starts outside a pending buffer and straddles into
-         it is not detected -- see the limitations section of
-         docs/ARCHITECTURE.md.
-
-         Written unconditionally for escaping pointers. The runtime makes the
-         common case cheap (one load of an in-flight counter and a predicted
-         branch), but this is the simple form: the capability-widening version
-         described in idea.md would fold the test into the existing bounds compare
-         and avoid the call entirely. */
-      if (PK == PointerKind::Escaping)
+         The async framework keeps a pending flag in the header of every object
+         a call still owns (filc_async_native.c). The test here is inline: load
+         the object's flags, which sit next to the upper bound the capability
+         check reads, and call filc_resolve_pending only when the flag is set. A
+         pointer without an object has nothing to test. */
+      if (PK == PointerKind::Escaping) {
+        Value* Lower = flightPtrLower(FlightPtr, Inst);
+        Instruction* HasObject = new ICmpInst(
+          Inst, ICmpInst::ICMP_NE, Lower, ConstantPointerNull::get(RawPtrTy),
+          "filc_async_has_object");
+        HasObject->setDebugLoc(Inst->getDebugLoc());
+        Instruction* ObjectTerm =
+          SplitBlockAndInsertIfThen(expectTrue(HasObject, Inst), Inst, false);
+        Instruction* Pending = BinaryOperator::Create(
+          Instruction::And, flagsForLower(Lower, ObjectTerm),
+          ConstantInt::get(IntPtrTy, ObjectFlagAsyncPending), "filc_async_pending",
+          ObjectTerm);
+        Pending->setDebugLoc(Inst->getDebugLoc());
+        Instruction* IsPending = new ICmpInst(
+          ObjectTerm, ICmpInst::ICMP_NE, Pending, ConstantInt::get(IntPtrTy, 0),
+          "filc_async_is_pending");
+        IsPending->setDebugLoc(Inst->getDebugLoc());
+        Instruction* ResolveTerm =
+          SplitBlockAndInsertIfThen(expectFalse(IsPending, ObjectTerm), ObjectTerm, false);
         CallInst::Create(
-          ResolvePending,
-          { flightPtrPtr(FlightPtr, Inst), ConstantInt::get(IntPtrTy, 1) },
-          "", Inst)->setDebugLoc(Inst->getDebugLoc());
+          ResolvePending, { flightPtrPtr(FlightPtr, ResolveTerm), Lower },
+          "", ResolveTerm)->setDebugLoc(Inst->getDebugLoc());
+      }
 
       int64_t Alignment = 0;
       int64_t AlignmentOffset = 0;
@@ -16322,7 +16337,7 @@ public:
 
 
     ResolvePending = M.getOrInsertFunction(
-      "filc_resolve_pending", RawPtrTy, RawPtrTy, IntPtrTy);
+      "filc_resolve_pending", VoidTy, RawPtrTy, RawPtrTy);
 
 
     OptimizedAccessCheckFail = M.getOrInsertFunction(

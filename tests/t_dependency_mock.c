@@ -39,6 +39,19 @@ void* zgetupper(void* ptr)
     return (char*)zgetlower(ptr) + sizeof token;
 }
 
+/* The native half's pending flag and hook resolver have nothing to do here:
+ * no code in this test is instrumented. */
+void zasync_set_pending(void* buf, int pending)
+{
+    (void)buf;
+    (void)pending;
+}
+
+void zasync_set_resolver(void (*resolver)(void*))
+{
+    (void)resolver;
+}
+
 long zsys_write(int fd, const void* buf, size_t len)
 {
     return (long)fwrite(buf, 1, len, fd == 2 ? stderr : stdout);

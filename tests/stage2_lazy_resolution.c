@@ -131,13 +131,8 @@ int main(void) {
 
   fasync_get_stats(&s);
   printf("\nafter resolving every range:\n");
-  printf("  fast_path_hits       = %lu  (resolve calls served by one load)\n",
-         s.fast_path_hits);
-  printf("  resolve_calls        = %lu  (resolve calls that had to look)\n",
-         s.resolve_calls);
   printf("  userspace_cq_polls   = %lu  (completion-ring reads, no syscall)\n",
          s.userspace_cq_polls);
-  printf("  spin_rounds          = %lu\n", s.spin_rounds);
   printf("  parks                = %lu  (times we actually slept)\n", s.parks);
   printf("  completions_reaped   = %lu\n", s.completions_reaped);
 
