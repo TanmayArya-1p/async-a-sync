@@ -1,6 +1,6 @@
 /* stage2_lazy_resolution.c -- submission never blocks; resolution is lazy and
  * cheap; every read returns the seeded bytes. The FASYNC_ACCESS() calls stand
- * in for the hook the patched compiler inserts (docs/ARCHITECTURE.md). */
+ * in for the hook the patched compiler inserts (wiki/Architecture.md). */
 
 #include <stdio.h>
 #include <stdlib.h>

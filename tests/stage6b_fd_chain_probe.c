@@ -302,7 +302,7 @@ int main(void) {
          b_ok ? "WORKS -- genuine kernel promise pipelining" : "does NOT work");
 
   /* A probe, not a pass/fail: it establishes what the kernel supports so the
- * runtime can be built around it (see docs/ARCHITECTURE.md §5). */
+ * runtime can be built around it (see wiki/Explicit-API.md). */
   printf("\nFINDING: explicit-slot openat honoured: %s\n",
          a_ok ? "yes" : "no");
   printf("FINDING: kernel-native fd chaining:     %s\n",

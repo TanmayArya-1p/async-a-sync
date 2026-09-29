@@ -1,7 +1,7 @@
 /* stage_token_ordering.c -- a provenance tag orders two calls with no visible
  * dataflow connection: the second tagged call cannot issue until conflicting
  * earlier ones finish. The untagged control proves the runtime holds nothing by
- * itself. See docs/ARCHITECTURE.md §5. */
+ * itself. See wiki/Explicit-API.md. */
 
 #include <stdio.h>
 #include <stdlib.h>

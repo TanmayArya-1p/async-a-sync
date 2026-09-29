@@ -126,4 +126,4 @@ echo "Use it to link against a runtime built with the io_uring extension:"
 echo "   $BUILD_DIR/bin/filcc -static -DFASYNC_COMPILER_INSERTS_CHECKS -I$REPO/runtime/src -L$REPO/runtime/build/lib ... -lpizlo -lfilc_async_uring -lpizlo -lc"
 echo
 echo "NOTE: this build itself needs the pizfix runtime from a Fil-C distribution."
-echo "See compiler/README.md for the full sequence."
+echo "See wiki/Building-and-Linking.md for the full sequence."
