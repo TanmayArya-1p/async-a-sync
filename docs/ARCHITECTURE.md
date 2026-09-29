@@ -89,24 +89,41 @@ tests together.
 The pass allocates **16 bytes per staged argument**. Scalars use the first
 64-bit word; pointer stores keep the Fil-C capability. Although Fil-C's
 lowered pointer occupies a 16-byte cell, `sizeof(void*)` in C source is 8.
-The runtime's `filc_async_arg` and the direct-submit fixture in
+The io_uring runtime's `staged_arg` and the direct-submit fixture in
 `tests/t_backend_io_uring.c` therefore use explicit 16-byte structs. An
 8-byte union stride reads the wrong cell: a length of 6 was interpreted as
 larger than `UINT_MAX`, returning `-EOVERFLOW` before any SQE was queued.
 Both C structs have a size assertion to catch that regression.
 
-`filc_async_submit` returns a task pointer. `filc_async_poll` and
-`filc_async_wait` accept it in `filc_async_result_s.pending`, then fill
-`result` with a byte count, fd, zero, or negative errno and `state` with
-0 (done), 1 (pending), or 2 (failed).
+An annotated call returns its task, which the stub got from
+`filc_async_begin`. `filc_async_poll` and `filc_async_wait` accept it in
+`filc_async_result_s.pending`, then fill `result` with the value the runtime
+reported (for io_uring a byte count, fd, zero, or negative errno) and `state`
+with 0 (done), 1 (pending), or 2 (failed).
+
+The interface between the framework and a runtime is
+`runtime/src/filc_async_runtime.h`. A runtime implements
+`filc_async_submit(task, meta, run, args, nargs)`,
+`filc_async_runtime_poll(task, mode)` and `filc_async_runtime_validate(meta)`;
+poll's mode says whether it may only look (check), start deferred work
+(progress) or block. The framework gives runtimes `filc_async_complete`,
+`filc_async_run` (runs a body, so the body may use its own pending buffers),
+`filc_async_resolve_buffer`, `filc_async_mark_shared`,
+`filc_async_wait_buffer`, and a per-task word for the runtime's state. A
+runtime that ran each body on a worker thread would only need submit to
+queue `run` and report its return value; `tests/mock_runtime.c` is a
+synchronous one.
 
 ### Runtime side
 
 `runtime/build.sh` installs
 `runtime/upstream-overrides/generate_pizlonated_forwarders.rb` and regenerates
-native forwarders for `zsys_io_uring_*`,
-compiles the syscall bridge and runtime, and splices those objects into a
-private `runtime/build/lib/libpizlo.a`. The bridge in
+native forwarders for `zsys_io_uring_*` and the framework's `zasync_*`
+functions. It splices the framework (`filc_async.c`, the arena,
+`filc_async_native.c`) and the native bridges into a private
+`runtime/build/lib/libpizlo.a`, and archives the io_uring runtime
+(`fasync*.c`, `filc_async_uring.c`) as
+`runtime/build/lib/libfilc_async_uring.a`. The bridge in
 `runtime/src/fasync_native.c` checks Fil-C capabilities before passing raw
 addresses to the kernel. The safe side in `runtime/src/fasync.c` allocates
 GC-pinned, page-aligned ring memory and uses `IORING_SETUP_NO_MMAP`; its SQEs
@@ -143,13 +160,17 @@ as 64-bit values; pointer keys compare by Fil-C object base and cannot match
 an integer key. Matching read/read claims can overlap. Matching claims where
 either side writes are ordered by call submission order.
 
-The task list is newest first; a task scans its `next` chain for earlier
-conflicts. The completion path retires the task and starts newly ready
-successors. `filc_async_submit` may wait for a
-conflicting predecessor: it does not return a task until the new task has
-started and has a request the access hook can find. Independent work can
-still be queued together. This policy is separate from the explicit API's
-effect-set DAG in `fasync_dep.c`.
+A `:<name>` suffix, as in `w_dep=0:meta`, puts the key in a namespace: the
+pass hashes the name to 24 bits in bits 8..31 of the dependency word, and
+equal values in different namespaces are different resources.
+
+The stub locks each dependency argument's value, in its namespace, before
+it hands the call to the runtime: a read lock is shared and a write lock is
+exclusive. A call that needs a lock another call holds in a conflicting mode
+waits in its stub, polling the holder through the runtime, and each lock
+grants its requests in arrival order. A call's locks are released when it
+completes. Independent calls queue together. This is separate from the
+explicit API's effect-set DAG in `fasync_dep.c`.
 
 ### Threading
 
