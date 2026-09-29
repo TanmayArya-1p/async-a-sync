@@ -753,6 +753,15 @@ void* filc_async_submit(const filc_async_meta* meta, void* impl, void* opts,
     if (!meta || !staged_args || nargs != meta->nargs)
         filc_async_fatal("filc_async_submit: bad call");
 
+    /* Mark the producing args (bout=, bare buf= and unannotated pointers)
+     * pending; bin= inputs never are. The pass only gives these kinds to
+     * pointer args. Marking a buffer an older call still owns waits for that
+     * call, so it happens before this task joins the in-flight list. */
+    const filc_async_arg* args = (const filc_async_arg*)staged_args;
+    for (size_t i = 0; i < nargs; ++i)
+        if (is_output_kind(meta->args[i].kind))
+            filc_async_mark_pending(arg_ptr(args, i));
+
     struct filc_async_task* t = (struct filc_async_task*)filc_async_alloc(sizeof *t, 16);
     if (!t)
         filc_async_fatal("filc_async_submit: out of memory");
@@ -770,12 +779,11 @@ void* filc_async_submit(const filc_async_meta* meta, void* impl, void* opts,
     deps_index(t);
     ++g_submitted;
 
-    // The compiler marks output buffers just before calling submit. Attach
-    // those marks to this request so re-marking can wait for the right owner.
-    const filc_async_arg* args = (const filc_async_arg*)staged_args;
+    // Attach the marks just made to this request, so re-marking can wait for
+    // the right owner.
     for (size_t i = 0; i < nargs; ++i) {
         uint32_t kind = meta->args[i].kind;
-        if (kind != FILC_ASYNC_ARG_BUFFER_OUT && kind != FILC_ASYNC_ARG_PENDING)
+        if (!is_output_kind(kind))
             continue;
         void* buf = arg_ptr(args, i);
         if (!buf)

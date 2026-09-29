@@ -1,10 +1,10 @@
-/* tests/t_pragma_markpending.c -- the pass's buffer pending-marking contract.
+/* tests/t_pragma_markpending.c -- the buffer pending-marking contract.
  *
  * markfml is annotated bout=0 (out/result buffer), buf=1 (direction pending,
  * out by default), bin=2 (const input), and extra=3 is left unannotated (so it
- * defaults to PENDING -- the pessimistic case). The patched compiler must:
- *   - emit filc_async_mark_pending(out), (recv), and (extra) before the staged
- *     submit: out, recv, and extra probe pending in main before wait;
+ * defaults to PENDING -- the pessimistic case). An annotated call must:
+ *   - have submit mark out, recv, and extra pending from the descriptor's
+ *     kinds: they probe pending in main before wait;
  *   - NOT mark const_in (bin= is a const input, never pending);
  *   - let wait() auto-resolve the marked buffers, so all four read clear after.
  *

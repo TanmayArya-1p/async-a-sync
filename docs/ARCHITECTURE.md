@@ -110,8 +110,11 @@ len, offset)`, `pwrite(fd, buf, len, offset)`, `openat(dirfd, path, flags,
 mode)`, `fsync(fd)`, and `close(fd)`. The compiler treats `op=` as an option
 string; the runtime decides whether the operation exists.
 
-The pass marks `bout=`, bare `buf=`, and unannotated pointer arguments as
-pending before submission. `bin=` is an input and is not marked. The
+`filc_async_submit` marks `bout=`, bare `buf=`, and unannotated pointer
+arguments as pending before it queues the request, working from the kinds in
+the descriptor, so a call site needs nothing but the submit. The pass only
+accepts `bin=`, `bout=` and `buf=` on pointer arguments. `bin=` is an input
+and is not marked. The
 runtime's pending registry compares Fil-C object ranges using `zgetlower`
 and `zgetupper`. A new mark overlapping an earlier one resolves that owner
 first. Completed annotated tasks retire their marks and request slots when

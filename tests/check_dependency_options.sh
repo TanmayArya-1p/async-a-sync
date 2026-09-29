@@ -1,6 +1,7 @@
 #!/bin/sh
 # Check r_dep/w_dep placement, the emitted dependency metadata including the
-# :<name> namespace hash, and the rejection of contradictory options.
+# :<name> namespace hash, and the rejection of contradictory options and of a
+# buffer option on an argument that is not a pointer.
 set -eu
 ulimit -c 0
 
@@ -61,10 +62,17 @@ sed 's/w_dep=/write_dep=/g' "$SRC" > "$TMP/legacy_write.c"
 "$CLANG" -S -emit-llvm -O0 "$HERE/t_dep_conflict.c" -o "$TMP/conflict.ll"
 sed 's/:right/:/' "$HERE/t_dep_conflict.c" > "$TMP/empty_name.c"
 "$CLANG" -S -emit-llvm -O0 "$TMP/empty_name.c" -o "$TMP/empty_name.ll"
+printf '%s\n' \
+  '#pragma clang attribute push(__attribute__((annotate("filc_async", "op=pread", "fd=0", "bout=2"))), apply_to=function)' \
+  'void* scalar_buffer(int fd, void* buf, unsigned long len, unsigned long offset);' \
+  '#pragma clang attribute pop' \
+  'void* invoke(int fd, void* buf) { return scalar_buffer(fd, buf, 1, 0); }' \
+  > "$TMP/scalar_buffer.c"
+"$CLANG" -S -emit-llvm -O0 "$TMP/scalar_buffer.c" -o "$TMP/scalar_buffer.ll"
 
 python3 - "$TMP/placement_out.ll" "$TMP/placement_debug.err" "$OPT" "$PLUGIN" \
     "$TMP/legacy_read.ll" "$TMP/legacy_write.ll" "$TMP/conflict.ll" \
-    "$TMP/empty_name.ll" <<'PY'
+    "$TMP/empty_name.ll" "$TMP/scalar_buffer.ll" <<'PY'
 import pathlib
 import re
 import subprocess
@@ -123,6 +131,8 @@ if not rejected(sys.argv[7], "conflicting dependencies on argument 0"):
     raise SystemExit("FAIL: two namespaces on one argument were not rejected")
 if not rejected(sys.argv[8], "has an empty namespace name"):
     raise SystemExit("FAIL: an empty namespace name was not rejected")
+if not rejected(sys.argv[9], "which is not a pointer"):
+    raise SystemExit("FAIL: bout= on an integer argument was not rejected")
 
 print("CHECK_DEPENDENCY_OPTIONS PASS")
 PY

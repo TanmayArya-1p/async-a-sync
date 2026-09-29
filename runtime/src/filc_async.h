@@ -26,9 +26,9 @@
  * Threading: like the fasync_* API (see fasync.h), this is single-threaded;
  * every entry point below must be called from the ring's owner thread.
  *
- * Pending marks: the pass calls mark_pending on the producing buffer args
- * (bout=, bare buf=, and unannotated pointer args) of an annotated call before
- * submit; bin= const inputs are never marked. is_pending reports range
+ * Pending marks: submit marks the producing buffer args (bout=, bare buf=, and
+ * unannotated pointer args) of an annotated call pending before it queues the
+ * request; bin= const inputs are never marked. is_pending reports range
  * coverage; mark_resolved clears a mark (the runtime auto-resolves a task's
  * buffers on completion, and the program can resolve early between calls).
  * Marking a range already claimed by an older op resolves that op first.
@@ -119,9 +119,10 @@ void* filc_async_submit(const filc_async_meta* meta, void* impl, void* opts,
 bool  filc_async_poll(struct filc_async_result_s* out);
 void  filc_async_wait(struct filc_async_result_s* out);
 
-// Buffer pending-marking. The pass marks the producing args (bout=, bare
-// buf=, and unannotated pointers, all out-by-default) of an annotated call
-// before handing them to the runtime; bin= const inputs are never marked.
+// Buffer pending-marking. filc_async_submit marks the producing args (bout=,
+// bare buf=, and unannotated pointers, all out-by-default) of an annotated call
+// before queuing it; bin= const inputs are never marked. A program can also
+// mark and resolve buffers of its own with these.
 // Marking a range already held by an older op resolves that op first (generic
 // gate), then re-marks. The runtime auto-resolves a task's marked buffers on
 // completion; the program can resolve early with mark_resolved.

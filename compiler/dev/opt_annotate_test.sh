@@ -56,7 +56,7 @@ void* procread(int fd, void* buf, unsigned long n);
 #pragma clang attribute pop
 
 #pragma clang attribute push(__attribute__((annotate("filc_async", "op=openat", "fd=0", "bin=1", "buf=2"))), apply_to=function)
-void* uopenat(int dirfd, const char* path, int flags, int mode);
+void* uopenat(int dirfd, const char* path, char* scratch, int mode);
 #pragma clang attribute pop
 
 int main(void) {

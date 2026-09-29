@@ -226,17 +226,17 @@ static void parseKinds(StringRef OrigName, FunctionType *FTy,
       }
       Deps[Idx] = Value;
     } else {
+      // The runtime marks buffer args pending from their kind alone, so a
+      // buffer option must name a pointer.
+      if (Kind != ARG_FD && !FTy->getParamType(Idx)->isPointerTy()) {
+        errs() << "FilAsync: '" << Opt << "' names argument " << Idx << " of "
+               << OrigName << ", which is not a pointer\n";
+        report_fatal_error("FilAsync: malformed filc_async option");
+      }
       ++Noped;
       Kinds[Idx] = Kind;
     }
   }
-}
-
-// Kinds the pass marks pending before submit: the op produces bytes into them
-// (bout=) or their direction is undecided (bare buf= and unannotated pointer
-// args, both ARG_PENDING, out by default). bin= const inputs are never marked.
-static bool isBufferKind(unsigned Kind) {
-  return Kind == ARG_BUFFER_OUT || Kind == ARG_PENDING;
 }
 
 static bool isFilcAsyncEntry(Value *E) {
@@ -382,7 +382,6 @@ void FilAsyncPass::emitMetaTableAndCtor(Module &M,
 void FilAsyncPass::rewriteCallSites(Module &M) {
   LLVMContext &Ctx = M.getContext();
   Type *Int64Ty = Type::getInt64Ty(Ctx);
-  Type *VoidTy = Type::getVoidTy(Ctx);
   PointerType *PtrTy = PointerType::getUnqual(Ctx);
 
   // Contract: alloc(size: i64, align: i64) -> ptr;
@@ -394,10 +393,6 @@ void FilAsyncPass::rewriteCallSites(Module &M) {
       "filc_async_submit", FunctionType::get(
                                PtrTy, {PtrTy, PtrTy, PtrTy, PtrTy, Int64Ty},
                                /*isVarArg=*/false));
-  // mark_pending(ptr): buffer args go pending before the runtime takes them.
-  FunctionCallee MarkCallee = M.getOrInsertFunction(
-      "filc_async_mark_pending",
-      FunctionType::get(VoidTy, {PtrTy}, /*isVarArg=*/false));
 
   for (const auto &KV : Annotated) {
     Function *F = const_cast<Function *>(KV.first);
@@ -476,23 +471,12 @@ void FilAsyncPass::rewriteCallSites(Module &M) {
         Builder.CreateStore(ConstantInt::get(Int64Ty, 0), CapGEP);
       }
 
-      // Mark producing buffer args (bout=, bare buf=) pending before the
-      // async runtime takes ownership; the resolve wrapper clears them on
-      // request. bin= const inputs are never marked.
-      SmallVector<unsigned, 8> &Kinds = DesIt->second.Kinds;
-      for (unsigned I = 0; I < NArgs; ++I) {
-        if (!isBufferKind(Kinds[I]))
-          continue;
-        Value *Arg = CB->getArgOperand(I);
-        if (!Arg->getType()->isPointerTy())
-          continue;
-        Builder.CreateCall(MarkCallee, {Arg});
-      }
-
       // Opaque-pointer `ptr` operands -- no bitcasts; the globals and the
-      // renamed implementation pass straight through. The returned flight pair
-      // is the pending result pointer whose deref triggers the existing
-      // filc_resolve_pending hook; FilPizlonator pizlonates the return.
+      // renamed implementation pass straight through. Submit marks the
+      // producing buffer args pending from the descriptor's kinds, so the call
+      // site needs nothing else. The returned flight pair is the pending result
+      // pointer whose deref triggers the existing filc_resolve_pending hook;
+      // FilPizlonator pizlonates the return.
       CallInst *Submit = Builder.CreateCall(
           SubmitCallee,
           {Meta, F, Opts, Staging, ConstantInt::get(Int64Ty, NArgs)},
@@ -646,14 +630,10 @@ PreservedAnalyses FilAsyncPass::run(Module &M, ModuleAnalysisManager &) {
     // The meta's name field holds the ORIGINAL name, so copy it before the
     // rename invalidates F's name storage.
     std::string OrigName = F->getName().str();
-    SmallVector<unsigned, 8> Kinds;
-    SmallVector<unsigned, 8> Deps;
-    unsigned Noped;
-    parseKinds(OrigName, F->getFunctionType(), *KV.second, Kinds, Deps, Noped);
     renameBody(F, OrigName);
     GlobalVariable *Opts = emitOpts(M, OrigName, *KV.second);
     GlobalVariable *Meta = emitMeta(F, OrigName, *KV.second, Opts);
-    Emitted[F] = {Opts, Meta, OrigName, std::move(Kinds)};
+    Emitted[F] = {Opts, Meta, OrigName};
     Metas.push_back(Meta);
   }
   emitMetaTableAndCtor(M, Metas);

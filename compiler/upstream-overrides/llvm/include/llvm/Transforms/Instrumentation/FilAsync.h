@@ -22,8 +22,8 @@ class Module;
 // per-TU meta table plus a startup constructor feeding it to
 // `filc_async_validate_table`. Direct calls of an enrolled function are then
 // rewritten into the staging alloc + intval/capability stores +
-// `filc_async_mark_pending` (per producing buffer arg) + `filc_async_submit`
-// sequence, and the consumed `llvm.global.annotations`
+// `filc_async_submit` sequence (submit marks the producing buffer args pending
+// from the meta's kinds), and the consumed `llvm.global.annotations`
 // (plus its now use-empty `.args`/`.str` globals) are erased so FilPizlonator
 // never sees them.
 //
@@ -87,12 +87,11 @@ private:
   std::map<const Function *, AnnotInfo> Annotated;
 
   // Per-enrolled-function emission results, so rewriteCallSites can reference
-  // the exact metas/opts globals and re-derive kinds without re-parsing.
+  // the exact metas/opts globals.
   struct Descriptors {
     GlobalVariable *Opts;
     GlobalVariable *Meta;
     std::string OrigName;
-    SmallVector<unsigned, 8> Kinds;
   };
   std::map<const Function *, Descriptors> Emitted;
 };
