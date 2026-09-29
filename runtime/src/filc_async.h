@@ -91,7 +91,14 @@ void  filc_async_capabilities(unsigned long* syscall_shaped, unsigned long* exec
 void  filc_async_get_stats(filc_async_stats* out);
 
 // Startup validation, called by the pass-generated constructor before main.
-typedef bool (*filc_async_register_fn)(const filc_async_meta* meta);
-void  filc_async_set_register_fn(filc_async_register_fn fn);
+// The pass ctor runs last (priority 65535), so a constructor of your own that
+// calls filc_async_set_validator is installed first and gets to decide.
+//
+// This replaces the validator; it does not add an implementation for an op name.
+// The op set is closed in the runtime, so a permissive validator cannot make an
+// unknown op work, only stop the abort: start_task() re-checks the shape and
+// fails the task with -EINVAL. tests/t_pragma_custom_validator.c covers that.
+typedef bool (*filc_async_validator_fn)(const filc_async_meta* meta);
+void  filc_async_set_validator(filc_async_validator_fn fn);
 void  filc_async_validate_table(const filc_async_meta* const* metas);
 void  filc_async_fatal(const char* msg) __attribute__((noreturn));
