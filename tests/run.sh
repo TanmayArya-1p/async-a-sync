@@ -102,9 +102,9 @@ PATCHED_CC=$REPO/vendor/fil-c-src/build/bin/filcc
 PATCHED_READY=0
 if [ -x "$PATCHED_CC" ]; then
   # The source-built clang looks for its Fil-C runtime at
-  # <binary>/../../../pizfix (i.e. $REPO/vendor/pizfix). Point that at the
+  # <binary>/../../pizfix (i.e. $REPO/vendor/fil-c-src/pizfix). Point that at the
   # distribution's pizfix so the patched compiler can find crt1.o, yolort, etc.
-  PATCHED_PIZFIX=$(cd "$(dirname "$PATCHED_CC")/../../.." && pwd)/pizfix
+  PATCHED_PIZFIX=$(cd "$(dirname "$PATCHED_CC")/../.." && pwd)/pizfix
   if [ ! -e "$PATCHED_PIZFIX" ]; then
     ln -sfn "$FILC_ROOT/pizfix" "$PATCHED_PIZFIX"
   fi

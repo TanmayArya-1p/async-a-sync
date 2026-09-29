@@ -2,6 +2,7 @@
 
 #include "fasync_io_uring.h"
 
+#if defined(__x86_64__)
 static PAS_ALWAYS_INLINE long fasync_syscall2(long n, long a, long b) {
   long ret;
   __asm__ volatile("syscall"
@@ -35,6 +36,33 @@ static PAS_ALWAYS_INLINE long fasync_syscall6(long n, long a, long b, long c,
                    : "rcx", "r11", "memory");
   return ret;
 }
+
+#elif defined(__aarch64__)
+static PAS_ALWAYS_INLINE long fasync_syscall6(long n, long a, long b, long c,
+                                              long d, long e, long f) {
+  register long x8 __asm__("x8") = n;
+  register long x0 __asm__("x0") = a;
+  register long x1 __asm__("x1") = b;
+  register long x2 __asm__("x2") = c;
+  register long x3 __asm__("x3") = d;
+  register long x4 __asm__("x4") = e;
+  register long x5 __asm__("x5") = f;
+  __asm__ volatile("svc #0"
+                   : "+r"(x0)
+                   : "r"(x8), "r"(x1), "r"(x2), "r"(x3), "r"(x4), "r"(x5)
+                   : "memory");
+  return x0;
+}
+
+static PAS_ALWAYS_INLINE long fasync_syscall2(long n, long a, long b) {
+  return fasync_syscall6(n, a, b, 0, 0, 0, 0);
+}
+
+static PAS_ALWAYS_INLINE long fasync_syscall4(long n, long a, long b, long c,
+                                              long d) {
+  return fasync_syscall6(n, a, b, c, d, 0, 0);
+}
+#endif
 
 /* raw syscalls return -errno so convert to -1 */
 static PAS_ALWAYS_INLINE long fasync_finish(long ret) {
