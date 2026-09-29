@@ -9,7 +9,7 @@ meaning of every option, see the [annotation reference](Annotation-Reference.md)
 Wrap the declaration or definition in a `filc_async` annotation pragma:
 
 ```c
-#pragma clang attribute push(__attribute__((annotate("filc_async", "runtime=io_uring", "op=pread", "fd=0", "bout=1"))), apply_to=function)
+#pragma clang attribute push(__attribute__((annotate("filc_async", "runtime=io_uring", "op=pread", "bout=1"))), apply_to=function)
 void* read_at(int fd, void* buf, size_t len, unsigned long offset);
 #pragma clang attribute pop
 ```
@@ -56,8 +56,9 @@ way each buffer flows:
 
 A pending buffer blocks the first access to it until the call completes. Mark
 inputs with `bin=` so reading them does not wait. `bin=`, `bout=` and `buf=`
-must name pointer arguments. `fd=<i>` marks a descriptor argument for the
-runtime.
+must name pointer arguments. Other arguments need no option: the runtime
+knows its own ops' signatures, such as the io_uring runtime's descriptor in
+argument 0.
 
 ## Order calls that share a resource
 
@@ -66,11 +67,11 @@ something the buffers do not show, such as a file descriptor, list what each
 call reads and writes:
 
 ```c
-#pragma clang attribute push(__attribute__((annotate("filc_async", "runtime=io_uring", "op=pwrite", "fd=0", "bin=1", "w_dep=0"))), apply_to=function)
+#pragma clang attribute push(__attribute__((annotate("filc_async", "runtime=io_uring", "op=pwrite", "bin=1", "w_dep=0"))), apply_to=function)
 void* write_at(int fd, const void* buf, size_t len, unsigned long offset);
 #pragma clang attribute pop
 
-#pragma clang attribute push(__attribute__((annotate("filc_async", "runtime=io_uring", "op=pread", "fd=0", "bout=1", "r_dep=0"))), apply_to=function)
+#pragma clang attribute push(__attribute__((annotate("filc_async", "runtime=io_uring", "op=pread", "bout=1", "r_dep=0"))), apply_to=function)
 void* read_at(int fd, void* buf, size_t len, unsigned long offset);
 #pragma clang attribute pop
 ```

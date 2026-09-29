@@ -44,15 +44,14 @@
 #define FILC_ASYNC_RESULT_PTR  2u
 
 /* Arg kinds. The pass records these from the pragma's positional tokens
- * ONLY -- op= never decides a kind: fd=<i> -> FD, bin=<i> -> BUFFER_IN,
- * bout=<i> -> BUFFER_OUT, buf=<i> -> PENDING (no direction annotated; the
- * runtime decides at use time). Unannotated pointer args also default to
- * PENDING (pessimistic); unannotated non-pointers stay IGNORED. */
+ * ONLY -- op= never decides a kind: bin=<i> -> BUFFER_IN, bout=<i> ->
+ * BUFFER_OUT, buf=<i> -> PENDING (no direction annotated; the runtime decides
+ * at use time). Unannotated pointer args also default to PENDING
+ * (pessimistic); unannotated non-pointers stay IGNORED. Value 4 is unused. */
 #define FILC_ASYNC_ARG_IGNORED    0u
 #define FILC_ASYNC_ARG_SCALAR     1u
 #define FILC_ASYNC_ARG_BUFFER_IN  2u
 #define FILC_ASYNC_ARG_BUFFER_OUT 3u
-#define FILC_ASYNC_ARG_FD         4u
 #define FILC_ASYNC_ARG_PENDING    5u
 
 /* Dependency bits in args[i].dependency: read or write; the pointer bit,
@@ -60,7 +59,7 @@
  * address; and a namespace in bits 8..31, a 24-bit hash of the <name> in
  * r_dep=<i>:<name> or w_dep=<i>:<name> (never 0), or 0 when the option names
  * none. Dependency options do not contribute to noped_args, which counts
- * fd=/bin=/bout=/buf= only. */
+ * bin=/bout=/buf= only. */
 #define FILC_ASYNC_DEP_NONE            0u
 #define FILC_ASYNC_DEP_READ            1u
 #define FILC_ASYNC_DEP_WRITE           2u

@@ -8,7 +8,6 @@
  *
  *   runtime=io_uring  the runtime that runs the call
  *   op=<syscall>  the io_uring operation a call becomes
- *   fd=<i>        argument i is the file descriptor
  *   bin=<i>       argument i is a buffer the kernel reads (never marked)
  *   bout=<i>      argument i is a buffer the kernel fills (marked pending
  *                 until the read lands; the first access waits for it)
@@ -44,35 +43,35 @@ build with -DFASYNC_COMPILER_INSERTS_CHECKS"
 
 static volatile int pragma_body_calls;
 
-#pragma clang attribute push(__attribute__((annotate("filc_async", "runtime=io_uring", "op=openat", "fd=0", "bin=1"))), apply_to=function)
+#pragma clang attribute push(__attribute__((annotate("filc_async", "runtime=io_uring", "op=openat", "bin=1"))), apply_to=function)
 void* async_openat(int dirfd, const char* path, int flags, int mode) {
   pragma_body_calls++;
   return 0;
 }
 #pragma clang attribute pop
 
-#pragma clang attribute push(__attribute__((annotate("filc_async", "runtime=io_uring", "op=pread", "fd=0", "bout=1", "r_dep=0", "w_dep=1"))), apply_to=function)
+#pragma clang attribute push(__attribute__((annotate("filc_async", "runtime=io_uring", "op=pread", "bout=1", "r_dep=0", "w_dep=1"))), apply_to=function)
 void* async_pread(int fd, void* buf, size_t len, unsigned long offset) {
   pragma_body_calls++;
   return 0;
 }
 #pragma clang attribute pop
 
-#pragma clang attribute push(__attribute__((annotate("filc_async", "runtime=io_uring", "op=pwrite", "fd=0", "bin=1", "w_dep=0"))), apply_to=function)
+#pragma clang attribute push(__attribute__((annotate("filc_async", "runtime=io_uring", "op=pwrite", "bin=1", "w_dep=0"))), apply_to=function)
 void* async_pwrite(int fd, const void* buf, size_t len, unsigned long offset) {
   pragma_body_calls++;
   return 0;
 }
 #pragma clang attribute pop
 
-#pragma clang attribute push(__attribute__((annotate("filc_async", "runtime=io_uring", "op=fsync", "fd=0", "w_dep=0"))), apply_to=function)
+#pragma clang attribute push(__attribute__((annotate("filc_async", "runtime=io_uring", "op=fsync", "w_dep=0"))), apply_to=function)
 void* async_fsync(int fd) {
   pragma_body_calls++;
   return 0;
 }
 #pragma clang attribute pop
 
-#pragma clang attribute push(__attribute__((annotate("filc_async", "runtime=io_uring", "op=close", "fd=0", "w_dep=0"))), apply_to=function)
+#pragma clang attribute push(__attribute__((annotate("filc_async", "runtime=io_uring", "op=close", "w_dep=0"))), apply_to=function)
 void* async_close(int fd) {
   pragma_body_calls++;
   return 0;

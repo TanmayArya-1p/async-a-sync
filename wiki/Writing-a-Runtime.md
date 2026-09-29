@@ -202,8 +202,8 @@ static bool my_validate(const filc_async_meta* meta)
 ```
 
 Check argument shapes here too. `meta->args[i].kind` says what each argument
-was annotated as (`FILC_ASYNC_ARG_FD`, `_BUFFER_IN`, `_BUFFER_OUT`,
-`_PENDING`, `_IGNORED`). Calls to functions that fail validation never
+was annotated as (`FILC_ASYNC_ARG_BUFFER_IN`, `_BUFFER_OUT`, `_PENDING`,
+`_IGNORED`). Calls to functions that fail validation never
 start: the program aborts before `main`. The io_uring runtime's
 [`shape_ok`](io_uring-Runtime.md#validation) is an example.
 

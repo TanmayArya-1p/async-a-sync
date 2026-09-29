@@ -135,7 +135,7 @@ The pass emits one `filc_async_meta` per annotated function, named
 typedef struct {
     const char* name;          /* the function's source name */
     uint32_t    nargs;         /* parameter count */
-    uint32_t    noped_args;    /* how many fd=/bin=/bout=/buf= options it has */
+    uint32_t    noped_args;    /* how many bin=/bout=/buf= options it has */
     uint32_t    flags;         /* reserved, 0 */
     uint32_t    result;        /* FILC_ASYNC_RESULT_PTR or FILC_ASYNC_RESULT_WORD */
     const char* const* opts;   /* NULL-terminated copy of every option string */
@@ -161,7 +161,7 @@ field for field. When you add a field, change the header, the pass
 | `FILC_ASYNC_ARG_SCALAR` | 1 | (reserved) |
 | `FILC_ASYNC_ARG_BUFFER_IN` | 2 | `bin=` |
 | `FILC_ASYNC_ARG_BUFFER_OUT` | 3 | `bout=` |
-| `FILC_ASYNC_ARG_FD` | 4 | `fd=` |
+| (none) | 4 | unused; it was the removed `fd=` |
 | `FILC_ASYNC_ARG_PENDING` | 5 | `buf=`, or an unannotated pointer |
 
 **Dependency bits.** `FILC_ASYNC_DEP_READ` (1), `FILC_ASYNC_DEP_WRITE` (2) and

@@ -13,20 +13,21 @@ through how it implements each runtime function.
 
 | `op=` | Required signature (kinds) | io_uring request | Result |
 |---|---|---|---|
-| `pread` | `(fd=, bout= or buf=, len, offset)` | `IORING_OP_READ` | bytes read or `-errno` |
-| `pwrite` | `(fd=, bin= or buf=, len, offset)` | `IORING_OP_WRITE` | bytes written or `-errno` |
-| `openat` | `(fd=, bin= or buf= path, flags, mode)` | `IORING_OP_OPENAT` | the new fd or `-errno` |
-| `fsync` | `(fd=)` | `IORING_OP_FSYNC` | 0 or `-errno` |
-| `close` | `(fd=)` | `IORING_OP_CLOSE` | 0 or `-errno` |
+| `pread` | `(fd, bout= or buf=, len, offset)` | `IORING_OP_READ` | bytes read or `-errno` |
+| `pwrite` | `(fd, bin= or buf=, len, offset)` | `IORING_OP_WRITE` | bytes written or `-errno` |
+| `openat` | `(dirfd, bin= or buf= path, flags, mode)` | `IORING_OP_OPENAT` | the new fd or `-errno` |
+| `fsync` | `(fd)` | `IORING_OP_FSYNC` | 0 or `-errno` |
+| `close` | `(fd)` | `IORING_OP_CLOSE` | 0 or `-errno` |
 | `ignore` | anything | none | `-EOPNOTSUPP` when polled; for tests only |
 
-- **Arguments.** They follow the syscall's order. `len` and `offset` must be
-  unannotated integers. A `len` above `UINT_MAX` completes with `-EOVERFLOW`.
+- **Arguments.** They follow the syscall's order. The descriptor comes first,
+  and it, `len` and `offset` must be unannotated integers: the runtime finds
+  the descriptor by its position. A `len` above `UINT_MAX` completes with `-EOVERFLOW`.
   `read` and `write` are not supported because they have no offset.
 - **Example declaration:**
 
   ```c
-  #pragma clang attribute push(__attribute__((annotate("filc_async", "runtime=io_uring", "op=pwrite", "fd=0", "bin=1", "w_dep=0"))), apply_to=function)
+  #pragma clang attribute push(__attribute__((annotate("filc_async", "runtime=io_uring", "op=pwrite", "bin=1", "w_dep=0"))), apply_to=function)
   void* async_pwrite(int fd, const void* buf, size_t len, unsigned long offset);
   #pragma clang attribute pop
   ```
@@ -103,8 +104,8 @@ case URING_OP_READ:
            m->args[3].kind == FILC_ASYNC_ARG_IGNORED;
 ```
 
-Argument 0 must be `fd=`, and at least one buffer or fd option must be
-present. An unknown op or a wrong shape aborts the program before `main`.
+Argument 0, the descriptor, must be an unannotated integer. An unknown op or
+a wrong shape aborts the program before `main`.
 
 ### Submit
 

@@ -94,12 +94,13 @@ static bool is_input_kind(uint32_t kind)
            kind == FILC_ASYNC_ARG_PENDING;
 }
 
-/* Whether the argument kinds match the op's syscall. */
+/* Whether the argument kinds match the op's syscall. Every op takes the
+ * descriptor as argument 0, an unannotated integer. */
 static bool shape_ok(const filc_async_meta* m, enum uring_op op)
 {
     if (op == URING_OP_IGNORE)
         return true;
-    if (!m->nargs || m->args[0].kind != FILC_ASYNC_ARG_FD)
+    if (!m->nargs || m->args[0].kind != FILC_ASYNC_ARG_IGNORED)
         return false;
     switch (op) {
     case URING_OP_READ:
@@ -125,8 +126,6 @@ static bool uring_validate(const filc_async_meta* meta)
         return false;
     enum uring_op op = op_from(meta->opts);
     if (op == URING_OP_UNKNOWN)
-        return false;
-    if (op != URING_OP_IGNORE && meta->noped_args < 1)
         return false;
     return shape_ok(meta, op);
 }

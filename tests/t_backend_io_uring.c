@@ -37,11 +37,11 @@ static filc_async_meta* make_meta(const char* name, const char* const* opts,
         return NULL;
     m->name = name;
     m->nargs = nargs;
-    m->noped_args = nargs == 1 ? 1 : 2;
+    m->noped_args = nargs == 1 ? 0 : 1;
     m->result = FILC_ASYNC_RESULT_PTR;
     m->opts = opts;
     m->runtime = &filc_async_runtime_io_uring;
-    m->args[0].kind = FILC_ASYNC_ARG_FD;
+    m->args[0].kind = FILC_ASYNC_ARG_IGNORED; /* the descriptor */
     if (nargs > 1)
         m->args[1].kind = buffer_kind;
     return m;

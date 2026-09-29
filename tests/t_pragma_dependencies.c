@@ -12,12 +12,12 @@ static volatile int body_calls;
 __attribute__((noinline)) void* dep_write(int fd, const void* buf, size_t len,
                                            unsigned long offset);
 
-#pragma clang attribute push(__attribute__((annotate("filc_async", "runtime=io_uring", "op=pread", "fd=0", "bout=1", "r_dep=0", "w_dep=1"))), apply_to=function)
+#pragma clang attribute push(__attribute__((annotate("filc_async", "runtime=io_uring", "op=pread", "bout=1", "r_dep=0", "w_dep=1"))), apply_to=function)
 __attribute__((noinline)) void* dep_read(int fd, void* buf, size_t len,
                                           unsigned long offset);
 #pragma clang attribute pop
 
-#pragma clang attribute push(__attribute__((annotate("filc_async", "runtime=io_uring", "op=pwrite", "fd=0", "bin=1", "w_dep=0"))), apply_to=function)
+#pragma clang attribute push(__attribute__((annotate("filc_async", "runtime=io_uring", "op=pwrite", "bin=1", "w_dep=0"))), apply_to=function)
 void* dep_write(int fd, const void* buf, size_t len, unsigned long offset)
 {
     body_calls++;

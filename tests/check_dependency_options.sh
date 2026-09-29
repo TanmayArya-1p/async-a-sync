@@ -2,7 +2,7 @@
 # Check r_dep/w_dep placement, the emitted dependency metadata including the
 # :<name> namespace hash, the runtime each descriptor names, and the rejection
 # of contradictory options, of a buffer option on an argument that is not a
-# pointer, and of a missing, malformed or doubled runtime=.
+# pointer, of a missing, malformed or doubled runtime=, and of the removed fd=.
 set -eu
 ulimit -c 0
 
@@ -64,18 +64,19 @@ sed 's/w_dep=/write_dep=/g' "$SRC" > "$TMP/legacy_write.c"
 sed 's/:right/:/' "$HERE/t_dep_conflict.c" > "$TMP/empty_name.c"
 "$CLANG" -S -emit-llvm -O0 "$TMP/empty_name.c" -o "$TMP/empty_name.ll"
 printf '%s\n' \
-  '#pragma clang attribute push(__attribute__((annotate("filc_async", "runtime=io_uring", "op=pread", "fd=0", "bout=2"))), apply_to=function)' \
+  '#pragma clang attribute push(__attribute__((annotate("filc_async", "runtime=io_uring", "op=pread", "bout=2"))), apply_to=function)' \
   'void* scalar_buffer(int fd, void* buf, unsigned long len, unsigned long offset);' \
   '#pragma clang attribute pop' \
   'void* invoke(int fd, void* buf) { return scalar_buffer(fd, buf, 1, 0); }' \
   > "$TMP/scalar_buffer.c"
 "$CLANG" -S -emit-llvm -O0 "$TMP/scalar_buffer.c" -o "$TMP/scalar_buffer.ll"
 # The same well-formed call with its runtime= option dropped, malformed, or
-# given twice.
-for variant in none:'' bad:'"runtime=1bad", ' two:'"runtime=io_uring", "runtime=other", '; do
+# given twice, and with the removed fd= option.
+for variant in none:'' bad:'"runtime=1bad", ' two:'"runtime=io_uring", "runtime=other", ' \
+               fd:'"runtime=io_uring", "fd=0", '; do
   name=${variant%%:*}
   printf '%s\n' \
-    "#pragma clang attribute push(__attribute__((annotate(\"filc_async\", ${variant#*:}\"op=pread\", \"fd=0\", \"bout=1\"))), apply_to=function)" \
+    "#pragma clang attribute push(__attribute__((annotate(\"filc_async\", ${variant#*:}\"op=pread\", \"bout=1\"))), apply_to=function)" \
     'void* runtime_read(int fd, void* buf, unsigned long len, unsigned long offset);' \
     '#pragma clang attribute pop' \
     'void* invoke(int fd, void* buf) { return runtime_read(fd, buf, 1, 0); }' \
@@ -86,7 +87,7 @@ done
 python3 - "$TMP/placement_out.ll" "$TMP/placement_debug.err" "$OPT" "$PLUGIN" \
     "$TMP/legacy_read.ll" "$TMP/legacy_write.ll" "$TMP/conflict.ll" \
     "$TMP/empty_name.ll" "$TMP/scalar_buffer.ll" "$TMP/runtime_none.ll" \
-    "$TMP/runtime_bad.ll" "$TMP/runtime_two.ll" <<'PY'
+    "$TMP/runtime_bad.ll" "$TMP/runtime_two.ll" "$TMP/runtime_fd.ll" <<'PY'
 import pathlib
 import re
 import subprocess
@@ -108,11 +109,11 @@ ir = pathlib.Path(sys.argv[1]).read_text()
 debug = pathlib.Path(sys.argv[2]).read_text()
 lines = ir.splitlines()
 expected = {
-    "declared": ("{ i32 4, i32 1 }", "{ i32 3, i32 6 }"),
-    "merged": ("{ i32 4, i32 2 }",),
-    "separate": ("{ i32 4, i32 1 }",),
-    "overridden": ("{ i32 4, i32 2 }",),
-    "named": (f"{{ i32 4, i32 {i32(1 | ns_hash('slotA') << 8)} }}",
+    "declared": ("{ i32 0, i32 1 }", "{ i32 3, i32 6 }"),
+    "merged": ("{ i32 0, i32 2 }",),
+    "separate": ("{ i32 0, i32 1 }",),
+    "overridden": ("{ i32 0, i32 2 }",),
+    "named": (f"{{ i32 0, i32 {i32(1 | ns_hash('slotA') << 8)} }}",
               f"{{ i32 3, i32 {i32(6 | ns_hash('slotB') << 8)} }}"),
 }
 for name, dependencies in expected.items():
@@ -159,6 +160,8 @@ if not rejected(sys.argv[11], "does not name a runtime"):
     raise SystemExit("FAIL: a malformed runtime name was not rejected")
 if not rejected(sys.argv[12], "names two runtimes, io_uring and other"):
     raise SystemExit("FAIL: two runtimes on one function were not rejected")
+if not rejected(sys.argv[13], "is no longer an option"):
+    raise SystemExit("FAIL: the removed fd= option was not rejected")
 
 print("CHECK_DEPENDENCY_OPTIONS PASS")
 PY

@@ -26,7 +26,6 @@ see [Annotate a function](Annotating-Functions.md).
 |---|---|---|---|
 | `runtime=<name>` | none | none | **Required.** The runtime that runs the call: `meta->runtime` points to `filc_async_runtime_<name>`, which the program must link. `<name>` is a C identifier. The io_uring runtime is `runtime=io_uring`. |
 | `op=<name>` | none | none | Names the operation. Passed to the runtime in `meta->opts`, and never read by the compiler or the framework. |
-| `fd=<i>` | any | `FILC_ASYNC_ARG_FD` | Argument *i* is a descriptor. |
 | `bin=<i>` | pointer | `FILC_ASYNC_ARG_BUFFER_IN` | The call reads argument *i*. Not marked pending. |
 | `bout=<i>` | pointer | `FILC_ASYNC_ARG_BUFFER_OUT` | The call writes argument *i*. Marked pending until the call completes. |
 | `buf=<i>` | pointer | `FILC_ASYNC_ARG_PENDING` | Direction unknown; treated as written. Marked pending. |
@@ -102,6 +101,7 @@ These make the compiler stop with `FilAsync: malformed filc_async option`:
 | `conflicting dependencies on argument <i> of <f>` | two dependency options on one argument disagree in mode or namespace |
 | `'<opt>' has an empty namespace name` | `r_dep=0:` |
 | `'<opt>' uses an obsolete dependency name` | `read_dep=` / `write_dep=`; use `r_dep=` / `w_dep=` |
+| `'fd=<i>' on <f> is no longer an option` | `fd=` was removed: a runtime finds its descriptor itself, by position |
 | `<f> names no runtime; add runtime=<name>` | the annotation has no `runtime=` option |
 | `'<opt>' on <f> does not name a runtime` | `runtime=` is empty or not a C identifier |
 | `<f> names two runtimes, <a> and <b>` | two `runtime=` options with different names |

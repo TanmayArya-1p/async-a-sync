@@ -61,7 +61,6 @@ static cl::opt<bool> FilAsyncDebug(
 static const unsigned ARG_IGNORED = 0;
 static const unsigned ARG_BUFFER_IN = 2;
 static const unsigned ARG_BUFFER_OUT = 3;
-static const unsigned ARG_FD = 4;
 static const unsigned ARG_PENDING = 5;
 static const unsigned DEP_NONE = 0;
 static const unsigned DEP_READ = 1;
@@ -143,9 +142,9 @@ static bool isPoolConstant(Constant *C) {
 }
 
 // Reads the positional option tokens into Kinds and counts them in Noped.
-// op= never decides a kind: fd=<i> -> ARG_FD; bin=<i> -> ARG_BUFFER_IN;
-// bout=<i> -> ARG_BUFFER_OUT; buf=<i> -> ARG_PENDING (direction decided at use
-// time by the runtime). Unannotated pointer args default to ARG_PENDING (the
+// op= never decides a kind: bin=<i> -> ARG_BUFFER_IN; bout=<i> ->
+// ARG_BUFFER_OUT; buf=<i> -> ARG_PENDING (direction decided at use time by the
+// runtime). Unannotated pointer args default to ARG_PENDING (the
 // pessimistic "undecided direction" case); unannotated non-pointers stay
 // ARG_IGNORED. A token that does not index an argument is a compile-time fatal.
 static void parseKinds(StringRef OrigName, FunctionType *FTy,
@@ -164,8 +163,10 @@ static void parseKinds(StringRef OrigName, FunctionType *FTy,
     unsigned Dep = DEP_NONE;
     unsigned PrefixLen = 0;
     if (Opt.starts_with("fd=")) {
-      Kind = ARG_FD;
-      PrefixLen = 3;
+      errs() << "FilAsync: '" << Opt << "' on " << OrigName
+             << " is no longer an option; the runtime finds its descriptor "
+             << "itself\n";
+      report_fatal_error("FilAsync: malformed filc_async option");
     } else if (Opt.starts_with("bin=")) {
       Kind = ARG_BUFFER_IN;
       PrefixLen = 4;
@@ -230,7 +231,7 @@ static void parseKinds(StringRef OrigName, FunctionType *FTy,
     } else {
       // The runtime marks buffer args pending from their kind alone, so a
       // buffer option must name a pointer.
-      if (Kind != ARG_FD && !FTy->getParamType(Idx)->isPointerTy()) {
+      if (!FTy->getParamType(Idx)->isPointerTy()) {
         errs() << "FilAsync: '" << Opt << "' names argument " << Idx << " of "
                << OrigName << ", which is not a pointer\n";
         report_fatal_error("FilAsync: malformed filc_async option");
@@ -339,7 +340,7 @@ GlobalVariable *FilAsyncPass::emitMeta(Function *F, StringRef OrigName,
   unsigned Result = F->getReturnType()->isPointerTy() ? RESULT_PTR : RESULT_WORD;
 
   // Kinds come from the positional option tokens ONLY -- op= never decides a
-  // kind (see parseKinds). noped_args counts the fd=/bin=/bout=/buf= options.
+  // kind (see parseKinds). noped_args counts the bin=/bout=/buf= options.
   SmallVector<unsigned, 8> Kinds;
   SmallVector<unsigned, 8> Deps;
   unsigned Noped;

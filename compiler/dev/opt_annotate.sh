@@ -4,7 +4,7 @@
 # Rebuilds the loadable FilAsync pass plugin and asserts the reader's contract
 # on two fixtures:
 #
-#   good   -> opt prints "enrolled procread" + op=pread / fd=0 / buf=1, exit 0
+#   good   -> opt prints "enrolled procread" + op=pread / buf=1, exit 0
 #   unknown -> an unrecognized "op=" value is ACCEPTED: the op set is the
 #              runtime's authority, not the compiler's, so opt must not reject it
 #
@@ -42,7 +42,7 @@ echo "### generating fixtures"
 "$HOST_CC" -S -emit-llvm -O0 -o "$GOOD" "$REPO/tests/t_annotate_smoke.c"
 printf '%s\n' \
   '/* unknown op=; the runtime is the authority for the op set */' \
-  '#pragma clang attribute push(__attribute__((annotate("filc_async", "runtime=io_uring", "op=somefutureop", "fd=0", "buf=1"))), apply_to=function)' \
+  '#pragma clang attribute push(__attribute__((annotate("filc_async", "runtime=io_uring", "op=somefutureop", "buf=1"))), apply_to=function)' \
   'int procread(int fd, void* buf, unsigned long n);' \
   '#pragma clang attribute pop' \
   'int main(void) { return procread(0, 0, 0); }' > "$BAD_SRC"
@@ -63,7 +63,7 @@ echo "$GOOD_OUT"
 [ "$GOOD_RC" -eq 0 ] || { echo "!! good fixture: opt exited $GOOD_RC"; exit 1; }
 echo "$GOOD_OUT" | grep -q "enrolled procread" \
   || { echo "!! good fixture: missing 'enrolled procread'"; exit 1; }
-for TOK in "op=pread" "fd=0" "buf=1"; do
+for TOK in "op=pread" "buf=1"; do
   echo "$GOOD_OUT" | grep -q -- "$TOK" \
     || { echo "!! good fixture: missing parsed option '$TOK'"; exit 1; }
 done
