@@ -83,11 +83,13 @@ Put the libraries after the program's sources or objects:
 ```sh
 vendor/fil-c-src/build/bin/filcc -O2 -static \
   -Werror=pragma-clang-attribute -Iruntime/src -Lruntime/build/lib \
-  -o app app.c -lpizlo -lfilc_async_uring -lpizlo -lc
+  -o app app.c -lfilc_async_uring -lpizlo -lc
 ```
 
-- **`-lpizlo` twice.** The framework (in `libpizlo`) and the runtime refer to
-  each other, so `libpizlo` is named on both sides of the runtime.
+- **Runtimes before `-lpizlo`.** Link every runtime the program's
+  annotations name (`runtime=io_uring` is `-lfilc_async_uring`). A runtime
+  refers to the framework in `libpizlo`, but the framework never refers to a
+  runtime, so the runtimes come first.
 - **The trailing `-lc`.** The framework and the runtime use Fil-C's pthreads.
   Without `-lc`, the link fails with undefined `pizlonated_pthread_mutex_lock`
   and similar symbols.
@@ -96,8 +98,9 @@ vendor/fil-c-src/build/bin/filcc -O2 -static \
 - **`-DFASYNC_COMPILER_INSERTS_CHECKS`.** Makes `FASYNC_ACCESS` a no-op. Use
   it with the patched compiler when you use the explicit API.
 
-**Another runtime.** Replace `-lfilc_async_uring` with your runtime's objects
-or library. See [Write a runtime](Writing-a-Runtime.md#5-link-and-test).
+**Other runtimes.** Add your runtime's objects or library next to
+`-lfilc_async_uring`, or in place of it if nothing names `runtime=io_uring`.
+See [Write a runtime](Writing-a-Runtime.md#5-link-and-test).
 
 **Stock `filcc`.** The stock `filcc` from the distribution can build and link
 programs that use only the explicit API. It does not rewrite annotated calls

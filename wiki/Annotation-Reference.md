@@ -13,7 +13,8 @@ see [Annotate a function](Annotating-Functions.md).
 #pragma clang attribute pop
 ```
 
-- **Options.** Each option is a separate string literal.
+- **Options.** Each option is a separate string literal. `runtime=` is
+  required; the others are optional.
 - **Argument indices.** They are zero-based positions in the function's
   parameter list.
 - **Placement.** The annotation can be on a declaration, a definition, or both.
@@ -23,6 +24,7 @@ see [Annotate a function](Annotating-Functions.md).
 
 | Option | Argument type | Arg kind recorded | Effect |
 |---|---|---|---|
+| `runtime=<name>` | none | none | **Required.** The runtime that runs the call: `meta->runtime` points to `filc_async_runtime_<name>`, which the program must link. `<name>` is a C identifier. The io_uring runtime is `runtime=io_uring`. |
 | `op=<name>` | none | none | Names the operation. Passed to the runtime in `meta->opts`, and never read by the compiler or the framework. |
 | `fd=<i>` | any | `FILC_ASYNC_ARG_FD` | Argument *i* is a descriptor. |
 | `bin=<i>` | pointer | `FILC_ASYNC_ARG_BUFFER_IN` | The call reads argument *i*. Not marked pending. |
@@ -100,6 +102,12 @@ These make the compiler stop with `FilAsync: malformed filc_async option`:
 | `conflicting dependencies on argument <i> of <f>` | two dependency options on one argument disagree in mode or namespace |
 | `'<opt>' has an empty namespace name` | `r_dep=0:` |
 | `'<opt>' uses an obsolete dependency name` | `read_dep=` / `write_dep=`; use `r_dep=` / `w_dep=` |
+| `<f> names no runtime; add runtime=<name>` | the annotation has no `runtime=` option |
+| `'<opt>' on <f> does not name a runtime` | `runtime=` is empty or not a C identifier |
+| `<f> names two runtimes, <a> and <b>` | two `runtime=` options with different names |
+
+The linker reports a runtime the program names but does not link:
+`undefined reference to pizlonated_filc_async_runtime_<name>`.
 
 At startup, before `main`, `filc_async_validate_table` checks every
 descriptor. It aborts with
@@ -107,7 +115,7 @@ descriptor. It aborts with
 of these cases:
 
 - the dependency bits are malformed;
-- the validator rejects the function. The validator is the runtime's
-  `filc_async_runtime_validate` unless the program installed its own. A
+- the validator rejects the function. The validator is the `validate` of
+  the runtime the function names, unless the program installed its own. A
   rejection usually means the runtime does not know the op, or the argument
   kinds do not fit it.

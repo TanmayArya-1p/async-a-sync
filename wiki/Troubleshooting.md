@@ -13,15 +13,17 @@
 
 | Symptom | Cause and fix |
 |---|---|
-| Undefined `pizlonated_pthread_mutex_*` | The trailing `-lc` is missing. End the link line with `-lpizlo -lfilc_async_uring -lpizlo -lc`. |
-| Undefined `pizlonated_filc_async_submit` or `pizlonated_filc_async_runtime_poll` | No runtime is linked. Add `-lfilc_async_uring`, or your runtime's objects. |
-| Undefined `pizlonated_filc_async_complete` or other framework symbols from the runtime | `-lpizlo` appears only before the runtime. Name it on both sides. |
+| Undefined `pizlonated_pthread_mutex_*` | The trailing `-lc` is missing. End the link line with `-lfilc_async_uring -lpizlo -lc`. |
+| Undefined `pizlonated_filc_async_runtime_<name>` | A function names `runtime=<name>`, but that runtime is not linked. Add it (`-lfilc_async_uring` for `io_uring`), or fix the name. |
+| Undefined `pizlonated_filc_async_complete` or other framework symbols from a runtime | The runtime comes after `-lpizlo`. Put every runtime before it. |
+| Multiple definitions of a runtime's functions when linking two runtimes | A runtime exports more than its descriptor. Make its functions and state `static`. |
 
 ## Compile
 
 | Symptom | Cause and fix |
 |---|---|
 | `FilAsync: malformed filc_async option` | An option is invalid. The line above it names the option. See [Errors](Annotation-Reference.md#errors). |
+| `FilAsync: <f> names no runtime; add runtime=<name>` | Every annotation needs `runtime=`, for example `"runtime=io_uring"`. |
 | `FilAsync: call to <f> returns i32 but the stub returns ptr; call left in place` | The annotated function returns a scalar. Make it return `void*` or `void`. |
 | `FilAsync: call to <f> is not a plain call matching its prototype` | The call goes through a different prototype or is an `invoke`. It stays a synchronous call. |
 | Warning (or error with `-Werror=pragma-clang-attribute`) about an unused attribute | The pragma surrounds a call, not a function declaration. Move it to the declaration. |

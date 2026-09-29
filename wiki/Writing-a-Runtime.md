@@ -1,9 +1,10 @@
 # Write a runtime
 
-This guide shows how to put your own runtime behind annotated calls instead
-of io_uring. A runtime decides what a call does and when it completes: run
-the body inline, run it lazily, hand it to a thread pool, or turn it into a
-device request.
+This guide shows how to put your own runtime behind annotated calls, next to
+or instead of io_uring. A runtime decides what a call does and when it
+completes: run the body inline, run it lazily, hand it to a thread pool, or
+turn it into a device request. Each annotated function picks its runtime with
+`runtime=<name>`, so one program can use several.
 
 You will:
 
@@ -17,34 +18,49 @@ reference.
 
 ## 1. The smallest runtime
 
-A runtime implements three functions. This one runs every call's body
-synchronously during submit and completes the call right away. It is
+A runtime is three functions and a descriptor that names them. This one, the
+`mock` runtime, runs every call's body synchronously during submit and
+completes the call right away. It is
 [`tests/mock_runtime.c`](../tests/mock_runtime.c):
 
 ```c
 #include "filc_async_runtime.h"
 
-void filc_async_submit(void* task, const filc_async_meta* meta,
-                       filc_async_run_fn run, void* staged_args, size_t nargs)
+static void mock_submit(void* task, const filc_async_meta* meta,
+                        filc_async_run_fn run, void* staged_args, size_t nargs)
 {
     (void)meta;
     (void)nargs;
     filc_async_complete(task, filc_async_run(task, run, staged_args));
 }
 
-bool filc_async_runtime_poll(void* task, enum filc_async_poll_mode mode)
+static bool mock_poll(void* task, enum filc_async_poll_mode mode)
 {
     (void)task;
     (void)mode;
     return true;
 }
 
-bool filc_async_runtime_validate(const filc_async_meta* meta)
+static bool mock_validate(const filc_async_meta* meta)
 {
     (void)meta;
     return true;
 }
+
+FILC_ASYNC_RUNTIME(mock, mock_submit, mock_poll, mock_validate);
 ```
+
+`FILC_ASYNC_RUNTIME` defines `filc_async_runtime_mock`, the descriptor that
+functions annotated with `runtime=mock` point to:
+
+```c
+#pragma clang attribute push(__attribute__((annotate("filc_async", "runtime=mock", "op=double", "bout=0", "bin=1"))), apply_to=function)
+void* double_into(long* out, const long* in);
+#pragma clang attribute pop
+```
+
+- **The descriptor is the only export.** The functions are `static`, so this
+  runtime links next to any other without clashing.
 
 - **Submit.** It runs the body through `filc_async_run`, never by calling
   `run` directly. The body can then write its own `bout=` buffer, which the
@@ -81,8 +97,8 @@ struct lazy_call {
 static pthread_mutex_t g_lock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t g_done = PTHREAD_COND_INITIALIZER;
 
-void filc_async_submit(void* task, const filc_async_meta* meta,
-                       filc_async_run_fn run, void* staged_args, size_t nargs)
+static void lazy_submit(void* task, const filc_async_meta* meta,
+                        filc_async_run_fn run, void* staged_args, size_t nargs)
 {
     (void)meta;
     (void)nargs;
@@ -99,7 +115,7 @@ void filc_async_submit(void* task, const filc_async_meta* meta,
     pthread_mutex_unlock(&g_lock);
 }
 
-bool filc_async_runtime_poll(void* task, enum filc_async_poll_mode mode)
+static bool lazy_poll(void* task, enum filc_async_poll_mode mode)
 {
     pthread_mutex_lock(&g_lock);
     struct lazy_call* c = *filc_async_task_runtime_data(task);
@@ -125,10 +141,12 @@ bool filc_async_runtime_poll(void* task, enum filc_async_poll_mode mode)
     return done;
 }
 
-bool filc_async_runtime_validate(const filc_async_meta* meta)
+static bool lazy_validate(const filc_async_meta* meta)
 {
     return meta != NULL;
 }
+
+FILC_ASYNC_RUNTIME(lazy, lazy_submit, lazy_poll, lazy_validate);
 ```
 
 This runtime follows every rule a real one needs:
@@ -145,11 +163,11 @@ This runtime follows every rule a real one needs:
 - **Complete exactly once.** The `RUNNING` state keeps two threads from
   running one body.
 
-With this runtime, a call's buffer stays pending after the call returns, and
-the first read of it runs the body:
+With a function annotated `runtime=lazy`, a call's buffer stays pending after
+the call returns, and the first read of it runs the body:
 
 ```c
-double_into(&out, &in);                // queued; nothing has run
+double_into(&out, &in);                // runtime=lazy: queued; nothing has run
 assert(filc_async_is_pending(&out));
 long v = out;                          // this access runs double_into's body
 ```
@@ -164,7 +182,7 @@ the worker is done.
 Every annotation string the pass does not interpret itself is passed through
 in `meta->opts`, a `NULL`-terminated array. That includes `op=` and anything
 you invent, such as `"prio=high"`. Parse the ones your runtime needs, and
-reject unknown functions at startup in `filc_async_runtime_validate`:
+reject unknown functions at startup in your `validate`:
 
 ```c
 static const char* option(const filc_async_meta* meta, const char* key)
@@ -176,7 +194,7 @@ static const char* option(const filc_async_meta* meta, const char* key)
     return NULL;
 }
 
-bool filc_async_runtime_validate(const filc_async_meta* meta)
+static bool my_validate(const filc_async_meta* meta)
 {
     const char* op = option(meta, "op");
     return op && (!strcmp(op, "compute") || !strcmp(op, "hash"));
@@ -213,17 +231,25 @@ If part of the output is ready before the whole call, release it early with
 
 ## 5. Link and test
 
-Link your runtime's objects in place of `-lfilc_async_uring`:
+Link your runtime's objects or archive before `-lpizlo`, next to every other
+runtime the program's annotations name:
 
 ```sh
+# only your runtime
 vendor/fil-c-src/build/bin/filcc -O2 -static -Werror=pragma-clang-attribute \
   -Iruntime/src -Lruntime/build/lib \
   -o app app.c my_runtime.c -lpizlo -lc
+
+# your runtime and the io_uring runtime in one program
+vendor/fil-c-src/build/bin/filcc -O2 -static -Werror=pragma-clang-attribute \
+  -Iruntime/src -Lruntime/build/lib \
+  -o app app.c my_runtime.c -lfilc_async_uring -lpizlo -lc
 ```
 
-If your runtime is an archive, put it between two `-lpizlo`, since the
-framework and the runtime refer to each other:
-`-lpizlo -lmy_runtime -lpizlo -lc`.
+A runtime refers to the framework, but the framework never refers to a
+runtime, so runtimes go before `-lpizlo`. If a function names a runtime you
+did not link, the link fails with
+`undefined reference to pizlonated_filc_async_runtime_<name>`.
 
 To test it, run the annotated programs in `tests/` against it. Check these
 invariants:
@@ -241,7 +267,8 @@ invariants:
 
 `tests/t_mock_runtime.c` shows the shape of such a test, and `tests/run.sh`
 builds it with `tests/mock_runtime.c` and checks that no io_uring symbol was
-linked.
+linked. `tests/t_two_runtimes.c` links the mock runtime with the io_uring
+runtime and orders calls across them.
 
 ## See also
 

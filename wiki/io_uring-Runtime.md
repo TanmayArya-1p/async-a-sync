@@ -4,8 +4,8 @@
 on top of the request layer in `runtime/src/fasync*.c`
 **Library:** `runtime/build/lib/libfilc_async_uring.a`
 
-This is the runtime shipped with the repository. It turns annotated calls
-into io_uring requests. It is also a worked example of the
+This is the runtime shipped with the repository, `runtime=io_uring`. It turns
+annotated calls into io_uring requests. It is also a worked example of the
 [Runtime API](Runtime-API.md): this page covers what it supports and then walks
 through how it implements each runtime function.
 
@@ -26,7 +26,7 @@ through how it implements each runtime function.
 - **Example declaration:**
 
   ```c
-  #pragma clang attribute push(__attribute__((annotate("filc_async", "op=pwrite", "fd=0", "bin=1", "w_dep=0"))), apply_to=function)
+  #pragma clang attribute push(__attribute__((annotate("filc_async", "runtime=io_uring", "op=pwrite", "fd=0", "bin=1", "w_dep=0"))), apply_to=function)
   void* async_pwrite(int fd, const void* buf, size_t len, unsigned long offset);
   #pragma clang attribute pop
   ```
@@ -36,15 +36,25 @@ through how it implements each runtime function.
 
 ## How it works
 
+The runtime's descriptor is the only symbol programs refer to. It is declared
+in `fasync.h`, and its three functions are `static`:
+
+```c
+FILC_ASYNC_RUNTIME(io_uring, uring_submit, uring_poll, uring_validate);
+```
+
+A program that names `runtime=io_uring` links `-lfilc_async_uring`, which
+may sit next to other runtimes.
+
 ```text
-filc_async_submit(task, meta, run, args, nargs)
+uring_submit(task, meta, run, args, nargs)
   ├─ filc_async_run(task, run, args)           run the body (no lock held)
   ├─ filc_async_wait_buffer(task, args[1])     pwrite/openat: wait for the source
   └─ fasync_lock()
        queue(): validate shape → fasync_do_<op>() → SQE queued, not yet sent
      fasync_unlock()
 
-filc_async_runtime_poll(task, mode)
+uring_poll(task, mode)
   └─ fasync_lock()
        CHECK:    is the CQE there?
        PROGRESS: send queued SQEs to the kernel, then check
@@ -83,7 +93,7 @@ oldest first, for [reclaiming slots](#reclaiming-request-slots).
 
 ### Validation
 
-`filc_async_runtime_validate` parses `op=` out of `meta->opts` (`op_from`). It
+`uring_validate` parses `op=` out of `meta->opts` (`op_from`). It
 then checks the argument kinds against the op's syscall (`shape_ok`):
 
 ```c
@@ -99,8 +109,8 @@ present. An unknown op or a wrong shape aborts the program before `main`.
 ### Submit
 
 ```c
-void filc_async_submit(void* task, const filc_async_meta* meta,
-                       filc_async_run_fn run, void* staged_args, size_t nargs)
+static void uring_submit(void* task, const filc_async_meta* meta,
+                         filc_async_run_fn run, void* staged_args, size_t nargs)
 {
     filc_async_run(task, run, staged_args);          // 1. the body
     struct uring_call* c = filc_async_alloc(sizeof *c, 16);
@@ -133,7 +143,7 @@ void filc_async_submit(void* task, const filc_async_meta* meta,
 ### Poll
 
 ```c
-bool filc_async_runtime_poll(void* task, enum filc_async_poll_mode mode)
+static bool uring_poll(void* task, enum filc_async_poll_mode mode)
 {
     fasync_lock();
     struct uring_call* c = *filc_async_task_runtime_data(task);
@@ -194,7 +204,7 @@ The hand-written [explicit API](Explicit-API.md) uses the same request layer.
 `fasync_pread` keeps lazy resolution by giving each read a task of its own:
 
 ```c
-c->task = filc_async_begin(NULL, NULL);       // runtime-owned task
+c->task = filc_async_task_new(&filc_async_runtime_io_uring); // runtime-owned task
 *filc_async_task_runtime_data(c->task) = c;
 filc_async_mark_shared(c->task, buf);          // several reads may share one buffer
 ```

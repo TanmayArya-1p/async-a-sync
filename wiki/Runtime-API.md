@@ -2,23 +2,29 @@
 
 **Header:** [`runtime/src/filc_async_runtime.h`](../runtime/src/filc_async_runtime.h)
 
-This is the whole contract between the generic framework and a runtime. A
-runtime implements three functions. The framework provides six services the
-runtime may call. The framework never reads `op=` or argument shapes: which
-operations exist, and how they run, is up to the runtime.
+This is the whole contract between the generic framework and a runtime.
+
+- **What a runtime provides.** A **descriptor** holding three functions:
+  submit, poll and validate.
+- **What the framework provides.** Seven services the runtime may call.
+- **What the framework ignores.** It never reads `op=` or argument shapes.
+  Which operations exist, and how they run, is up to the runtime.
+
+Each annotated function names its runtime with `runtime=<name>`. One program
+can use several runtimes: it links each one its annotations name, and every
+call goes to the runtime of its own function.
 
 For a step-by-step guide, see [Write a runtime](Writing-a-Runtime.md). For a
 complete example, see [the io_uring runtime](io_uring-Runtime.md).
 
 - [Task lifecycle](#task-lifecycle)
-- [Functions a runtime implements](#functions-a-runtime-implements):
-  [`filc_async_submit`](#filc_async_submit),
-  [`filc_async_runtime_poll`](#filc_async_runtime_poll),
-  [`filc_async_runtime_validate`](#filc_async_runtime_validate)
+- [The runtime descriptor](#the-runtime-descriptor):
+  [`submit`](#submit), [`poll`](#poll), [`validate`](#validate)
 - [Framework services](#framework-services):
   [`filc_async_complete`](#filc_async_complete),
   [`filc_async_run`](#filc_async_run),
   [`filc_async_task_runtime_data`](#filc_async_task_runtime_data),
+  [`filc_async_task_new`](#filc_async_task_new),
   [`filc_async_resolve_buffer`](#filc_async_resolve_buffer),
   [`filc_async_mark_shared`](#filc_async_mark_shared),
   [`filc_async_wait_buffer`](#filc_async_wait_buffer)
@@ -32,7 +38,7 @@ Every annotated call is one **task**, an opaque `void*`.
 
 ```text
 stub:     filc_async_begin ─► lock deps ─► mark buffers ─► filc_async_submit ─► return task
-runtime:                                                   (start the call)
+runtime:                                                   rt->submit: start the call
                                                  ... later, on any thread ...
 runtime:  filc_async_complete(task, result)   ─► buffers resolve, locks release
 program:  filc_async_poll / filc_async_wait   ─► result delivered, handle retired
@@ -44,26 +50,61 @@ program:  filc_async_poll / filc_async_wait   ─► result delivered, handle re
    here for conflicting calls.
 3. **Buffers are marked pending.** Every `bout=`, `buf=` and unannotated
    pointer argument. The stub waits here for calls that still own the buffer.
-4. **The stub calls `filc_async_submit`.** When that returns, the stub returns
-   the task to the caller.
+4. **The stub calls `filc_async_submit`.** The framework passes the call to
+   the `submit` of the runtime the function names (`meta->runtime`). When that
+   returns, the stub returns the task to the caller.
 5. **The runtime reports the outcome** with `filc_async_complete`, exactly
    once, from any thread, at any time: during submit, during a poll, or on its
    own thread.
 6. **Completion.** The framework clears the task's pending marks, releases its
    locks, and wakes every thread waiting on it.
 
-Until step 5, the framework asks the runtime about the task with
-`filc_async_runtime_poll` whenever something needs the task finished: a
+Until step 5, the framework asks the task's runtime about it with that
+runtime's `poll` whenever something needs the task finished: a
 `filc_async_wait` or `filc_async_poll`, an access to one of its buffers, or a
 later call that needs one of its locks or buffers.
 
-## Functions a runtime implements
-
-### filc_async_submit
+## The runtime descriptor
 
 ```c
-void filc_async_submit(void* task, const filc_async_meta* meta,
-                       filc_async_run_fn run, void* staged_args, size_t nargs);
+typedef struct filc_async_runtime {
+    const char* name;
+    void (*submit)(void* task, const filc_async_meta* meta,
+                   filc_async_run_fn run, void* staged_args, size_t nargs);
+    bool (*poll)(void* task, enum filc_async_poll_mode mode);
+    bool (*validate)(const filc_async_meta* meta);
+} filc_async_runtime;
+
+#define FILC_ASYNC_RUNTIME(name, submit, poll, validate) \
+    const filc_async_runtime filc_async_runtime_##name = { #name, submit, poll, validate }
+```
+
+**Defining it.** A runtime named `foo` defines its descriptor as a global
+called `filc_async_runtime_foo`, normally with the macro, and keeps its three
+functions `static`:
+
+```c
+FILC_ASYNC_RUNTIME(foo, foo_submit, foo_poll, foo_validate);
+```
+
+**How calls find it.** A function annotated `runtime=foo` has
+`meta->runtime == &filc_async_runtime_foo`. The pass emits that reference, so
+a program that names `foo` without linking it fails to link with
+`undefined reference to pizlonated_filc_async_runtime_foo`.
+
+**Several runtimes.** The names only have to differ. The runtimes share the
+framework's tasks, locks and pending buffers:
+
+- a call waiting on a call of another runtime polls it through that
+  runtime's `poll`;
+- dependency keys and buffers order calls across runtimes, exactly as within
+  one.
+
+### submit
+
+```c
+void (*submit)(void* task, const filc_async_meta* meta,
+               filc_async_run_fn run, void* staged_args, size_t nargs);
 ```
 
 Starts `task`. By the time submit is called, the call has taken its
@@ -85,13 +126,13 @@ dependency locks and marked its buffers.
   completes. The framework keeps the array itself reachable from the task.
 - An unsupported call is reported by completing it with a negative errno,
   such as `-EINVAL`. Do not abort.
-- Called on the thread that made the annotated call, with no framework lock
-  held.
+- Called through the framework's `filc_async_submit`, on the thread that
+  made the annotated call, with no framework lock held.
 
-### filc_async_runtime_poll
+### poll
 
 ```c
-bool filc_async_runtime_poll(void* task, enum filc_async_poll_mode mode);
+bool (*poll)(void* task, enum filc_async_poll_mode mode);
 ```
 
 Asks about `task`. Returns `true` once `filc_async_complete` has been called
@@ -117,18 +158,19 @@ for it.
 - **Threads.** Poll may be called from any thread, concurrently with submit
   and with other polls.
 - **Tasks the runtime starts itself.** Poll is also called for these (see
-  [`filc_async_task_runtime_data`](#filc_async_task_runtime_data)).
+  [`filc_async_task_new`](#filc_async_task_new)).
 
-### filc_async_runtime_validate
+### validate
 
 ```c
-bool filc_async_runtime_validate(const filc_async_meta* meta);
+bool (*validate)(const filc_async_meta* meta);
 ```
 
 Returns whether the runtime can run calls described by `meta`.
 
-- **When it runs.** The pass-emitted constructor calls it once per annotated
-  function in each translation unit, before `main`. That constructor has
+- **When it runs.** The pass-emitted constructor calls it once for each
+  annotated function that names this runtime, in each translation unit,
+  before `main`. That constructor has
   priority 65535, so it runs last.
 - **On failure.** A `false` return aborts the program with
   `function cannot be registered on this runtime`.
@@ -191,13 +233,19 @@ Returns the address of one word of per-task storage for the runtime.
   the call is complete. A concurrent poll that reads `NULL` treats the task
   as not yet submitted.
 
-**Tasks the runtime starts itself.** `filc_async_begin(NULL, NULL)` creates a
-task without a stub, for work that did not come from an annotated call. The
-io_uring runtime uses one for each explicit `fasync_pread`. Such a task:
+### filc_async_task_new
+
+```c
+void* filc_async_task_new(const filc_async_runtime* rt);
+```
+
+Creates a task of runtime `rt` without a stub, for work that did not come from
+an annotated call. The io_uring runtime uses one for each explicit
+`fasync_pread`. Such a task:
 
 - has no descriptor and no locks;
 - is not counted in the statistics;
-- is polled and completed like any other.
+- is polled through `rt->poll` and completed like any other.
 
 ### filc_async_resolve_buffer
 
@@ -241,7 +289,7 @@ the stub already waited when it marked it.
 ## Types
 
 ```c
-typedef long (*filc_async_run_fn)(void* staged_args);
+typedef long (*filc_async_run_fn)(void* staged_args);   /* in filc_async.h */
 
 enum filc_async_poll_mode {
     FILC_ASYNC_POLL_CHECK,
@@ -290,11 +338,14 @@ read of 6 bytes look larger than `UINT_MAX`.
 - **Build with Fil-C.** Compile the runtime with Fil-C, and link it after the
   program and before the final `-lpizlo -lc`
   (see [Build and link](Building-and-Linking.md#link-a-program)).
+- **Keep private symbols private.** Make the runtime's functions and state
+  `static`, and export only the descriptor (and any API of your own), so
+  several runtimes link into one program without clashing.
 - **Allocate with `filc_async_alloc`.** Use `filc_async_alloc(size, align)`
   (in `filc_async_alloc.h`) for per-call state. It returns zeroed memory, is
   thread-safe, and keeps memory reachable for the GC.
-- **Lock ordering.** The framework never holds its lock while calling
-  `filc_async_submit` or `filc_async_runtime_poll`. It is safe to call
+- **Lock ordering.** The framework never holds its lock while calling a
+  runtime's `submit` or `poll`. It is safe to call
   `filc_async_complete` with the runtime's lock held. Do not hold a runtime
   lock across `filc_async_run` or `filc_async_wait_buffer`, which may call
   back into the runtime.

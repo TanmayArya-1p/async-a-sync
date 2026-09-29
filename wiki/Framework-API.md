@@ -91,8 +91,8 @@ constructor, at priority 65535, that calls `filc_async_validate_table` on its
 descriptors before `main`. Each descriptor must pass two checks:
 
 - a dependency-bits check;
-- the validator. That is the runtime's `filc_async_runtime_validate`, unless
-  the program installed one.
+- the validator. That is the `validate` of the runtime the function names,
+  unless the program installed one.
 
 **Overriding the validator.** A program can install its own validator from an
 earlier constructor with `filc_async_set_validator`, as
@@ -139,6 +139,7 @@ typedef struct {
     uint32_t    flags;         /* reserved, 0 */
     uint32_t    result;        /* FILC_ASYNC_RESULT_PTR or FILC_ASYNC_RESULT_WORD */
     const char* const* opts;   /* NULL-terminated copy of every option string */
+    const struct filc_async_runtime* runtime; /* &filc_async_runtime_<name> from runtime=<name> */
     struct {
         uint32_t kind;         /* FILC_ASYNC_ARG_* */
         uint32_t dependency;   /* FILC_ASYNC_DEP_* bits and namespace */
@@ -147,7 +148,7 @@ typedef struct {
 ```
 
 **The layout is ABI.** In the Fil-C layout, `name` is at offset 0, `nargs` at
-16, `opts` at 32 and `args[0]` at 48. The pass emits the same layout
+16, `opts` at 32, `runtime` at 48 and `args[0]` at 64. The pass emits the same layout
 field for field. When you add a field, change the header, the pass
 (`FilAsync.cpp`), and the metadata tests together.
 
@@ -186,6 +187,8 @@ void* filc_async_begin(const filc_async_meta* meta, void* staged_args);
 void  filc_async_lock_word(void* task, uint64_t value, uint32_t space, uint32_t mode);
 void  filc_async_lock_ptr(void* task, const void* ptr, uint32_t space, uint32_t mode);
 void  filc_async_mark_pending(void* task, void* buf);
+void  filc_async_submit(void* task, const filc_async_meta* meta,
+                        filc_async_run_fn run, void* staged_args, size_t nargs);
 ```
 
 The stub is equivalent to:
@@ -205,6 +208,7 @@ void* __filc_async_stub_F(int fd, void* buf, size_t len, unsigned long off)
 
 | Function | Behavior |
 |---|---|
-| `filc_async_begin` | Creates a task in the running state. A `NULL` meta creates a runtime-owned task (see [Runtime API](Runtime-API.md#filc_async_task_runtime_data)). |
+| `filc_async_begin` | Creates a task in the running state, belonging to `meta->runtime`. A runtime creates tasks of its own with [`filc_async_task_new`](Runtime-API.md#filc_async_task_new) instead. |
 | `filc_async_lock_word` / `_ptr` | Queues a read or write lock on a value or object in namespace `space` (the dependency bits minus the mode). It waits, polling the holder through the runtime, until the lock is granted. Released when the task completes. |
 | `filc_async_mark_pending` | Waits for every other call that owns the object `buf` points into, then marks it pending for `task` and sets the pending flag in the object's header. With a `NULL` task, the mark has no owner and only `filc_async_mark_resolved` clears it. |
+| `filc_async_submit` | Hands the call to `meta->runtime->submit`. |

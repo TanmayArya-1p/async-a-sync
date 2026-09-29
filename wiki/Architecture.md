@@ -16,22 +16,30 @@ the [Runtime API](Runtime-API.md) and [Framework API](Framework-API.md).
  │ tasks, dependency locks, pending marks, header flag, waits  │
  │ knows nothing about ops or io_uring                         │
  └──────────────────────────────┬──────────────────────────────┘
-                                │ filc_async_runtime.h
- ┌──────────────── runtime (e.g. libfilc_async_uring.a) ───────┐
- │ decides what a call does and when it completes              │
- └─────────────────────────────────────────────────────────────┘
+                                │ filc_async_runtime.h: one descriptor per runtime
+ ┌─── runtime=io_uring ────────┐  ┌─── runtime=<other> ─────────┐
+ │ libfilc_async_uring.a       │  │ another linked runtime      │
+ │ io_uring requests           │  │ e.g. a thread pool          │
+ └─────────────────────────────┘  └─────────────────────────────┘
 ```
 
 - **The compiler** turns each call into a call to a stub, and makes every
   pointer access check whether its object is pending.
 - **The framework** tracks who owns what. It holds tasks, buffer ownership
   (marks), and dependency locks, and it waits by polling the runtime.
-- **The runtime** executes calls. The shipped runtime turns them into io_uring
-  requests. Any runtime that implements the three functions of
-  `filc_async_runtime.h` can replace it. `tests/mock_runtime.c` does.
+- **Runtimes** execute calls.
+  - **Choosing one.** Each annotated function names its runtime with
+    `runtime=<name>`, and the program links every runtime it names.
+  - **What a runtime is.** A `filc_async_runtime` descriptor with submit, poll
+    and validate functions, exported as `filc_async_runtime_<name>`.
+  - **The shipped runtime.** `runtime=io_uring` turns calls into io_uring
+    requests. `tests/mock_runtime.c` is a second runtime, `runtime=mock`, and
+    `tests/t_two_runtimes.c` uses both in one program.
 
-The framework references no symbol of any runtime except those three
-functions. `tests/check_linkage.sh` and the mock-runtime test enforce that.
+**No runtime symbols in the framework.** The framework references no symbol
+of any runtime. It reaches a task's runtime only through the descriptor its
+function's `filc_async_meta` points to. `tests/check_linkage.sh` enforces
+this.
 
 ## One call, end to end
 
@@ -42,14 +50,14 @@ read_at(fd, buf, len, 0)
         task = filc_async_begin(meta, staged)
         filc_async_lock_word(task, fd, ns, READ)         one per r_dep=/w_dep=
         filc_async_mark_pending(task, buf)               one per output buffer
-        filc_async_submit(task, meta, run, staged, 4)    ─► runtime
+        filc_async_submit(task, meta, run, staged, 4)    ─► meta->runtime->submit
         return task
 ...
 c = buf[0]
   └─► if (header(buf).aux & PENDING)                    (emitted by FilPizlonator)
         filc_resolve_pending(buf, lower)                 ─► framework
           wait for every task owning the object
-            filc_async_runtime_poll(task, BLOCK)         ─► runtime
+            task's runtime->poll(task, BLOCK)            ─► runtime
               ... filc_async_complete(task, result)      ◄─ runtime
           marks cleared, flag cleared, locks released
       load buf[0]
@@ -151,7 +159,8 @@ the object's lower bound.
 **Waiting.**
 
 - **The only way to wait.** Every wait (for a lock holder, a buffer's owner,
-  or `filc_async_wait`) is a loop of `filc_async_runtime_poll(task, BLOCK)`.
+  or `filc_async_wait`) is a loop of polls with `BLOCK`, through the runtime
+  of the task being waited for.
 - **Progress.** The framework never assumes the runtime makes progress on its
   own. A runtime that queues work, like io_uring, gets its chance to flush
   whenever someone needs a result.
@@ -164,8 +173,8 @@ still reference stays reachable.
 
 ## Runtime
 
-A runtime implements submit, poll and validate, and reports results with
-`filc_async_complete`. Because the framework already did the locking and
+A runtime implements submit, poll and validate, exports them in its
+descriptor, and reports results with `filc_async_complete`. Because the framework already did the locking and
 marking, a runtime can be very small (see [Write a runtime](Writing-a-Runtime.md)).
 
 The io_uring runtime:
@@ -177,6 +186,20 @@ The io_uring runtime:
 
 A loop of calls therefore reaches the kernel in one batch. See
 [The io_uring runtime](io_uring-Runtime.md).
+
+### Several runtimes in one program
+
+Runtimes never talk to each other. Everything that connects calls on
+different runtimes is framework state:
+
+- **Locks.** A `w_dep=` key taken by a call on one runtime makes a call on
+  another runtime wait in its stub.
+- **Pending buffers.** A buffer one runtime's call still owns makes an access
+  from a body run by another runtime wait.
+- **Waiting.** The waiter polls the owner through the owner's own runtime.
+
+So a program can hand some functions to io_uring and others to, say, a
+thread pool, and still order them with the usual annotations.
 
 ## Threading
 

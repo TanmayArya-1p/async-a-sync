@@ -8,8 +8,9 @@ calls run asynchronously.
 - Every call to it returns at once.
 - The first access to a buffer the call produces waits for the call to finish.
 
-The framework does not depend on any runtime. This repository ships one
-runtime, which issues calls as io_uring requests.
+The framework does not depend on any runtime. Each annotated function names
+the runtime that runs it, and one program can use several. This repository
+ships one runtime, which issues calls as io_uring requests.
 
 The pages below follow the [Diátaxis](https://diataxis.fr) layout. Tutorials
 teach, how-to guides solve one task, reference pages describe the interfaces
@@ -24,8 +25,8 @@ exactly, and explanation pages cover the design.
 
 - [Annotate a function](Annotating-Functions.md): turn a function into an
   asynchronous call, declare its buffers and its dependencies.
-- [Write a runtime](Writing-a-Runtime.md): implement the three runtime
-  functions and link your runtime in place of io_uring.
+- [Write a runtime](Writing-a-Runtime.md): implement a runtime's three
+  functions and link it next to or instead of io_uring.
 - [Build and link](Building-and-Linking.md): build the patched compiler and the
   libraries, and link a program against them.
 - [Troubleshooting](Troubleshooting.md): common build, link and runtime failures.

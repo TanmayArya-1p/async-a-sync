@@ -9,15 +9,19 @@ meaning of every option, see the [annotation reference](Annotation-Reference.md)
 Wrap the declaration or definition in a `filc_async` annotation pragma:
 
 ```c
-#pragma clang attribute push(__attribute__((annotate("filc_async", "op=pread", "fd=0", "bout=1"))), apply_to=function)
+#pragma clang attribute push(__attribute__((annotate("filc_async", "runtime=io_uring", "op=pread", "fd=0", "bout=1"))), apply_to=function)
 void* read_at(int fd, void* buf, size_t len, unsigned long offset);
 #pragma clang attribute pop
 ```
 
+- **`runtime=`.** Names the runtime that runs the call. It is required, and
+  the program must link that runtime: `runtime=io_uring` needs
+  `-lfilc_async_uring`. Different functions in one program may name
+  different runtimes.
 - **Return type.** Must be a pointer or `void`. A call returns the call's task
   handle. The compiler leaves a call that expects a scalar return as a direct
   call and prints a diagnostic.
-- **`op=`.** Names the operation. The linked runtime decides which ops exist.
+- **`op=`.** Names the operation. The function's runtime decides which ops exist.
   The io_uring runtime supports `pread`, `pwrite`, `openat`, `fsync` and `close`
   (see [its reference](io_uring-Runtime.md#supported-operations)). An op the
   runtime does not support aborts the program at startup.
@@ -62,11 +66,11 @@ something the buffers do not show, such as a file descriptor, list what each
 call reads and writes:
 
 ```c
-#pragma clang attribute push(__attribute__((annotate("filc_async", "op=pwrite", "fd=0", "bin=1", "w_dep=0"))), apply_to=function)
+#pragma clang attribute push(__attribute__((annotate("filc_async", "runtime=io_uring", "op=pwrite", "fd=0", "bin=1", "w_dep=0"))), apply_to=function)
 void* write_at(int fd, const void* buf, size_t len, unsigned long offset);
 #pragma clang attribute pop
 
-#pragma clang attribute push(__attribute__((annotate("filc_async", "op=pread", "fd=0", "bout=1", "r_dep=0"))), apply_to=function)
+#pragma clang attribute push(__attribute__((annotate("filc_async", "runtime=io_uring", "op=pread", "fd=0", "bout=1", "r_dep=0"))), apply_to=function)
 void* read_at(int fd, void* buf, size_t len, unsigned long offset);
 #pragma clang attribute pop
 ```

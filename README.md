@@ -18,12 +18,14 @@ runs asynchronously underneath.
   its object's header. The patched compiler tests a pending flag there before
   each access, so the first access to a pending buffer waits for its call, at
   the access site itself.
-- **Pluggable runtimes.** The framework does not depend on any runtime. This
-  repository ships one that turns calls into io_uring requests and sends
-  them to the kernel in one batch, the first time a result is needed.
+- **Pluggable runtimes.** The framework does not depend on any runtime. Each
+  annotated function names the runtime that runs it (`runtime=<name>`), and
+  one program can link several. This repository ships one that turns calls
+  into io_uring requests and sends them to the kernel in one batch, the first
+  time a result is needed.
 
 ```c
-#pragma clang attribute push(__attribute__((annotate("filc_async", "op=pread", "fd=0", "bout=1"))), apply_to=function)
+#pragma clang attribute push(__attribute__((annotate("filc_async", "runtime=io_uring", "op=pread", "fd=0", "bout=1"))), apply_to=function)
 void* read_at(int fd, void* buf, size_t len, unsigned long offset);
 #pragma clang attribute pop
 
