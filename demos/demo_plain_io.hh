@@ -2,9 +2,11 @@
 
 #include "utils.hh"
 
-static int demo_plain_io(void) {
+static int demo_plain_io() {
     for (int i = 0; i < demo_n; i++) {
         if (!fasync_pread(demo_fd[i], demo_buf[i], demo_bytes, 0)) {
+            fprintf(stderr, "fasync_pread %s: %s\n", demo_paths[i],
+                    fasync_last_error());
             return 0;
         }
     }

@@ -217,7 +217,10 @@ int main(void) {
   const char* path = "/tmp/async-a-sync_fdchain_payload.txt";
   const char* payload = "chained-before-open";
   int fd = open(path, O_CREAT | O_TRUNC | O_RDWR, 0644);
-  write(fd, payload, strlen(payload));
+  if (fd < 0 || write(fd, payload, strlen(payload)) != (ssize_t)strlen(payload)) {
+    perror(path);
+    return 1;
+  }
   close(fd);
 
   struct io_uring_params p;
@@ -299,7 +302,7 @@ int main(void) {
          b_ok ? "WORKS -- genuine kernel promise pipelining" : "does NOT work");
 
   /* A probe, not a pass/fail: it establishes what the kernel supports so the
- * runtime can be built around it (see docs/ARCHITECTURE.md §5). */
+ * runtime can be built around it (see wiki/Explicit-API.md). */
   printf("\nFINDING: explicit-slot openat honoured: %s\n",
          a_ok ? "yes" : "no");
   printf("FINDING: kernel-native fd chaining:     %s\n",

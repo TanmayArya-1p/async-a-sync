@@ -2,125 +2,88 @@
 
 **Write blocking-looking synchronous C that runs asynchronously**
 
+async-a-sync is a compiler and runtime system built on top of
+[Fil-C](https://github.com/pizlonator/fil-c). It brings zero-syntax implicit
+asynchronous futures to C: you write ordinary, blocking-looking code, and it
+runs asynchronously underneath.
 
-async-a-sync is a compiler and runtime system built on top of [Fil-C](https://github.com/pizlonator/fil-c) that brings zero-syntax implicit asynchronous futures to C. It allows developers to write ordinary, blocking-looking C code that is fully asynchronously underneath at runtime.
+**How it works:**
 
-It transforms blocking function calls into asynchronous backend submissions that return immediately. Values mutated by these operations carry provenance tags that propagate through pointer arithmetic (This is already provided by Fil-C). By extending Fil-C's [InvisiCaps](https://fil-c.org/invisicaps), our compiler automatically inserts lazy resolution barriers before memory accesses to results of async functions that resolve any pending values transparently at the access site itself.
-
-Request batching is deferred until demand, and resolution polls completion queues directly in userspace memory. The asynchronous backend interface is supposed to be generic across arbitrary asynchronous backends. In this repo we provide an io_uring driver demonstrating substantial ergonomic and throughput gains on system call workloads.
-
-**The crux is a single synchronous-looking loop as follows:**
+- **Annotated calls return at once.** A call to an annotated function is handed
+  to an asynchronous runtime and returns immediately.
+- **Buffers stay pending.** The buffers the call produces are pending until it
+  completes.
+- **The first access waits.** Fil-C's
+  [InvisiCaps](https://fil-c.org/invisicaps) give every pointer a reference to
+  its object's header. The patched compiler tests a pending flag there before
+  each access, so the first access to a pending buffer waits for its call, at
+  the access site itself.
+- **Pluggable runtimes.** The framework does not depend on any runtime. Each
+  annotated function names the runtime that runs it (`runtime=<name>`), and
+  one program can link several. This repository ships one that turns calls
+  into io_uring requests and sends them to the kernel in one batch, the first
+  time a result is needed.
 
 ```c
-// request every file; the requests only enqueue and nothing blocks or context switches
-for (int i = 0; i < n; i++)
-  fasync_pread(fd[i], buf[i], len, 0);
+#pragma clang attribute push(__attribute__((annotate("filc_async", "runtime=io_uring", "op=pread", "fd=0", "bout=1"))), apply_to=function)
+void* read_at(int fd, void* buf, size_t len, unsigned long offset);
+#pragma clang attribute pop
 
-// count every file; the first buffer access is where the queue reaches
-// the kernel lazily and as one batch. No submit or wait call appears here
+// request every file: each call only queues a request; nothing blocks
+for (int i = 0; i < n; i++)
+  read_at(fd[i], buf[i], len, 0);
+
+// count every file: the first access sends the whole batch to the kernel
+// and waits for that one buffer; no submit or wait call appears anywhere
 for (int i = 0; i < n; i++)
   if (count_words(buf[i]) != expect[i])
     return 1;
-
-// The same code compiled in a normal synchronous model would block in the first loop until it has read every file.
 ```
+
+Compiled normally, the first loop would block on every read in turn. Here,
+512 cold-cache reads finish about 3.5x faster than blocking `pread`.
 
 ## Quickstart
 
-Prerequisites are a Fil-C 0.685 distribution and a Fil-C source checkout, both
-under `vendor/`:
+On Linux x86-64 with io_uring available:
 
 ```sh
-# the filc compiler, its runtime, and pizfix.
-mkdir -p vendor && cd vendor
-curl -LO https://github.com/pizlonator/fil-c/releases/download/v0.685/filc-0.685-linux-x86_64.tar.xz
-tar xf filc-0.685-linux-x86_64.tar.xz && cd ..
+# Fil-C 0.685 and the source revision the compiler patches are tested on
+mkdir -p vendor
+curl -L https://github.com/pizlonator/fil-c/releases/download/v0.685/filc-0.685-linux-x86_64.tar.xz \
+  | tar -C vendor -xJ
+git clone --depth 1 --filter=blob:none --sparse -b deluge \
+  https://github.com/pizlonator/fil-c.git vendor/fil-c-src
+git -C vendor/fil-c-src sparse-checkout set clang cmake filc libpas lld llvm third-party
+git -C vendor/fil-c-src fetch --depth 1 --filter=blob:none origin d80c8bba1c58f68c33b0ed5e71113c44354f5bb8
+git -C vendor/fil-c-src checkout FETCH_HEAD
 
-# filc sources that we need to modify in this repo for building
-git clone --depth 1 --filter=blob:none --sparse \
-  -b deluge https://github.com/pizlonator/fil-c.git vendor/fil-c-src
-(cd vendor/fil-c-src && git sparse-checkout set filc libpas llvm/lib/Transforms \
-  llvm/include/llvm/Transforms clang/lib/CodeGen)
+./runtime/build.sh           # the framework and the io_uring runtime
+JOBS=8 ./compiler/build.sh   # the patched clang: the long step
+./tests/run.sh               # the test suite
+make demo-pragma             # the annotated-call demos
 ```
 
-Build, then run the demos:
+In Docker, run with `--security-opt seccomp=unconfined`. The default seccomp
+profile blocks io_uring. Rosetta does not implement io_uring at all.
 
-```sh
-./runtime/build.sh          # the io_uring runtime
-./compiler/build.sh         # the patched clang; the long step
+## Documentation
 
-# there are 4 demos in this repo
-make demo-wordcount         # this has the timing measurements
-make demo-plain             # a simple read loop with no submit/wait calls
-make demo-provenance        # dependency annotation of async function calls
+The documentation lives in [`wiki/`](wiki/Home.md):
 
-./tests/run.sh              # full test suite, all four demos included
-```
-
-## The demos
-
-| demo | what it shows |
+| | |
 |---|---|
-| `demo_plain_io` | the ergonomics case: request every file, count every file, no marker anywhere |
-| `demo_wordcount` | one word count program ran twice, blocking and implicit, over 512 files |
-| `demo_provenance` | a write and a read on two descriptors of one file, ordered by a provenance token |
-| `demo_async_io` | lazy resolution, blocking vs issuing-all, the dependency DAG |
-
-
-## Results
-
-Measured outputs from this repo's own programs. timings vary by machine.
-
-`demos/run_wordcount.sh` builds one synchronous looking word-count C program two ways and times both
-over 512 files with the page cache dropped.
-
-```
-  sync        25.34 ms  (338154 words)
-  implicit    13.80 ms  (338154 words)
-  implicit finish in 1.84x the time
-```
-
-**Throughput regime:** `tests/stage7_throughput.c`, 20,000 reads of 64 bytes
-from a warm page cache. Blocking code pays one kernel entry per read; the
-implicit program pays 1302 for all 20 000, submitted 200 per batch, with the
-completion ring polled in userspace:
-
-```
-  blocking:  14.98 ms  (20000 kernel entries, one per read)
-  async:     13.61 ms  (1302 kernel entries: 100 submits + 1202 waits)
-  entries saved: 15.4x         observed wall clock: 1.10x
-```
-
-**Latency regime:** `tests/stage8_latency.c`, 512 files of 4 KiB, page cache
-dropped before each pass. Three arms read the same bytes: `A` blocks per file, `B`
-uses io_uring with an explicit wait, `C` is the implicit program. `C` is 2.71x
-faster than `A` and 1.22x faster than `B`, because its first access publishes the
-whole batch lazily rather than submitting eagerly:
-
-```
-  cache dropped:  22.37 ms  (43.68 us/file; 11x cold vs warm)
-  C vs A (implicit vs blocking):            2.71x
-  C vs B (implicit vs explicit io_uring):   1.22x
-  all three arms read the same bytes, the hook resolved C's buffers
-```
-
+| **Tutorial** | [Getting started](wiki/Getting-Started.md) |
+| **How-to** | [Annotate a function](wiki/Annotating-Functions.md) · [Write a runtime](wiki/Writing-a-Runtime.md) · [Build and link](wiki/Building-and-Linking.md) · [Troubleshooting](wiki/Troubleshooting.md) |
+| **Reference** | [Annotations](wiki/Annotation-Reference.md) · [Runtime API](wiki/Runtime-API.md) · [Framework API](wiki/Framework-API.md) · [io_uring runtime](wiki/io_uring-Runtime.md) · [Explicit API](wiki/Explicit-API.md) · [Tests](wiki/Testing.md) |
+| **Explanation** | [Architecture](wiki/Architecture.md) · [Demos and performance](wiki/Performance.md) · [Limitations](wiki/Limitations.md) · [Glossary](wiki/Glossary.md) |
 
 ## Layout
 
 | Path | What it is |
 |---|---|
-| `runtime/` | io_uring driver, lazy resolution, provenance, dependency DAG |
-| `compiler/` | the modified FilPizlonator pass that inserts the resolution hook |
-| `demos/` | the showcase (`make demo-*`) |
+| `compiler/` | overrides and patches for Fil-C's clang: the FilAsync pass and the access hook |
+| `runtime/` | the async framework, the runtime interface, and the io_uring runtime |
+| `demos/` | the demos (`make help`) |
 | `tests/` | the test suite (`./tests/run.sh`) |
-
-
-## Caveats
-
-There are a few caveats and drawbacks that are yet to be addressed. We hope to flesh this out in the future.
-
-- **Fil-C's Overhead** Fil-C is documented at 1.5-4x slower than gcc. Thus the gains must be compensated by the asynchronous nature of the workload.
-- **Hidden dependencies must be annotated** invisible sharing is declared with an effect set or a token.
-- **Supported calls are a subset.** `pread`, `pwrite`, `openat`, `close`, `fsync`. Plain `read` is out because it has no offset. Very few syscalls are supported by `io_uring`, which limited our work.
-- **Speedup scope is limited right now:** Significant speedup is only observed in reads that dont read from page cache (via `O_DIRECT`).
-- **The device is not fully saturated.** The implicit path reaches ~52 kIOPS where plain threads sustain ~184 kIOPS; the gap is an `io-wq` worker ceiling which must be tuned for the specific workload.
+| `wiki/` | the documentation |

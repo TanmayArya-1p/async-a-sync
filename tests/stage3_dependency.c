@@ -32,10 +32,10 @@ static void test_analysis(void) {
   void* x = malloc(4096);
   void* y = malloc(4096); /* separate GC object: provably disjoint from x */
 
-  struct fasync_access wx[] = {{x, 128, FASYNC_OUT}};
-  struct fasync_access rx[] = {{x, 128, FASYNC_IN}};
-  struct fasync_access wy[] = {{y, 128, FASYNC_OUT}};
-  struct fasync_access ry[] = {{y, 128, FASYNC_IN}};
+  struct fasync_access wx[] = {FASYNC_ACCESS_RANGE(x, 128, FASYNC_OUT)};
+  struct fasync_access rx[] = {FASYNC_ACCESS_RANGE(x, 128, FASYNC_IN)};
+  struct fasync_access wy[] = {FASYNC_ACCESS_RANGE(y, 128, FASYNC_OUT)};
+  struct fasync_access ry[] = {FASYNC_ACCESS_RANGE(y, 128, FASYNC_IN)};
 
   struct fasync_op ops[4];
   unsigned edges[MAX_EDGES];
@@ -156,7 +156,7 @@ static void test_execution(void) {
   for (int i = 0; i < N_BLOCKS; i++) {
     g_bufs[i] = malloc(BLOCK);
     memset(g_bufs[i], 0, BLOCK);
-    acc[i] = (struct fasync_access){g_bufs[i], BLOCK, FASYNC_OUT};
+    acc[i] = FASYNC_ACCESS_RANGE(g_bufs[i], BLOCK, FASYNC_OUT);
     ops[i] = (struct fasync_op){"read-block", &acc[i], 1};
   }
 

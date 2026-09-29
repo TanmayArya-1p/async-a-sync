@@ -1,7 +1,7 @@
 /* stage6_fd_provenance.c -- provenance attached to descriptors. A buffer's
  * provenance is a range; a descriptor's is the slot of the request that will
  * produce it. Passing the pending descriptor to fasync_pread creates the edge;
- * nothing has to be declared. See docs/ARCHITECTURE.md §5. */
+ * nothing has to be declared. See wiki/Explicit-API.md. */
 
 #include <stdio.h>
 #include <stdlib.h>

@@ -4,10 +4,20 @@
 
 typedef unsigned long fasync_id; /* one in-flight request */
 
-void* fasync_resolve_pending(void* ptr, size_t size);
+/* The io_uring runtime's descriptor: what runtime=io_uring names. */
+struct filc_async_runtime;
+extern const struct filc_async_runtime filc_async_runtime_io_uring;
 
-/* hook the patched compiler emits */
-void* filc_resolve_pending(void* ptr, size_t size);
+/* Threading: one io_uring ring and request table serve the process, behind
+ * one lock, so any thread may issue requests and wait on them. The lock adds
+ * safety, not parallelism: requests from all threads share the ring.
+ *
+ * A buffer passed to fasync_pread is pending until its read completes: the
+ * compiler's access hook, through the async framework, waits for it on first
+ * access. Code the patched compiler did not build calls fasync_resolve_pending
+ * (or FASYNC_ACCESS) before touching such a buffer. */
+
+void* fasync_resolve_pending(void* ptr, size_t size);
 
 /* no-op with the patched compiler */
 #ifdef FASYNC_COMPILER_INSERTS_CHECKS
@@ -55,12 +65,8 @@ struct fasync_stats {
   unsigned long kernel_submit_entries;
   unsigned long kernel_wait_entries; /* context switches actually taken */
   unsigned long userspace_cq_polls;
-  unsigned long resolve_calls;
-  unsigned long fast_path_hits;
-  unsigned long spin_rounds;
   unsigned long parks;
   unsigned long completions_reaped;
-  unsigned long memo_hits;
 };
 void fasync_get_stats(struct fasync_stats* out);
 void fasync_reset_stats(void);

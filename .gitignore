@@ -7,3 +7,4 @@ slides
 docs
 idea.md
 .cache
+compile_commands.json

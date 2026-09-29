@@ -1,7 +1,7 @@
 /* stage2_lazy_submit.c -- no fasync_submit(): enqueueing is a memory op that
  * reaches nothing, and the first genuine access to a pending buffer publishes
  * the whole queue in one non-blocking enter. The FASYNC_ACCESS() calls stand in
- * for the compiled-in hook (docs/ARCHITECTURE.md). */
+ * for the compiled-in hook (wiki/Architecture.md). */
 
 #include <stdio.h>
 #include <stdlib.h>

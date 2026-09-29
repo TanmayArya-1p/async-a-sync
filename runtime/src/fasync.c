@@ -1,24 +1,27 @@
 #include <stdfil.h>
 #include <pizlonated_syscalls.h>
 
+#include <pthread.h>
 #include <string.h>
+#include <errno.h>
 
 #include "fasync.h"
 #include "fasync_io_uring.h"
 #include "fasync_syscalls.h"
 #include "fasync_shared.h"
 #include "fasync_internal.h"
+#include "filc_async_runtime.h"
 
 /* ring depth matches request table */
 #define FASYNC_RING_ENTRIES 1024
-
-/* must match native spin limit */
-#define FASYNC_SPIN_LIMIT 20000
 
 static struct fasync_req_shared req_slots[FASYNC_MAX_INFLIGHT];
 
 static void fasync_req_table_init(void);
 static unsigned int req_next_gen = 0;
+
+/* the sqe len field is 32 bits wide */
+#define FASYNC_MAX_LEN 0xFFFFFFFFUL
 
 static volatile unsigned long g_inflight = 0;
 
@@ -51,12 +54,36 @@ static struct fasync_shared g_shared;
 
 static const char* g_last_error = "";
 
-void fasync_reset_stats(void) { memset(&g_stats, 0, sizeof(g_stats)); }
+static pthread_mutex_t g_runtime_lock;
+static pthread_once_t g_runtime_lock_once = PTHREAD_ONCE_INIT;
+
+static void fasync_lock_init(void) {
+  pthread_mutexattr_t attr;
+  pthread_mutexattr_init(&attr);
+  pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_RECURSIVE);
+  pthread_mutex_init(&g_runtime_lock, &attr);
+  pthread_mutexattr_destroy(&attr);
+}
+
+void fasync_lock(void) {
+  pthread_once(&g_runtime_lock_once, fasync_lock_init);
+  pthread_mutex_lock(&g_runtime_lock);
+}
+
+void fasync_unlock(void) { pthread_mutex_unlock(&g_runtime_lock); }
+
+void fasync_reset_stats(void) {
+  fasync_lock();
+  memset(&g_stats, 0, sizeof(g_stats));
+  fasync_unlock();
+}
 
 void fasync_get_stats(struct fasync_stats* out) {
   if (!out)
     return;
+  fasync_lock();
   *out = g_stats;
+  fasync_unlock();
 }
 
 const char* fasync_last_error(void) { return g_last_error; }
@@ -75,6 +102,7 @@ static int fasync_ring_init(void) {
   void* sqes = zgc_aligned_alloc(4096, sqes_bytes);
   if (!rings || !sqes) {
     g_last_error = "out of memory allocating ring memory";
+    errno = ENOMEM;
     return -1;
   }
 
@@ -118,21 +146,10 @@ static int fasync_ring_init(void) {
   g_shared.cq_tail = g_ring.cq_tail;
   g_shared.cq_mask = g_ring.cq_mask;
   g_shared.local_cq_head = &g_ring.local_cq_head;
-  g_shared.sq_tail = g_ring.sq_tail;
-  g_shared.sq_mask = g_ring.sq_mask;
-  g_shared.sq_array = g_ring.sq_array;
-  g_shared.sqe_head = &g_ring.sqe_head;
-  g_shared.sqe_tail = &g_ring.sqe_tail;
-  g_shared.queued = &g_ring.queued;
   g_shared.userspace_cq_polls = &g_stats.userspace_cq_polls;
-  g_shared.resolve_calls = &g_stats.resolve_calls;
-  g_shared.fast_path_hits = &g_stats.fast_path_hits;
-  g_shared.spin_rounds = &g_stats.spin_rounds;
   g_shared.parks = &g_stats.parks;
   g_shared.kernel_wait_entries = &g_stats.kernel_wait_entries;
-  g_shared.kernel_submit_entries = &g_stats.kernel_submit_entries;
   g_shared.completions_reaped = &g_stats.completions_reaped;
-  g_shared.memo_hits = &g_stats.memo_hits;
 
   fasync_publish_state(&g_shared);
   return 0;
@@ -158,12 +175,9 @@ static void fasync_slot_mark(unsigned int index, int allocated) {
 
 static void fasync_req_table_init(void) {
   memset(g_shared.alloc_bits, 0, sizeof(g_shared.alloc_bits));
-  g_shared.memo.epoch = 0;
-  g_shared.memo.start = 0;
-  g_shared.memo.end = 0;
   for (unsigned int i = 0; i < FASYNC_MAX_INFLIGHT; i++) {
     req_slots[i].state = FASYNC_REQ_FREE;
-    /* slot i next is i+2 so slot 0 never handed out */
+    /* one based so slot i links to slot i+1 */
     g_req_free_next[i] = (i + 2 <= FASYNC_MAX_INFLIGHT) ? i + 2 : 0;
   }
   g_req_free_head = 1;
@@ -178,12 +192,16 @@ static struct fasync_req_shared* fasync_req_alloc(void) {
   g_req_free_head = g_req_free_next[index];
 
   struct fasync_req_shared* r = &req_slots[index];
-  r->gen = ++req_next_gen;
+  /* generation 0 is skipped so no id is ever 0, the failure value */
+  if (++req_next_gen == 0)
+    ++req_next_gen;
+  r->gen = req_next_gen;
   /* id packs slot and generation so reuse cannot alias */
   r->id = ((fasync_id)r->gen << 32) | (fasync_id)index;
   r->state = FASYNC_REQ_PENDING;
   r->result = 0;
   r->linked = 0;
+  r->task = 0;
   fasync_slot_mark(index, 1);
   return r;
 }
@@ -207,10 +225,21 @@ struct fasync_req_shared* fasync_req_lookup(fasync_id id) {
   return r;
 }
 
+/* The pending request whose result buffer covers [ptr, ptr + size). */
 static struct fasync_req_shared* fasync_find_covering(const void* ptr, size_t size) {
   if (!g_ring.ready)
     return 0;
-  return fasync_shared_find(&g_shared, ptr, size);
+  const char* p = (const char*)ptr;
+  for (unsigned long i = 0; i < FASYNC_MAX_INFLIGHT; i++) {
+    if (!(g_shared.alloc_bits[i / 64] & (1UL << (i % 64))))
+      continue;
+    struct fasync_req_shared* r = &req_slots[i];
+    const char* start = (const char*)r->buf;
+    if (r->state == FASYNC_REQ_PENDING && start && p >= start &&
+        p + size <= start + r->len)
+      return r;
+  }
+  return 0;
 }
 
 static struct fasync_sqe* fasync_get_sqe(void) {
@@ -225,15 +254,30 @@ static struct fasync_sqe* fasync_get_sqe(void) {
 
 /* addr len are operands result buf is wait region */
 fasync_id fasync_push_sqe(unsigned char op, int fd, unsigned long addr,
-                          unsigned int len, unsigned long offset,
+                          size_t len, unsigned long offset,
                           void* result_buf, size_t result_len,
                           unsigned char sqe_flags) {
+  if (len > FASYNC_MAX_LEN) {
+    g_last_error = "sqe length does not fit in 32 bits";
+    return 0;
+  }
   if (fasync_ensure_ring() < 0)
     return 0;
+
+  /* io_uring_setup takes the lowest free descriptor, so the ring can have the
+   * number of an fd the caller has just closed. The kernel accepts an SQE on
+   * the ring's own fd and never completes it, which would hang the waiter;
+   * fail with the EBADF the closed fd deserves. */
+  if (fd == g_ring.fd) {
+    g_last_error = "fd is the io_uring ring's own descriptor";
+    errno = EBADF;
+    return 0;
+  }
 
   struct fasync_req_shared* r = fasync_req_alloc();
   if (!r) {
     g_last_error = "request table full";
+    errno = EAGAIN;
     return 0;
   }
 
@@ -248,8 +292,11 @@ fasync_id fasync_push_sqe(unsigned char op, int fd, unsigned long addr,
   sqe->flags = sqe_flags;
   sqe->fd = fd;
   sqe->addr = addr;
-  sqe->len = len;
-  sqe->off = offset;
+  sqe->len = (unsigned int)len;
+  if (op == FASYNC_OP_OPENAT)
+    sqe->open_flags = (unsigned int)offset;
+  else
+    sqe->off = offset;
   sqe->user_data = r->id;
 
   g_ring.sqe_tail++;
@@ -264,18 +311,26 @@ fasync_id fasync_push_sqe(unsigned char op, int fd, unsigned long addr,
   r->linked = (sqe_flags & FASYNC_SQE_IO_LINK) ? 1 : 0;
 
   /* publish state before the count becomes visible */
-  g_shared.alloc_epoch++;
   __atomic_add_fetch(&g_inflight, 1, __ATOMIC_RELEASE);
   return r->id;
 }
 
 fasync_id fasync_push_buf(unsigned char op, int fd, void* buf, size_t len,
                           unsigned long offset, unsigned char sqe_flags) {
-  return fasync_push_sqe(op, fd, (unsigned long)(size_t)buf, (unsigned int)len,
-                         offset, buf, len, sqe_flags);
+  return fasync_push_sqe(op, fd, (unsigned long)(size_t)buf, len, offset, buf,
+                         len, sqe_flags);
 }
 
+static int fasync_submit_locked(void);
+
 int fasync_submit(void) {
+  fasync_lock();
+  int n = fasync_submit_locked();
+  fasync_unlock();
+  return n;
+}
+
+static int fasync_submit_locked(void) {
   if (!g_ring.ready || !g_ring.queued)
     return 0;
 
@@ -299,41 +354,25 @@ int fasync_submit(void) {
   return (int)n;
 }
 
+/* Code the patched compiler did not build has no access hook: it asks the
+ * framework to wait for whatever call still owns the buffer. */
 void* fasync_resolve_pending(void* ptr, size_t size) {
-  if (!ptr)
-    return ptr;
-
-  if (__atomic_load_n(&g_inflight, __ATOMIC_ACQUIRE) == 0) {
-    g_stats.fast_path_hits++;
-    return ptr;
-  }
-
-  g_stats.resolve_calls++;
-
-  struct fasync_req_shared* r = fasync_find_covering(ptr, size);
-  if (!r)
-    return ptr;
-
-  /* lazy batch publishes in one enter */
-  fasync_submit();
-
-  for (unsigned int spin = 0; spin < FASYNC_SPIN_LIMIT; spin++) {
-    if (r->state != FASYNC_REQ_PENDING)
-      return ptr;
-    g_stats.spin_rounds++;
-    fasync_poll();
-  }
-
-  while (r->state == FASYNC_REQ_PENDING) {
-    g_stats.parks++;
-    fasync_block();
-    fasync_poll();
-  }
+  (void)size;
+  filc_async_wait_buffer(NULL, ptr);
   return ptr;
 }
 
+static int fasync_wait_all_locked(void);
+
 int fasync_wait_all(void) {
-  fasync_submit();
+  fasync_lock();
+  int rc = fasync_wait_all_locked();
+  fasync_unlock();
+  return rc;
+}
+
+static int fasync_wait_all_locked(void) {
+  fasync_submit_locked();
 
   /* bounded so a stuck request cannot hang */
   for (unsigned long spin = 0; spin < 100000000UL; spin++) {
@@ -350,13 +389,16 @@ int fasync_wait_all(void) {
 }
 
 int fasync_provenance(const void* ptr, size_t size, struct fasync_prov* out) {
+  fasync_lock();
   struct fasync_req_shared* r = fasync_find_covering(ptr, size);
-  if (!r || !out)
-    return 0;
-  out->req = r->id;
-  out->offset = (unsigned long)((const char*)ptr - (const char*)r->buf);
-  out->len = (unsigned long)r->len;
-  return 1;
+  int found = r && out;
+  if (found) {
+    out->req = r->id;
+    out->offset = (unsigned long)((const char*)ptr - (const char*)r->buf);
+    out->len = (unsigned long)r->len;
+  }
+  fasync_unlock();
+  return found;
 }
 
 void* fasync_derive(void* base, unsigned long offset, size_t len,

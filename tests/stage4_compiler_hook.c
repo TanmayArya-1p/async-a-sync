@@ -13,6 +13,7 @@
 #include <unistd.h>
 
 #include "fasync.h"
+#include "filc_async.h"
 
 #ifndef FASYNC_COMPILER_INSERTS_CHECKS
 #error "build this test with the patched compiler and -DFASYNC_COMPILER_INSERTS_CHECKS"
@@ -65,24 +66,24 @@ int main(void) {
   /* No fasync_result(), no FASYNC_ACCESS(): an ordinary access through an
    * escaping pointer. Whatever resolved it was the compiler's instrumentation.
    */
-  struct fasync_stats before, after;
-  fasync_get_stats(&before);
+  filc_async_stats hook_before, hook_after;
+  filc_async_get_stats(&hook_before);
 
   unsigned sum = 0;
   for (int i = 0; i < BLOCK; i++)
     sum += buf[i];
 
+  struct fasync_stats after;
   fasync_get_stats(&after);
+  filc_async_get_stats(&hook_after);
 
-  printf("  resolve calls attributed to the access: before=%lu after=%lu\n",
-         before.resolve_calls, after.resolve_calls);
-  printf("  fast-path hits (means 'nothing was in flight'): %lu\n",
-         after.fast_path_hits);
+  printf("  accesses that found the buffer pending: before=%lu after=%lu\n",
+         hook_before.hook_resolves, hook_after.hook_resolves);
   printf("  kernel wait entries: %lu, submit entries: %lu\n",
          after.kernel_wait_entries, after.kernel_submit_entries);
   printf("  bytes read: %u (expected %u)\n", sum, 0x5Au * BLOCK);
 
-  int hook_fired = after.resolve_calls > before.resolve_calls;
+  int hook_fired = hook_after.hook_resolves > hook_before.hook_resolves;
   int data_ok = (sum == 0x5Au * BLOCK);
   int reaped = after.completions_reaped > 0;
 
