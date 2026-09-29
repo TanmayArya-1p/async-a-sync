@@ -120,6 +120,18 @@ void* async_pwrite(int fd, const void* buf, size_t len, unsigned long offset);
 #pragma clang attribute pop
 ```
 
+`make demo-pragma` builds the demos of annotated calls and runs them in order;
+`make demo-pragma-<name>` runs one, and `ARGS=...` passes it arguments. Each
+prints a table, a `=>` result line and `DEMO OK` when its checks pass. A
+demo's source holds only the code it demonstrates; the setup, timing, tables
+and checks are in `demos/pragma_report.hh`.
+
+| Demo | Shows |
+|---|---|
+| `hello` | one annotated `pread`: the body never runs, the call only queues a request, and the first read of the buffer sends it |
+| `lifecycle` | `openat`, `pwrite`, `fsync`, `pread`, `close` issued back to back and kept in order by `w_dep`/`r_dep` |
+| `ordering` | conflicting calls on one fd wait for each other; independent calls batch into one kernel submit |
+
 
 ## Results
 
