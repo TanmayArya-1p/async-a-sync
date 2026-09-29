@@ -216,6 +216,14 @@ if [ "$PATCHED_READY" -eq 1 ]; then
   RUN_PATCHED_FLAGS="-DFASYNC_IMPLICIT" run_patched demo_wordcount \
     "$REPO/demos/demo_wordcount.c" "$OUT"
 
+  # The pragma-async dependency demos. One file per scenario, no shared helper:
+  # each is self-contained so a reader can open exactly one of them. They assert
+  # ordering, not timing, so they are cheap; the timing harness is
+  # run_wordcount.sh below.
+  run_patched demo_pragma_nodeps "$REPO/demos/demo_pragma_nodeps.c" "$OUT"
+  run_patched demo_pragma_ptrdeps "$REPO/demos/demo_pragma_ptrdeps.c" "$OUT"
+  run_patched demo_pragma_mixdeps "$REPO/demos/demo_pragma_mixdeps.c" "$OUT"
+
   # The pragma-async interface tests. t_pragma_alloc uses only the allocator
   # functions (no annotations), so it compiles and links with the stock filcc
   # against the arena object alone; t_pragma_ignore needs the patched compiler
@@ -257,8 +265,10 @@ if [ "$PATCHED_READY" -eq 1 ]; then
 else
   echo
   echo "### stage4_compiler_hook, stage8_latency, demo_plain_io, demo_async_io,"
-  echo "    demo_provenance, demo_wordcount, t_linked_async, t_pragma_io_uring,"
-  echo "    t_pragma_dependencies, run_wordcount.sh:"
+  echo "    demo_provenance, demo_wordcount, demo_pragma_nodeps,"
+  echo "    demo_pragma_ptrdeps, demo_pragma_mixdeps, t_linked_async,"
+  echo "    t_pragma_io_uring, t_pragma_dependencies, t_pragma_custom_validator,"
+  echo "    run_wordcount.sh:"
   echo "    SKIPPED (patched compiler not built)"
   echo "    build it with: ./compiler/build.sh"
 fi
