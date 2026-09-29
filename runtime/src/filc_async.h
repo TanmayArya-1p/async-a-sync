@@ -33,8 +33,9 @@
  * another call still owns waits for that call. When a call completes, the
  * buffers it still has pending resolve; a runtime can resolve some earlier.
  *
- * Threading: like the fasync_* API (see fasync.h), this is single-threaded;
- * every entry point below must be called from the ring's owner thread.
+ * Threading: every entry point below may be called from any thread, and a
+ * runtime may report completions from any thread. A thread touching a buffer
+ * another thread's call still owns waits for that call.
  */
 
 #define FILC_ASYNC_RESULT_NONE 0u

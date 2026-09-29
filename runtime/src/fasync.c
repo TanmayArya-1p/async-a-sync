@@ -1,6 +1,7 @@
 #include <stdfil.h>
 #include <pizlonated_syscalls.h>
 
+#include <pthread.h>
 #include <string.h>
 #include <errno.h>
 
@@ -53,32 +54,36 @@ static struct fasync_shared g_shared;
 
 static const char* g_last_error = "";
 
-/* the thread that set up the ring; 0 until then */
-static unsigned g_owner_tid;
+static pthread_mutex_t g_runtime_lock;
+static pthread_once_t g_runtime_lock_once = PTHREAD_ONCE_INIT;
 
-int fasync_foreign_thread(void) {
-  return g_owner_tid && zthread_self_id() != g_owner_tid;
+static void fasync_lock_init(void) {
+  pthread_mutexattr_t attr;
+  pthread_mutexattr_init(&attr);
+  pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_RECURSIVE);
+  pthread_mutex_init(&g_runtime_lock, &attr);
+  pthread_mutexattr_destroy(&attr);
 }
 
-void fasync_check_thread(void) {
-  if (!fasync_foreign_thread())
-    return;
-  /* runtime objects cannot reach pizlonated libc; see filc_async_fatal */
-  static const char msg[] =
-      "fasync: fatal: request from a thread that does not own the io_uring "
-      "ring (the runtime is single-threaded)\n";
-  zsys_write(2, msg, sizeof(msg) - 1);
-  zsys_abort();
-  while (1) {
-  }
+void fasync_lock(void) {
+  pthread_once(&g_runtime_lock_once, fasync_lock_init);
+  pthread_mutex_lock(&g_runtime_lock);
 }
 
-void fasync_reset_stats(void) { memset(&g_stats, 0, sizeof(g_stats)); }
+void fasync_unlock(void) { pthread_mutex_unlock(&g_runtime_lock); }
+
+void fasync_reset_stats(void) {
+  fasync_lock();
+  memset(&g_stats, 0, sizeof(g_stats));
+  fasync_unlock();
+}
 
 void fasync_get_stats(struct fasync_stats* out) {
   if (!out)
     return;
+  fasync_lock();
   *out = g_stats;
+  fasync_unlock();
 }
 
 const char* fasync_last_error(void) { return g_last_error; }
@@ -146,7 +151,6 @@ static int fasync_ring_init(void) {
   g_shared.kernel_wait_entries = &g_stats.kernel_wait_entries;
   g_shared.completions_reaped = &g_stats.completions_reaped;
 
-  g_owner_tid = zthread_self_id();
   fasync_publish_state(&g_shared);
   return 0;
 }
@@ -253,7 +257,6 @@ fasync_id fasync_push_sqe(unsigned char op, int fd, unsigned long addr,
                           size_t len, unsigned long offset,
                           void* result_buf, size_t result_len,
                           unsigned char sqe_flags) {
-  fasync_check_thread();
   if (len > FASYNC_MAX_LEN) {
     g_last_error = "sqe length does not fit in 32 bits";
     return 0;
@@ -318,8 +321,16 @@ fasync_id fasync_push_buf(unsigned char op, int fd, void* buf, size_t len,
                          len, sqe_flags);
 }
 
+static int fasync_submit_locked(void);
+
 int fasync_submit(void) {
-  fasync_check_thread();
+  fasync_lock();
+  int n = fasync_submit_locked();
+  fasync_unlock();
+  return n;
+}
+
+static int fasync_submit_locked(void) {
   if (!g_ring.ready || !g_ring.queued)
     return 0;
 
@@ -351,9 +362,17 @@ void* fasync_resolve_pending(void* ptr, size_t size) {
   return ptr;
 }
 
+static int fasync_wait_all_locked(void);
+
 int fasync_wait_all(void) {
-  fasync_check_thread();
-  fasync_submit();
+  fasync_lock();
+  int rc = fasync_wait_all_locked();
+  fasync_unlock();
+  return rc;
+}
+
+static int fasync_wait_all_locked(void) {
+  fasync_submit_locked();
 
   /* bounded so a stuck request cannot hang */
   for (unsigned long spin = 0; spin < 100000000UL; spin++) {
@@ -370,13 +389,16 @@ int fasync_wait_all(void) {
 }
 
 int fasync_provenance(const void* ptr, size_t size, struct fasync_prov* out) {
+  fasync_lock();
   struct fasync_req_shared* r = fasync_find_covering(ptr, size);
-  if (!r || !out)
-    return 0;
-  out->req = r->id;
-  out->offset = (unsigned long)((const char*)ptr - (const char*)r->buf);
-  out->len = (unsigned long)r->len;
-  return 1;
+  int found = r && out;
+  if (found) {
+    out->req = r->id;
+    out->offset = (unsigned long)((const char*)ptr - (const char*)r->buf);
+    out->len = (unsigned long)r->len;
+  }
+  fasync_unlock();
+  return found;
 }
 
 void* fasync_derive(void* base, unsigned long offset, size_t len,

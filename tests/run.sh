@@ -105,33 +105,6 @@ run_filc_test() {
   fi
 }
 
-# run_filc_neg <name> <message> [args...]: like run_filc_test, but the program
-# must stop with <message> on stderr; exiting normally or any other way fails.
-run_filc_neg() {
-  name=$1
-  message=$2
-  shift 2
-  echo
-  echo "### $name (Fil-C, expects the runtime to stop it)"
-  # shellcheck disable=SC2086
-  if "$FILCC" -O2 -static $WARN -I"$REPO/runtime/src" -L"$REPO/runtime/build/lib" \
-       -o "$OUT/$name" "$HERE/$name.c" -lpizlo -lc; then
-    # no core file for the expected abort
-    if err_out=$(ulimit -c 0; "$OUT/$name" "$@" 2>&1); then
-      echo "!!! $name exited 0; the runtime should have stopped it"
-      FAILED=$((FAILED + 1))
-    elif echo "$err_out" | grep -qF "$message"; then
-      PASSED=$((PASSED + 1))
-    else
-      echo "!!! $name died without the expected message: $(echo "$err_out" | tail -n 1)"
-      FAILED=$((FAILED + 1))
-    fi
-  else
-    echo "!!! $name failed to build"
-    FAILED=$((FAILED + 1))
-  fi
-}
-
 run_host_test() {
   name=$1
   echo
@@ -187,8 +160,6 @@ run_filc_test t_pragma_alloc
 needs_io_uring run_filc_test t_backend_io_uring "$OUT"
 needs_io_uring run_filc_test t_pending_open_failure "$OUT"
 needs_io_uring run_filc_test t_openat_pending_path "$OUT"
-needs_io_uring run_filc_neg t_thread_owner \
-  "does not own the io_uring ring" "$OUT"
 
 # stage4, stage8, demo_plain_io and demo_wordcount all need the *patched*
 # compiler, because what they demonstrate is the hook it inserts. Built with the
@@ -328,6 +299,7 @@ if [ "$PATCHED_READY" -eq 1 ]; then
   needs_io_uring run_patched t_pragma_error_path "$HERE/t_pragma_error_path.c" "$OUT"
   needs_io_uring run_patched t_pragma_repeat_read "$HERE/t_pragma_repeat_read.c" "$OUT"
   needs_io_uring run_patched t_thread_compute "$HERE/t_thread_compute.c" "$OUT"
+  needs_io_uring run_patched t_threads "$HERE/t_threads.c" "$OUT"
   # Negative control: an unknown op= is accepted by the pass and rejected by
   # the runtime's startup validator (the runtime is the authority).
   run_patched_neg t_pragma_unknownop "$HERE/t_pragma_unknownop.c"

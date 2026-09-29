@@ -18,23 +18,20 @@ void fasync_req_release(struct fasync_req_shared* r);
 /* wait without releasing so handle stays resolvable */
 long fasync_req_wait(struct fasync_req_shared* r);
 
-/* The runtime is single-threaded: one io_uring ring and one request table,
- * with no locks. The thread that sets up the ring owns it; requests and waits
- * from any other thread abort here. A no-op until the ring exists. */
-void fasync_check_thread(void);
-
-/* nonzero when the caller is not the ring's owner */
-int fasync_foreign_thread(void);
+/* One recursive lock over the ring, the request table and the pending-fd
+ * table, so any thread may issue requests and wait on them, one at a time.
+ * Never held while waiting for the async framework or running a body: the
+ * framework's calls into this runtime take it themselves. */
+void fasync_lock(void);
+void fasync_unlock(void);
 
 /* The requests behind the fasync_* calls, without their bookkeeping for the
  * async framework: the io_uring runtime issues annotated calls with these.
- * `task` is the call that issues them, which a source or path buffer never
- * waits for; NULL for none. */
+ * Callers hold fasync_lock, and have already waited, through the framework,
+ * for any call still producing a pwrite source or an openat path. */
 fasync_id fasync_do_pread(int fd, void* buf, size_t len, unsigned long offset);
-fasync_id fasync_do_pwrite(void* task, int fd, void* buf, size_t len,
-                           unsigned long offset);
-fasync_id fasync_do_openat(void* task, int dirfd, const char* path, int flags,
-                           int mode);
+fasync_id fasync_do_pwrite(int fd, void* buf, size_t len, unsigned long offset);
+fasync_id fasync_do_openat(int dirfd, const char* path, int flags, int mode);
 
 /* Gives an explicit fasync_pread a task of its own and marks its buffer
  * pending for it (filc_async_uring.c). */

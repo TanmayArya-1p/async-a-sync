@@ -4,11 +4,9 @@
 
 typedef unsigned long fasync_id; /* one in-flight request */
 
-/* Threading: the runtime is single-threaded. One io_uring ring and request
- * table serve the process, without locks. The thread that makes the first
- * request owns them; a request, a wait, or an access to a buffer with a
- * request in flight from any other thread stops the program. Other threads
- * may compute on memory of their own.
+/* Threading: one io_uring ring and request table serve the process, behind
+ * one lock, so any thread may issue requests and wait on them. The lock adds
+ * safety, not parallelism: requests from all threads share the ring.
  *
  * A buffer passed to fasync_pread is pending until its read completes: the
  * compiler's access hook, through the async framework, waits for it on first

@@ -8,7 +8,8 @@
  *
  * Contract: alloc(size, align) returns `size` zero-initialized bytes aligned
  * to a power-of-two `align`, or NULL on failure. free(p, size) releases an
- * allocation from the same allocator; the arena's free is a no-op.
+ * allocation from the same allocator; the arena's free is a no-op. Both may
+ * be called from any thread.
  */
 
 typedef struct {

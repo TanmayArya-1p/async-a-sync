@@ -1,16 +1,14 @@
 /* tests/t_thread_compute.c -- a thread that does no I/O stays out of the
  * runtime.
  *
- * The runtime is single-threaded, but a program may still run other threads
- * that only compute. Code built by the patched compiler calls the access hook
- * on every checked access. While the owner has a request in flight, that hook
- * leaves its lock-free fast path; on any thread but the owner it must return
- * straight away instead of reading and writing the runtime's shared state
- * (lookup memo, counters, rings), which it would race on.
+ * Code built by the patched compiler tests the pending flag of the object
+ * behind every checked access. A thread that only computes on its own memory
+ * never finds that flag set, so it never calls into the framework, however
+ * many requests other threads have in flight.
  *
- * The owner queues a read and does not touch it (it stays in flight), a
- * second thread makes ACCESSES checked accesses to its own memory, and the
- * hook's slow-path counter must barely move. Then the owner reads its buffer,
+ * The main thread queues a read and does not touch it (it stays in flight),
+ * a second thread makes ACCESSES checked accesses to its own memory, and the
+ * hook's slow-path counter must barely move. Then the main thread reads its buffer,
  * which the hook resolves as usual.
  */
 #include <fcntl.h>

@@ -1,3 +1,4 @@
+#include <pthread.h>
 #include <stdfil.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -15,6 +16,9 @@
  * block end: on exhaustion we chain a new block. free() is a no-op: arena
  * blocks live for the process. An all-zeros allocator {0,0} restores this
  * default (see filc_async_set_allocator).
+ *
+ * Stubs and runtimes allocate from any thread, so the bump state is guarded
+ * by g_arena_lock.
  */
 
 #define ARENA_NORMAL_BLOCK 65536u
@@ -30,6 +34,7 @@ static struct arena_block* g_blocks;
 // Bump state for the current normal-size block.
 static unsigned char* g_cur;
 static unsigned char* g_end;
+static pthread_mutex_t g_arena_lock = PTHREAD_MUTEX_INITIALIZER;
 
 // Allocate a normal bump block, chain it, make it current.
 static int arena_chain_normal(void)
@@ -68,7 +73,7 @@ static void* arena_dedicated(size_t size, size_t align)
     return payload;
 }
 
-static void* arena_alloc(size_t size, size_t align)
+static void* arena_alloc_locked(size_t size, size_t align)
 {
     if (!size)
         size = 1;
@@ -92,6 +97,14 @@ static void* arena_alloc(size_t size, size_t align)
     }
     g_cur = (unsigned char*)(aligned + size);
     return (void*)aligned;
+}
+
+static void* arena_alloc(size_t size, size_t align)
+{
+    pthread_mutex_lock(&g_arena_lock);
+    void* p = arena_alloc_locked(size, align);
+    pthread_mutex_unlock(&g_arena_lock);
+    return p;
 }
 
 static void arena_free(void* p, size_t size)

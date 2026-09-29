@@ -1,6 +1,8 @@
 #include <errno.h>
 #include <pizlonated_syscalls.h>
+#include <pthread.h>
 #include <stdfil.h>
+#include <time.h>
 
 #include "filc_async.h"
 #include "filc_async_alloc.h"
@@ -27,7 +29,13 @@ void zasync_set_resolver(void (*resolver)(void*));
  * A program that only ever touches its buffers never delivers, so g_handles
  * can grow; nothing but a poll/wait looking up its handle reads it.
  *
- * Tasks, marks and locks live in the allocator arena. */
+ * Tasks, marks and locks live in the allocator arena.
+ *
+ * Threads: all of this state is guarded by g_lock, and g_changed is
+ * signalled whenever a task completes or a dependency lock changes hands.
+ * The framework never holds g_lock while it calls into the runtime, so a
+ * runtime may report a completion from any thread while holding locks of its
+ * own. */
 
 struct filc_async_task;
 struct filc_async_mark;
@@ -57,8 +65,36 @@ static unsigned long g_pending_resolves;
 static unsigned long g_lock_waits;
 static unsigned long g_hook_resolves;
 
-/* The task whose body filc_async_run is running. */
-static struct filc_async_task* g_running_body;
+/* The task whose body filc_async_run is running on this thread. */
+static _Thread_local struct filc_async_task* g_running_body;
+
+static pthread_mutex_t g_lock = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t g_changed = PTHREAD_COND_INITIALIZER;
+
+static void lock(void)
+{
+    pthread_mutex_lock(&g_lock);
+}
+
+static void unlock(void)
+{
+    pthread_mutex_unlock(&g_lock);
+}
+
+/* Waits, with g_lock held, for another thread to change something: a task
+ * that is not yet submitted cannot be polled, only waited out. Bounded, so a
+ * change signalled just before the wait is not missed for long. */
+static void wait_changed(void)
+{
+    struct timespec deadline;
+    clock_gettime(CLOCK_REALTIME, &deadline);
+    deadline.tv_nsec += 1000000;
+    if (deadline.tv_nsec >= 1000000000) {
+        deadline.tv_sec++;
+        deadline.tv_nsec -= 1000000000;
+    }
+    pthread_cond_timedwait(&g_changed, &g_lock, &deadline);
+}
 
 static filc_async_validator_fn g_validator;
 
@@ -168,11 +204,17 @@ static void running_remove(struct filc_async_task* t)
         g_oldest = t->newer;
 }
 
-/* Blocks until the runtime has completed `t`. */
+/* Blocks, with g_lock held, until the runtime has completed `t`. The lock is
+ * released while the runtime is asked, so it can report completions. */
 static void wait_for(struct filc_async_task* t)
 {
-    while (t->state == 1)
-        filc_async_runtime_poll(t, FILC_ASYNC_POLL_BLOCK);
+    while (t->state == 1) {
+        unlock();
+        bool done = filc_async_runtime_poll(t, FILC_ASYNC_POLL_BLOCK);
+        lock();
+        if (!done && t->state == 1)
+            wait_changed();
+    }
 }
 
 /* ---- Dependency locks ----
@@ -181,14 +223,16 @@ static void wait_for(struct filc_async_task* t)
  * namespace. A call holding a read lock shares it with other readers; a
  * write lock is exclusive. A call that needs a lock another call holds in a
  * conflicting mode waits in its stub, by polling that call through the
- * runtime, until it completes and releases the lock. Stubs run in program
- * order, so the locks are granted in submission order. */
+ * runtime, until it completes and releases the lock. Requests queue on the
+ * lock and are granted in the order they arrived, so a stream of readers
+ * cannot keep a waiting writer out. */
 
 struct filc_async_lock {
     struct filc_async_lock* bucket_next; /* same bucket, or free list */
     uint64_t value;
     uint32_t space;
     struct filc_async_hold* holders;
+    struct filc_async_hold* waiters; /* requests not yet granted, oldest first */
 };
 
 struct filc_async_hold {
@@ -222,6 +266,7 @@ static struct filc_async_lock* lock_get(uint64_t value, uint32_t space)
     l->value = value;
     l->space = space;
     l->holders = NULL;
+    l->waiters = NULL;
     l->bucket_next = *bucket;
     *bucket = l;
     return l;
@@ -256,24 +301,46 @@ static void lock_take(struct filc_async_task* t, uint64_t value,
                       uint32_t space, uint32_t mode)
 {
     bool write = mode == FILC_ASYNC_DEP_WRITE;
+    struct filc_async_lock* l = lock_get(value, space);
+    struct filc_async_hold* h = (struct filc_async_hold*)alloc_or_die(sizeof *h);
+    h->task = t;
+    h->lock = l;
+    h->write = write;
+    struct filc_async_hold** tail = &l->waiters;
+    while (*tail)
+        tail = &(*tail)->lock_next;
+    *tail = h;
+
+    bool waited = false;
     for (;;) {
-        struct filc_async_lock* l = lock_get(value, space);
         struct filc_async_task* holder = lock_conflict(l, t, write);
-        if (!holder) {
-            struct filc_async_hold* h =
-                (struct filc_async_hold*)alloc_or_die(sizeof *h);
-            h->task = t;
-            h->lock = l;
-            h->write = write;
-            h->lock_next = l->holders;
-            l->holders = h;
-            h->task_next = t->holds;
-            t->holds = h;
-            return;
+        bool queued_behind = false;
+        for (struct filc_async_hold* w = l->waiters; w != h; w = w->lock_next)
+            if (w->task != t && (write || w->write)) {
+                queued_behind = true;
+                break;
+            }
+        if (!holder && !queued_behind)
+            break;
+        if (!waited) {
+            ++g_lock_waits;
+            waited = true;
         }
-        ++g_lock_waits;
-        wait_for(holder);
+        if (holder)
+            wait_for(holder);
+        else
+            wait_changed();
     }
+
+    struct filc_async_hold** link = &l->waiters;
+    while (*link != h)
+        link = &(*link)->lock_next;
+    *link = h->lock_next;
+    h->lock_next = l->holders;
+    l->holders = h;
+    h->task_next = t->holds;
+    t->holds = h;
+    pthread_cond_broadcast(&g_changed);
 }
 
 /* Releases every lock `t` holds; a lock nobody holds goes back to the free
@@ -286,7 +353,7 @@ static void locks_release(struct filc_async_task* t)
         while (*link != h)
             link = &(*link)->lock_next;
         *link = h->lock_next;
-        if (l->holders)
+        if (l->holders || l->waiters)
             continue;
         struct filc_async_lock** bucket = lock_bucket(l->value, l->space);
         while (*bucket != l)
@@ -301,8 +368,10 @@ static void locks_release(struct filc_async_task* t)
 void filc_async_lock_word(void* task, uint64_t value, uint32_t space,
                           uint32_t mode)
 {
+    lock();
     lock_take((struct filc_async_task*)task, value,
               space & ~FILC_ASYNC_DEP_POINTER, mode);
+    unlock();
 }
 
 /* A pointer is a key by object identity, so it locks the object's lower
@@ -311,8 +380,10 @@ void filc_async_lock_ptr(void* task, const void* ptr, uint32_t space,
                          uint32_t mode)
 {
     uint64_t value = (uint64_t)(uintptr_t)(ptr ? zgetlower((void*)ptr) : NULL);
+    lock();
     lock_take((struct filc_async_task*)task, value,
               space | FILC_ASYNC_DEP_POINTER, mode);
+    unlock();
 }
 
 /* ---- Pending buffers ----
@@ -435,6 +506,7 @@ void filc_async_mark_pending(void* task, void* buf)
 
     /* Waiting for another owner retires its mark, so the loop looks again
      * until only `t` holds the object. */
+    lock();
     for (;;) {
         filc_async_mark* m = mark_find_other(lower, upper, t);
         if (!m)
@@ -447,6 +519,7 @@ void filc_async_mark_pending(void* task, void* buf)
     }
     if (!t || !mark_owned(lower, t))
         mark_add(buf, lower, upper, t);
+    unlock();
 }
 
 void filc_async_mark_shared(void* task, void* buf)
@@ -454,18 +527,18 @@ void filc_async_mark_shared(void* task, void* buf)
     if (!buf || !task)
         return;
     uintptr_t lower = (uintptr_t)zgetlower(buf);
+    lock();
     if (!mark_owned(lower, (struct filc_async_task*)task))
         mark_add(buf, lower, (uintptr_t)zgetupper(buf),
                  (struct filc_async_task*)task);
+    unlock();
 }
 
 /* Waits until no call but `task`, and not the call whose body this thread is
  * running, owns the object `buf` points into. Marks without an owner have
  * nothing to wait for. */
-void filc_async_wait_buffer(void* task, const void* buf)
+static void wait_buffer_locked(void* task, const void* buf)
 {
-    if (!buf)
-        return;
     uintptr_t lower = (uintptr_t)zgetlower((void*)buf);
     uintptr_t upper = (uintptr_t)zgetupper((void*)buf);
     for (;;) {
@@ -482,12 +555,23 @@ void filc_async_wait_buffer(void* task, const void* buf)
     }
 }
 
+void filc_async_wait_buffer(void* task, const void* buf)
+{
+    if (!buf)
+        return;
+    lock();
+    wait_buffer_locked(task, buf);
+    unlock();
+}
+
 /* The access hook's slow path: an access reached an object whose pending
  * flag is set. */
 static void resolve_access(void* object)
 {
+    lock();
     ++g_hook_resolves;
-    filc_async_wait_buffer(NULL, object);
+    wait_buffer_locked(NULL, object);
+    unlock();
 }
 
 void filc_async_mark_resolved(void* buf)
@@ -495,11 +579,13 @@ void filc_async_mark_resolved(void* buf)
     if (!buf)
         return;
     uintptr_t lower = (uintptr_t)zgetlower(buf);
+    lock();
     for (filc_async_mark* m = *mark_bucket(lower); m; m = m->bucket_next)
         if (m->lower == lower) {
             mark_remove(m);
-            return;
+            break;
         }
+    unlock();
 }
 
 void filc_async_resolve_buffer(void* task, void* buf)
@@ -507,11 +593,13 @@ void filc_async_resolve_buffer(void* task, void* buf)
     if (!buf)
         return;
     uintptr_t lower = (uintptr_t)zgetlower(buf);
+    lock();
     for (filc_async_mark* m = *mark_bucket(lower); m; m = m->bucket_next)
         if (m->lower == lower && m->owner == (struct filc_async_task*)task) {
             mark_remove(m);
-            return;
+            break;
         }
+    unlock();
 }
 
 bool filc_async_is_pending(const void* buf)
@@ -520,7 +608,10 @@ bool filc_async_is_pending(const void* buf)
         return false;
     uintptr_t lower = (uintptr_t)zgetlower((void*)buf);
     uintptr_t upper = (uintptr_t)zgetupper((void*)buf);
-    return mark_find(lower, upper) != NULL;
+    lock();
+    bool pending = mark_find(lower, upper) != NULL;
+    unlock();
+    return pending;
 }
 
 /* ---- Tasks ---- */
@@ -533,19 +624,26 @@ void* filc_async_begin(const filc_async_meta* meta, void* staged_args)
     t->meta = meta;
     t->staged_args = staged_args;
     t->state = 1;
+    lock();
     running_add(t);
     handle_add(t);
     /* The counts cover annotated calls, not tasks a runtime starts itself. */
     if (meta)
         ++g_submitted;
+    unlock();
     return t;
 }
 
 void filc_async_complete(void* task, long result)
 {
     struct filc_async_task* t = (struct filc_async_task*)task;
-    if (!t || t->state != 1)
+    if (!t)
         return;
+    lock();
+    if (t->state != 1) {
+        unlock();
+        return;
+    }
     t->result = result;
     t->state = result < 0 ? 2 : 0;
     if (t->meta) {
@@ -557,6 +655,8 @@ void filc_async_complete(void* task, long result)
         mark_remove(t->marks);
     locks_release(t);
     running_remove(t);
+    pthread_cond_broadcast(&g_changed);
+    unlock();
 }
 
 long filc_async_run(void* task, filc_async_run_fn run, void* staged_args)
@@ -586,28 +686,37 @@ bool filc_async_poll(struct filc_async_result_s* out)
 {
     if (!out || !out->pending)
         return false;
+    lock();
     struct filc_async_task* t = find_task(out->pending);
-    if (!t)
+    if (!t) {
+        unlock();
         return false;
-    if (t->state == 1)
+    }
+    if (t->state == 1) {
+        unlock();
         filc_async_runtime_poll(t, FILC_ASYNC_POLL_PROGRESS);
+        lock();
+    }
     result_fill(out, t);
-    if (t->state == 1)
-        return false;
-    retire_task(t);
-    return true;
+    bool done = t->state != 1;
+    if (done)
+        retire_task(t);
+    unlock();
+    return done;
 }
 
 void filc_async_wait(struct filc_async_result_s* out)
 {
     if (!out || !out->pending)
         return;
+    lock();
     struct filc_async_task* t = find_task(out->pending);
-    if (!t)
-        return;
-    wait_for(t);
-    result_fill(out, t);
-    retire_task(t);
+    if (t) {
+        wait_for(t);
+        result_fill(out, t);
+        retire_task(t);
+    }
+    unlock();
 }
 
 /* Asks the runtime, without waiting, about every task still running, so the
@@ -616,9 +725,13 @@ void filc_async_get_stats(filc_async_stats* out)
 {
     if (!out)
         return;
+    lock();
     for (struct filc_async_task* t = g_oldest; t; t = t->newer)
-        if (t->state == 1)
+        if (t->state == 1) {
+            unlock();
             filc_async_runtime_poll(t, FILC_ASYNC_POLL_CHECK);
+            lock();
+        }
     *out = (filc_async_stats){ 0 };
     out->tasks_submitted = g_submitted;
     out->tasks_completed = g_completed;
@@ -626,6 +739,7 @@ void filc_async_get_stats(filc_async_stats* out)
     out->pending_resolves = g_pending_resolves;
     out->lock_waits = g_lock_waits;
     out->hook_resolves = g_hook_resolves;
+    unlock();
 }
 
 /* ---- Startup validation ---- */

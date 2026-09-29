@@ -33,6 +33,7 @@ struct uring_call {
     fasync_id request;       /* 0 for op=ignore */
     enum uring_op op;
     bool explicit_read;      /* a fasync_pread; its caller collects the result */
+    bool finished;           /* completion reported */
     struct uring_call* newer; /* calls with a request in flight, oldest first */
     struct uring_call* older;
 };
@@ -151,7 +152,7 @@ static void* arg_ptr(const staged_arg* args, size_t index)
     return args[index].value.ptr;
 }
 
-static fasync_id dispatch(void* task, enum uring_op op, const staged_arg* args)
+static fasync_id dispatch(enum uring_op op, const staged_arg* args)
 {
     int fd = (int)arg_word(args, 0);
     switch (op) {
@@ -159,11 +160,10 @@ static fasync_id dispatch(void* task, enum uring_op op, const staged_arg* args)
         return fasync_do_pread(fd, arg_ptr(args, 1), (size_t)arg_word(args, 2),
                                (unsigned long)arg_word(args, 3));
     case URING_OP_WRITE:
-        return fasync_do_pwrite(task, fd, arg_ptr(args, 1),
-                                (size_t)arg_word(args, 2),
+        return fasync_do_pwrite(fd, arg_ptr(args, 1), (size_t)arg_word(args, 2),
                                 (unsigned long)arg_word(args, 3));
     case URING_OP_OPENAT:
-        return fasync_do_openat(task, fd, (const char*)arg_ptr(args, 1),
+        return fasync_do_openat(fd, (const char*)arg_ptr(args, 1),
                                 (int)arg_word(args, 2), (int)arg_word(args, 3));
     case URING_OP_FSYNC:
         return fasync_fsync(fd);
@@ -198,9 +198,13 @@ static void list_remove(struct uring_call* c)
 }
 
 /* Collects the request's result, which frees its slot, and reports it. An
- * explicit read keeps its slot for the caller's fasync_result. */
+ * explicit read keeps its slot for the caller's fasync_result. Called with
+ * the runtime's lock held. */
 static void finish(struct uring_call* c)
 {
+    if (c->finished)
+        return;
+    c->finished = true;
     if (c->explicit_read) {
         struct fasync_req_shared* r = fasync_req_lookup(c->request);
         filc_async_complete(c->task, r ? fasync_req_wait(r) : -EINVAL);
@@ -251,13 +255,48 @@ static bool reclaim(void)
     return reclaimed;
 }
 
+/* Queues `c`'s request. Called with the runtime's lock held. */
+static void queue(struct uring_call* c, const filc_async_meta* meta,
+                  const staged_arg* args)
+{
+    if (c->op == URING_OP_IGNORE) {
+        /* completes when polled, so its marks can be observed */
+        *filc_async_task_runtime_data(c->task) = c;
+        return;
+    }
+    if (!shape_ok(meta, c->op)) {
+        filc_async_complete(c->task, -EINVAL);
+        return;
+    }
+    if ((c->op == URING_OP_READ || c->op == URING_OP_WRITE) &&
+        arg_word(args, 2) > UINT_MAX) {
+        filc_async_complete(c->task, -EOVERFLOW);
+        return;
+    }
+    for (;;) {
+        errno = 0;
+        c->request = dispatch(c->op, args);
+        if (c->request)
+            break;
+        if (errno == EAGAIN && reclaim())
+            continue;
+        filc_async_complete(c->task, errno ? -errno : -EIO);
+        return;
+    }
+    list_add(c);
+    /* published last, so a poll from another thread never sees a call
+     * without its request */
+    *filc_async_task_runtime_data(c->task) = c;
+}
+
 void filc_async_submit(void* task, const filc_async_meta* meta,
                        filc_async_run_fn run, void* staged_args, size_t nargs)
 {
-    fasync_check_thread();
     if (!task || !meta || !staged_args || nargs != meta->nargs)
         filc_async_fatal("filc_async_submit: bad call");
 
+    /* The body and any wait for a buffer the kernel will read run without the
+     * runtime's lock: both may wait for other calls. */
     filc_async_run(task, run, staged_args);
 
     struct uring_call* c = (struct uring_call*)filc_async_alloc(sizeof *c, 16);
@@ -265,31 +304,15 @@ void filc_async_submit(void* task, const filc_async_meta* meta,
         filc_async_fatal("filc_async_submit: out of memory");
     c->task = task;
     c->op = op_from(meta->opts);
-    *filc_async_task_runtime_data(task) = c;
 
     const staged_arg* args = (const staged_arg*)staged_args;
-    if (c->op == URING_OP_IGNORE)
-        return; /* completes when polled, so its marks can be observed */
-    if (!shape_ok(meta, c->op)) {
-        filc_async_complete(task, -EINVAL);
-        return;
-    }
-    if ((c->op == URING_OP_READ || c->op == URING_OP_WRITE) &&
-        arg_word(args, 2) > UINT_MAX) {
-        filc_async_complete(task, -EOVERFLOW);
-        return;
-    }
-    for (;;) {
-        errno = 0;
-        c->request = dispatch(task, c->op, args);
-        if (c->request)
-            break;
-        if (errno == EAGAIN && reclaim())
-            continue;
-        filc_async_complete(task, errno ? -errno : -EIO);
-        return;
-    }
-    list_add(c);
+    if ((c->op == URING_OP_WRITE || c->op == URING_OP_OPENAT) &&
+        shape_ok(meta, c->op))
+        filc_async_wait_buffer(task, arg_ptr(args, 1));
+
+    fasync_lock();
+    queue(c, meta, args);
+    fasync_unlock();
 }
 
 /* Requests are queued until something needs a result, so the whole batch
@@ -297,22 +320,31 @@ void filc_async_submit(void* task, const filc_async_meta* meta,
  * sends it so a polling loop moves on, and BLOCK sends it and waits. */
 bool filc_async_runtime_poll(void* task, enum filc_async_poll_mode mode)
 {
-    fasync_check_thread();
+    fasync_lock();
+    bool done = false;
     struct uring_call* c = (struct uring_call*)*filc_async_task_runtime_data(task);
-    if (!c)
-        return false;
-    /* op=ignore has no request; it completes when polled for real, so its
-     * marks can be observed until then. */
-    if (c->op == URING_OP_IGNORE && mode == FILC_ASYNC_POLL_CHECK)
-        return false;
-    if (c->op != URING_OP_IGNORE && !fasync_ready(c->request)) {
-        if (mode == FILC_ASYNC_POLL_CHECK)
-            return false;
-        if (fasync_submit() < 0)
-            filc_async_fatal("io_uring submission failed");
-        if (mode == FILC_ASYNC_POLL_PROGRESS && !fasync_ready(c->request))
-            return false;
+    if (!c) {
+        /* not submitted yet, or completed at submission */
+    } else if (c->finished) {
+        done = true;
+    } else if (c->op == URING_OP_IGNORE) {
+        /* completes when polled for real, so its marks can be observed */
+        if (mode != FILC_ASYNC_POLL_CHECK) {
+            finish(c);
+            done = true;
+        }
+    } else {
+        bool ready = fasync_ready(c->request);
+        if (!ready && mode != FILC_ASYNC_POLL_CHECK) {
+            if (fasync_submit() < 0)
+                filc_async_fatal("io_uring submission failed");
+            ready = mode == FILC_ASYNC_POLL_BLOCK || fasync_ready(c->request);
+        }
+        if (ready) {
+            finish(c);
+            done = true;
+        }
     }
-    finish(c);
-    return true;
+    fasync_unlock();
+    return done;
 }

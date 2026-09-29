@@ -153,17 +153,18 @@ effect-set DAG in `fasync_dep.c`.
 
 ### Threading
 
-The runtime is single-threaded: one ring, one request table, one pending-fd
-table and filc_async's lists, none of them locked. The thread that sets up the
-ring (its first request) owns it. `fasync_check_thread` in `fasync.c` stops the
-program with a clear message when any other thread issues a request or waits:
-`fasync_push_sqe`, `fasync_submit`, `fasync_req_wait`, `fasync_ready`,
-`fasync_wait_all`, and filc_async's submit, poll, wait and pending-mark entry
-points. The native access hook returns straight away on any other thread, and
-so does `fasync_resolve_pending`, so threads that only compute never touch the
-runtime's state. A buffer with a request in flight must be touched or waited
-on by the owner before another thread reads it
-(`tests/t_thread_owner.c`, `tests/t_thread_compute.c`).
+Any thread may make annotated calls, wait on them and touch their buffers.
+The framework (`filc_async.c`) guards its tasks, locks and marks with one
+mutex and signals a condition variable when a task completes or a dependency
+lock changes hands; it never holds that mutex while it calls the runtime, so a
+runtime may report completions from any thread. Dependency locks queue their
+requests and grant them in arrival order. The io_uring runtime guards its
+ring, request table and pending-fd table with one recursive lock, which it
+never holds while running a body or waiting for a buffer through the
+framework; the lock adds safety, not parallelism, since every thread's
+requests share the ring. The arena allocator has its own lock. A thread that
+only computes on its own memory never finds a pending flag, so it never calls
+into the framework (`tests/t_threads.c`, `tests/t_thread_compute.c`).
 
 ## Validation map
 
@@ -176,7 +177,7 @@ on by the owner before another thread reads it
 | `tests/check_linkage.sh` with `t_linked_async_*` | A separately defined function, generated runtime symbols, and the final binary link and execute. |
 | `tests/t_backend_io_uring.c` | Direct `filc_async_submit` calls reach the supported io_uring operations. |
 | `tests/t_pragma_io_uring.c` and `t_pragma_dependencies.c` | Annotated calls dispatch and honor dependency order end to end. |
-| `tests/t_thread_owner.c` and `t_thread_compute.c` | A request from a second thread is stopped; a thread that only computes stays out of the runtime. |
+| `tests/t_threads.c` and `t_thread_compute.c` | Two threads make annotated calls and read each other's buffers; a thread that only computes stays out of the runtime. |
 | `tests/stage4_compiler_hook.c` and `stage8_latency.c` | The compiler's access hook resolves pending buffers; the latter also measures latency. |
 
 Run `./tests/run.sh` after both builds. It skips patched-compiler cases if
@@ -202,12 +203,8 @@ incorrect. See `compiler/README.md` for build and link troubleshooting.
   Makefile targets, `demos/run_wordcount_3way.sh`, or
   `demos/inspect_disasm_cfg.sh`. Their link commands carry the trailing
   `-lpizlo -lc`; run them by hand after changing the runtime.
-- Only one thread may use the runtime. Making it thread-safe needs either
-  one lock over every `fasync_*` entry point and the access hook's slow path
-  (shared between Fil-C and native code, released around kernel waits and GC
-  safepoints), which still serializes all I/O on one ring, or a ring per
-  thread with a cross-thread lookup for buffers, which is what would scale
-  I/O across cores.
+- The io_uring runtime serializes all threads' I/O on one ring. A ring per
+  thread is what would scale I/O across cores.
 - The `deluge` branch can move. The upstream SROA patch and compiler
   overrides are tied to the tested source shape; a future source revision
   may require rebasing them. The tested source revision is recorded in

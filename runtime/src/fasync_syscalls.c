@@ -45,18 +45,31 @@ static struct fasync_pending_fd* fasync_pending_fd_lookup(int fd) {
 }
 
 fasync_id fasync_pread(int fd, void* buf, size_t len, unsigned long offset) {
+  fasync_lock();
   fasync_id id = fasync_do_pread(fd, buf, len, offset);
   if (id)
     fasync_track_read(id, buf);
+  fasync_unlock();
   return id;
 }
 
+/* The kernel reads the source when the request runs, so a call still
+ * producing it is waited for first, outside the runtime's lock. */
 fasync_id fasync_pwrite(int fd, void* buf, size_t len, unsigned long offset) {
-  return fasync_do_pwrite(NULL, fd, buf, len, offset);
+  filc_async_wait_buffer(NULL, buf);
+  fasync_lock();
+  fasync_id id = fasync_do_pwrite(fd, buf, len, offset);
+  fasync_unlock();
+  return id;
 }
 
+/* Likewise for the path, which the kernel reads later. */
 fasync_id fasync_openat(int dirfd, const char* path, int flags, int mode) {
-  return fasync_do_openat(NULL, dirfd, path, flags, mode);
+  filc_async_wait_buffer(NULL, path);
+  fasync_lock();
+  fasync_id id = fasync_do_openat(dirfd, path, flags, mode);
+  fasync_unlock();
+  return id;
 }
 
 fasync_id fasync_do_pread(int fd, void* buf, size_t len, unsigned long offset) {
@@ -71,8 +84,7 @@ fasync_id fasync_do_pread(int fd, void* buf, size_t len, unsigned long offset) {
   return fasync_push_buf(FASYNC_OP_READ, fd, buf, len, offset, 0);
 }
 
-fasync_id fasync_do_pwrite(void* task, int fd, void* buf, size_t len,
-                           unsigned long offset) {
+fasync_id fasync_do_pwrite(int fd, void* buf, size_t len, unsigned long offset) {
   long real = fasync_fd_resolve(fd);
   if (real < 0) {
     errno = (int)-real;
@@ -82,23 +94,32 @@ fasync_id fasync_do_pwrite(void* task, int fd, void* buf, size_t len,
 
   zcheck_readonly(buf, len); /* the kernel only reads it */
 
-  /* kernel reads the source at execute time */
-  filc_async_wait_buffer(task, buf);
-
   return fasync_push_sqe(FASYNC_OP_WRITE, fd, (unsigned long)(size_t)buf, len,
                          offset, 0, 0, 0);
 }
 
 fasync_id fasync_fsync(int fd) {
+  fasync_lock();
   long real = fasync_fd_resolve(fd);
-  if (real < 0) {
+  fasync_id id = 0;
+  if (real < 0)
     errno = (int)-real;
-    return 0;
-  }
-  return fasync_push_sqe(FASYNC_OP_FSYNC, (int)real, 0, 0, 0, 0, 0, 0);
+  else
+    id = fasync_push_sqe(FASYNC_OP_FSYNC, (int)real, 0, 0, 0, 0, 0, 0);
+  fasync_unlock();
+  return id;
 }
 
+static fasync_id fasync_close_locked(int fd);
+
 fasync_id fasync_close(int fd) {
+  fasync_lock();
+  fasync_id id = fasync_close_locked(fd);
+  fasync_unlock();
+  return id;
+}
+
+static fasync_id fasync_close_locked(int fd) {
   struct fasync_pending_fd* p = fasync_pending_fd_lookup(fd);
   long real = fasync_fd_resolve(fd);
   if (real < 0) {
@@ -120,11 +141,13 @@ int fasync_open_pending(int dirfd, const char* path, int flags, int mode) {
   fasync_id id = fasync_openat(dirfd, path, flags, mode);
   if (!id)
     return -1;
-  return fasync_pending_fd_new(id);
+  fasync_lock();
+  int handle = fasync_pending_fd_new(id);
+  fasync_unlock();
+  return handle;
 }
 
-fasync_id fasync_do_openat(void* task, int dirfd, const char* path, int flags,
-                           int mode) {
+fasync_id fasync_do_openat(int dirfd, const char* path, int flags, int mode) {
   if (!path) {
     errno = EFAULT;
     return 0;
@@ -142,10 +165,6 @@ fasync_id fasync_do_openat(void* task, int dirfd, const char* path, int flags,
     available = 4096;
   zcheck_readonly((void*)path, available);
 
-  /* The kernel reads the path later, and any part of it may still be
-   * produced by an earlier asynchronous read: finish every read into the
-   * path's object before looking for the terminator. */
-  filc_async_wait_buffer(task, path);
   size_t i = 0;
   while (i < available && path[i])
     i++;
@@ -160,18 +179,20 @@ fasync_id fasync_do_openat(void* task, int dirfd, const char* path, int flags,
 }
 
 int fasync_ready(fasync_id id) {
-  fasync_check_thread();
+  fasync_lock();
   struct fasync_req_shared* r = fasync_req_lookup(id);
-  if (!r)
-    return 0;
-  if (r->state == FASYNC_REQ_PENDING)
-    fasync_poll();
-  return r->state != FASYNC_REQ_PENDING;
+  int ready = 0;
+  if (r) {
+    if (r->state == FASYNC_REQ_PENDING)
+      fasync_poll();
+    ready = r->state != FASYNC_REQ_PENDING;
+  }
+  fasync_unlock();
+  return ready;
 }
 
 /* wait without releasing so the handle stays resolvable */
 long fasync_req_wait(struct fasync_req_shared* r) {
-  fasync_check_thread();
   if (r->state == FASYNC_REQ_PENDING)
     fasync_submit();
 
@@ -184,9 +205,12 @@ long fasync_req_wait(struct fasync_req_shared* r) {
 }
 
 long fasync_result(fasync_id id) {
+  fasync_lock();
   struct fasync_req_shared* r = fasync_req_lookup(id);
-  if (!r)
+  if (!r) {
+    fasync_unlock();
     return -EINVAL;
+  }
 
   long result = fasync_req_wait(r);
   /* an explicit read's buffer resolves with it */
@@ -196,6 +220,7 @@ long fasync_result(fasync_id id) {
     filc_async_complete(task, result);
   }
   fasync_req_release(r);
+  fasync_unlock();
   return result;
 }
 

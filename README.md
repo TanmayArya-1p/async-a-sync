@@ -206,5 +206,5 @@ There are a few caveats and drawbacks that are yet to be addressed. We hope to f
 - **Hidden dependencies must be annotated** invisible sharing is declared with an effect set or a token.
 - **Supported calls are a subset.** `pread`, `pwrite`, `openat`, `close`, `fsync`. Plain `read` is out because it has no offset. Very few syscalls are supported by `io_uring`, which limited our work.
 - **Speedup scope is limited right now:** Significant speedup is only observed in reads that dont read from page cache (via `O_DIRECT`).
-- **Single-threaded runtime.** One io_uring ring serves the whole process, without locks. The thread that makes the first request owns it; a request or wait from any other thread stops the program with a clear message. Other threads may run and compute, but must not read a buffer while its request is in flight: the owner touches it or waits on it first.
+- **One ring for all threads.** Any thread may make annotated calls and touch their buffers, but the io_uring runtime serializes every thread's I/O on one ring behind one lock.
 - **The device is not fully saturated.** The implicit path reaches ~52 kIOPS where plain threads sustain ~184 kIOPS; the gap is an `io-wq` worker ceiling which must be tuned for the specific workload.
