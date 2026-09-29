@@ -44,6 +44,7 @@
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Transforms/Utils/ModuleUtils.h"
 
+#include <cstdint>
 #include <utility>
 
 using namespace llvm;
@@ -64,6 +65,10 @@ static const unsigned DEP_NONE = 0;
 static const unsigned DEP_READ = 1;
 static const unsigned DEP_WRITE = 2;
 static const unsigned DEP_POINTER = 4;
+// A dependency's namespace, from r_dep=<i>:<name> or w_dep=<i>:<name>, goes in
+// bits 8..31 as a 24-bit hash of the name; 0 means the option named none.
+static const unsigned DEP_NAMESPACE_SHIFT = 8;
+static const unsigned DEP_NAMESPACE_MASK = 0x00FFFFFF;
 
 // Result constants; mirror FILC_ASYNC_RESULT_* in the runtime header.
 static const unsigned RESULT_WORD = 1;
@@ -71,6 +76,19 @@ static const unsigned RESULT_PTR = 2;
 
 // Read a global string constant (the frontend's .str globals); empty
 // StringRef when C does not have that shape.
+// FNV-1a folded to 24 bits, so every translation unit derives the same value
+// for a name. A hash of 0 becomes 1, so a named key never matches an unnamed
+// one.
+static unsigned hashNamespace(StringRef Name) {
+  uint32_t H = 2166136261u;
+  for (unsigned char C : Name.bytes()) {
+    H ^= C;
+    H *= 16777619u;
+  }
+  H &= DEP_NAMESPACE_MASK;
+  return H ? H : 1;
+}
+
 static StringRef underlyingString(Constant *C) {
   C = C->stripPointerCasts();
   auto *GV = dyn_cast<GlobalVariable>(C);
@@ -171,6 +189,18 @@ static void parseKinds(StringRef OrigName, FunctionType *FTy,
     }
     unsigned Idx = 0;
     StringRef Num = Opt.drop_front(PrefixLen);
+    // Only a dependency takes a :<name> suffix; on anything else the colon
+    // makes the index malformed below.
+    StringRef Name;
+    size_t Colon = Dep != DEP_NONE ? Num.find(':') : StringRef::npos;
+    if (Colon != StringRef::npos) {
+      Name = Num.drop_front(Colon + 1);
+      Num = Num.take_front(Colon);
+      if (Name.empty()) {
+        errs() << "FilAsync: '" << Opt << "' has an empty namespace name\n";
+        report_fatal_error("FilAsync: malformed filc_async option");
+      }
+    }
     if (Num.empty() || Num.getAsInteger(10, Idx) || Idx >= NArgs) {
       errs() << "FilAsync: '" << Opt
              << "' does not index an argument of " << OrigName << "\n";
@@ -184,12 +214,17 @@ static void parseKinds(StringRef OrigName, FunctionType *FTy,
                << OrigName << " must be a pointer or an integer up to 64 bits\n";
         report_fatal_error("FilAsync: malformed filc_async option");
       }
-      if (Deps[Idx] != DEP_NONE && (Deps[Idx] & ~DEP_POINTER) != Dep) {
+      unsigned Value = Dep | (ArgTy->isPointerTy() ? DEP_POINTER : 0);
+      if (!Name.empty())
+        Value |= hashNamespace(Name) << DEP_NAMESPACE_SHIFT;
+      // Repeating an option is harmless; a different mode or namespace for
+      // the same argument is a contradiction.
+      if (Deps[Idx] != DEP_NONE && Deps[Idx] != Value) {
         errs() << "FilAsync: conflicting dependencies on argument " << Idx
                << " of " << OrigName << "\n";
         report_fatal_error("FilAsync: malformed filc_async option");
       }
-      Deps[Idx] = Dep | (ArgTy->isPointerTy() ? DEP_POINTER : 0);
+      Deps[Idx] = Value;
     } else {
       ++Noped;
       Kinds[Idx] = Kind;

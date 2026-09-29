@@ -1,5 +1,6 @@
 /* Compiler fixture: dependency options follow the same declaration rules as
- * op= and fd=. Every function is called so Clang retains its annotation. */
+ * op= and fd=, and a :<name> suffix adds a namespace. Every function is
+ * called so Clang retains its annotation. */
 #pragma clang attribute push(__attribute__((annotate("filc_async", "op=pread", "fd=0", "bout=1", "r_dep=0", "w_dep=1"))), apply_to=function)
 void* declared(int fd, void* buf, unsigned long len, unsigned long offset);
 #pragma clang attribute pop
@@ -24,8 +25,16 @@ void* overridden(int fd);
 void* overridden(int fd) { return (void*)(long)fd; }
 #pragma clang attribute pop
 
+#pragma clang attribute push(__attribute__((annotate("filc_async", "op=pread", "fd=0", "bout=1", "r_dep=0:slotA", "w_dep=1:slotB"))), apply_to=function)
+void* named(int fd, void* buf, unsigned long len, unsigned long offset)
+{
+    return (void*)(long)(fd + (buf != 0) + len + offset);
+}
+#pragma clang attribute pop
+
 void* invoke(int fd, void* buf)
 {
     return declared(fd, buf, 1, 0) == merged(fd) ?
-           separate(fd) : overridden(fd);
+           separate(fd) : overridden(fd) == named(fd, buf, 1, 0) ?
+           overridden(fd) : named(fd, buf, 1, 0);
 }

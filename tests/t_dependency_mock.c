@@ -231,10 +231,46 @@ int main(void)
     assert(result.state == 2 && result.result == -EBADF);
     finish(after_failure, 15);
 
+    /* A :<name> suffix puts a key in a namespace, hashed into bits 8..31.
+     * Equal values order each other only within one namespace. */
+    filc_async_meta* ns_write = meta("ns_write", sync_opts, 1);
+    filc_async_meta* ns_read_left = meta("ns_read_left", sync_opts, 1);
+    filc_async_meta* ns_read_right = meta("ns_read_right", sync_opts, 1);
+    ns_write->args[0].dependency =
+        FILC_ASYNC_DEP_WRITE | (0x111111u << FILC_ASYNC_DEP_NAMESPACE_SHIFT);
+    ns_read_left->args[0].dependency =
+        FILC_ASYNC_DEP_READ | (0x111111u << FILC_ASYNC_DEP_NAMESPACE_SHIFT);
+    ns_read_right->args[0].dependency =
+        FILC_ASYNC_DEP_READ | (0x222222u << FILC_ASYNC_DEP_NAMESPACE_SHIFT);
+    const filc_async_meta* ns_table[] = {
+        ns_write, ns_read_left, ns_read_right, NULL
+    };
+    filc_async_validate_table(ns_table);
+
+    void* nw1 = send_fd(ns_write, 16);
+    assert(issued == 16 && issue_fd[16] == 16);
+    /* Same namespace, read after write: the read waits for the write. */
+    void* nrl = send_fd(ns_read_left, 16);
+    assert(issued == 17 && issue_fd[17] == 16 && done[16]);
+    /* Same namespace again: the next write waits for the read. */
+    void* nw2 = send_fd(ns_write, 16);
+    assert(issued == 18 && issue_fd[18] == 16 && done[17]);
+    /* Another namespace: the read does not wait for the pending write. */
+    void* nrr = send_fd(ns_read_right, 16);
+    assert(issued == 19 && issue_fd[19] == 16 && !done[18]);
+    /* Nor does an unnamed key with the same value. */
+    void* unnamed = send_fd(read, 16);
+    assert(issued == 20 && issue_fd[20] == 16 && !done[18]);
+    finish(nw1, 16);
+    finish(nrl, 17);
+    finish(nw2, 18);
+    finish(nrr, 19);
+    finish(unnamed, 20);
+
     filc_async_stats stats;
     filc_async_get_stats(&stats);
-    assert(stats.tasks_submitted == 16 && stats.tasks_completed == 16 &&
-           stats.tasks_failed == 1 && stats.sqes_queued == 15);
+    assert(stats.tasks_submitted == 21 && stats.tasks_completed == 21 &&
+           stats.tasks_failed == 1 && stats.sqes_queued == 20);
     puts("CHECK_DEPENDENCIES PASS");
     return 0;
 }

@@ -38,8 +38,11 @@
  * Repeat r_dep=<i> or w_dep=<i> on an annotated function declaration or
  * definition for each argument that names a dependency. They follow the same
  * placement rules as other options. Scalar keys compare by value; pointer keys
- * compare by object identity. Equal-key read/read calls may overlap; every other pair
- * dispatches in submission order. Submit waits for a conflicting predecessor
+ * compare by object identity. A :<name> suffix, as in w_dep=0:meta, puts the
+ * key in a namespace: equal values in different namespaces are different
+ * resources, and a key without a name is in a namespace of its own.
+ * Equal-key read/read calls may overlap; every other pair dispatches in
+ * submission order. Submit waits for a conflicting predecessor
  * before returning its task, so lazy output-buffer access can find the SQE.
  */
 
@@ -59,13 +62,18 @@
 #define FILC_ASYNC_ARG_FD         4u
 #define FILC_ASYNC_ARG_PENDING    5u
 
-/* Dependency bits in args[i].dependency. The pointer bit separates an object
- * identity from a scalar with the same numeric address. Dependency options do
- * not contribute to noped_args, which counts fd=/bin=/bout=/buf= only. */
-#define FILC_ASYNC_DEP_NONE       0u
-#define FILC_ASYNC_DEP_READ       1u
-#define FILC_ASYNC_DEP_WRITE      2u
-#define FILC_ASYNC_DEP_POINTER    4u
+/* Dependency bits in args[i].dependency: read or write; the pointer bit,
+ * which separates an object identity from a scalar with the same numeric
+ * address; and a namespace in bits 8..31, a 24-bit hash of the <name> in
+ * r_dep=<i>:<name> or w_dep=<i>:<name> (never 0), or 0 when the option names
+ * none. Dependency options do not contribute to noped_args, which counts
+ * fd=/bin=/bout=/buf= only. */
+#define FILC_ASYNC_DEP_NONE            0u
+#define FILC_ASYNC_DEP_READ            1u
+#define FILC_ASYNC_DEP_WRITE           2u
+#define FILC_ASYNC_DEP_POINTER         4u
+#define FILC_ASYNC_DEP_NAMESPACE_SHIFT 8u
+#define FILC_ASYNC_DEP_NAMESPACE_MASK  0x00FFFFFFu
 
 typedef struct {
     const char* name;

@@ -105,7 +105,10 @@ the definition's options apply. Repeat
 reads or writes. For example, a write declared with `"w_dep=0"` uses its fd as
 the dependency key, and a read with `"r_dep=0", "w_dep=1"` reads that fd resource
 and writes its output buffer. Scalar arguments with the same value share a key;
-pointer arguments into the same object share a key. Calls with a matching key
+pointer arguments into the same object share a key. A `:<name>` suffix, as in
+`"w_dep=0:meta"`, puts the key in a namespace: equal values in different
+namespaces are different resources, and a key without a name is in a namespace
+of its own. Two dependency options on one argument must agree in mode and name. Calls with a matching key
 dispatch in call order whenever either side writes (read/write, write/read, or
 write/write). Two reads can be in flight together. A conflicting call waits
 for its predecessors before its own io_uring request is dispatched, so a

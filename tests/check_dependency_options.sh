@@ -1,5 +1,6 @@
 #!/bin/sh
-# Check r_dep/w_dep placement and the emitted dependency metadata.
+# Check r_dep/w_dep placement, the emitted dependency metadata including the
+# :<name> namespace hash, and the rejection of contradictory options.
 set -eu
 ulimit -c 0
 
@@ -57,12 +58,29 @@ sed 's/w_dep=/write_dep=/g' "$SRC" > "$TMP/legacy_write.c"
 "$CLANG" -S -emit-llvm -O0 "$TMP/legacy_read.c" -o "$TMP/legacy_read.ll"
 "$CLANG" -S -emit-llvm -O0 "$TMP/legacy_write.c" -o "$TMP/legacy_write.ll"
 
+"$CLANG" -S -emit-llvm -O0 "$HERE/t_dep_conflict.c" -o "$TMP/conflict.ll"
+sed 's/:right/:/' "$HERE/t_dep_conflict.c" > "$TMP/empty_name.c"
+"$CLANG" -S -emit-llvm -O0 "$TMP/empty_name.c" -o "$TMP/empty_name.ll"
+
 python3 - "$TMP/placement_out.ll" "$TMP/placement_debug.err" "$OPT" "$PLUGIN" \
-    "$TMP/legacy_read.ll" "$TMP/legacy_write.ll" <<'PY'
+    "$TMP/legacy_read.ll" "$TMP/legacy_write.ll" "$TMP/conflict.ll" \
+    "$TMP/empty_name.ll" <<'PY'
 import pathlib
 import re
 import subprocess
 import sys
+
+# The pass's namespace hash: FNV-1a folded to 24 bits, 0 becoming 1.
+def ns_hash(name):
+    h = 2166136261
+    for b in name.encode():
+        h = ((h ^ b) * 16777619) & 0xFFFFFFFF
+    h &= 0xFFFFFF
+    return h or 1
+
+# LLVM prints an i32 with bit 31 set as a negative number.
+def i32(v):
+    return str(v - (1 << 32) if v >= 1 << 31 else v)
 
 ir = pathlib.Path(sys.argv[1]).read_text()
 debug = pathlib.Path(sys.argv[2]).read_text()
@@ -72,6 +90,8 @@ expected = {
     "merged": ("{ i32 4, i32 2 }",),
     "separate": ("{ i32 4, i32 1 }",),
     "overridden": ("{ i32 4, i32 2 }",),
+    "named": (f"{{ i32 4, i32 {i32(1 | ns_hash('slotA') << 8)} }}",
+              f"{{ i32 3, i32 {i32(6 | ns_hash('slotB') << 8)} }}"),
 }
 for name, dependencies in expected.items():
     prefix = f"@__filc_meta_{name} ="
@@ -89,13 +109,20 @@ if override is None or "  op=fsync\n" not in override.group(1) or \
    "  r_dep=0\n" in override.group(1):
     raise SystemExit("FAIL: definition did not override op and dependency options")
 
-for source in sys.argv[5:]:
+def rejected(source, message):
     result = subprocess.run(
         [sys.argv[3], f"-load-pass-plugin={sys.argv[4]}",
          "-passes=filc-async", source, "-disable-output"],
         stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
-    if result.returncode == 0 or "use r_dep= or w_dep=" not in result.stderr:
+    return result.returncode != 0 and message in result.stderr
+
+for source in sys.argv[5:7]:
+    if not rejected(source, "use r_dep= or w_dep="):
         raise SystemExit(f"FAIL: obsolete option in {source} was not rejected")
+if not rejected(sys.argv[7], "conflicting dependencies on argument 0"):
+    raise SystemExit("FAIL: two namespaces on one argument were not rejected")
+if not rejected(sys.argv[8], "has an empty namespace name"):
+    raise SystemExit("FAIL: an empty namespace name was not rejected")
 
 print("CHECK_DEPENDENCY_OPTIONS PASS")
 PY

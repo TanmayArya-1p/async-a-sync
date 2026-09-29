@@ -116,6 +116,13 @@ static enum fasync_op opcode_from(const char* const* opts)
     return FASYNC_OP_UNKNOWN;
 }
 
+/* An argument's dependency mode: FILC_ASYNC_DEP_READ, _WRITE, or 0 when it
+ * names no dependency. The other bits say which keys it compares with. */
+static unsigned dep_mode(unsigned dep)
+{
+    return dep & (FILC_ASYNC_DEP_READ | FILC_ASYNC_DEP_WRITE);
+}
+
 /* noped_args counts fd=/bin=/bout=/buf= options. Check that count and the
  * argument shape expected by each supported operation. The runtime owns the
  * operation list; the pass does not validate op=. */
@@ -127,12 +134,13 @@ static bool arg_kinds_ok(const filc_async_meta* m)
         return false;
     for (size_t i = 0; i < m->nargs; ++i) {
         unsigned dep = m->args[i].dependency;
-        unsigned mode = dep & ~FILC_ASYNC_DEP_POINTER;
-        if (mode != FILC_ASYNC_DEP_NONE && mode != FILC_ASYNC_DEP_READ &&
-            mode != FILC_ASYNC_DEP_WRITE)
+        unsigned mode = dep_mode(dep);
+        if (mode == (FILC_ASYNC_DEP_READ | FILC_ASYNC_DEP_WRITE))
             return false;
         if (dep & ~(FILC_ASYNC_DEP_POINTER | FILC_ASYNC_DEP_READ |
-                    FILC_ASYNC_DEP_WRITE))
+                    FILC_ASYNC_DEP_WRITE |
+                    (FILC_ASYNC_DEP_NAMESPACE_MASK
+                     << FILC_ASYNC_DEP_NAMESPACE_SHIFT)))
             return false;
         if (mode == FILC_ASYNC_DEP_NONE && dep != FILC_ASYNC_DEP_NONE)
             return false;
@@ -293,7 +301,7 @@ static void* arg_ptr(const filc_async_arg* args, size_t index)
 struct filc_async_dep_key {
     struct filc_async_dep_key* bucket_next; /* same bucket, or free list */
     uint64_t word;
-    unsigned char pointer;
+    uint32_t space;                         /* see dep_space */
     struct filc_async_dep_ref* readers;     /* in flight, newest first */
     struct filc_async_dep_ref* writers;
 };
@@ -338,12 +346,23 @@ static uint64_t dep_key_word(const filc_async_arg* args, size_t i, unsigned dep)
     return arg_word(args, i);
 }
 
-static struct filc_async_dep_key* dep_key_get(uint64_t word, unsigned char pointer)
+/* Which keys a word is compared with: the pointer bit and the namespace.
+ * Equal words in different spaces are different resources. */
+static uint32_t dep_space(unsigned dep)
 {
-    struct filc_async_dep_key** bucket =
-        &g_dep_buckets[hash_bits((uintptr_t)(word ^ pointer), DEP_BUCKET_BITS)];
+    return dep & ~(FILC_ASYNC_DEP_READ | FILC_ASYNC_DEP_WRITE);
+}
+
+static struct filc_async_dep_key** dep_bucket(uint64_t word, uint32_t space)
+{
+    return &g_dep_buckets[hash_bits((uintptr_t)(word ^ space), DEP_BUCKET_BITS)];
+}
+
+static struct filc_async_dep_key* dep_key_get(uint64_t word, uint32_t space)
+{
+    struct filc_async_dep_key** bucket = dep_bucket(word, space);
     for (struct filc_async_dep_key* k = *bucket; k; k = k->bucket_next)
-        if (k->word == word && k->pointer == pointer)
+        if (k->word == word && k->space == space)
             return k;
     struct filc_async_dep_key* k = g_free_keys;
     if (k)
@@ -353,7 +372,7 @@ static struct filc_async_dep_key* dep_key_get(uint64_t word, unsigned char point
     if (!k)
         filc_async_fatal("filc_async_submit: out of memory");
     k->word = word;
-    k->pointer = pointer;
+    k->space = space;
     k->readers = NULL;
     k->writers = NULL;
     k->bucket_next = *bucket;
@@ -368,7 +387,7 @@ static void deps_index(struct filc_async_task* t)
     const filc_async_arg* args = (const filc_async_arg*)t->staged_args;
     unsigned n = 0;
     for (size_t i = 0; i < m->nargs; ++i)
-        n += (m->args[i].dependency & ~FILC_ASYNC_DEP_POINTER) != 0;
+        n += dep_mode(m->args[i].dependency) != 0;
     if (!n)
         return;
     t->deps = (struct filc_async_dep_ref*)filc_async_alloc(n * sizeof *t->deps, 16);
@@ -376,14 +395,13 @@ static void deps_index(struct filc_async_task* t)
         filc_async_fatal("filc_async_submit: out of memory");
     for (size_t i = 0; i < m->nargs; ++i) {
         unsigned dep = m->args[i].dependency;
-        unsigned mode = dep & ~FILC_ASYNC_DEP_POINTER;
+        unsigned mode = dep_mode(dep);
         if (!mode)
             continue;
         struct filc_async_dep_ref* r = &t->deps[t->ndeps++];
         r->task = t;
         r->write = mode == FILC_ASYNC_DEP_WRITE;
-        r->key = dep_key_get(dep_key_word(args, i, dep),
-                             (dep & FILC_ASYNC_DEP_POINTER) != 0);
+        r->key = dep_key_get(dep_key_word(args, i, dep), dep_space(dep));
         struct filc_async_dep_ref** head =
             r->write ? &r->key->writers : &r->key->readers;
         r->newer = NULL;
@@ -411,9 +429,7 @@ static void deps_unindex(struct filc_async_task* t)
             r->older->newer = r->newer;
         if (k->readers || k->writers)
             continue;
-        struct filc_async_dep_key** link =
-            &g_dep_buckets[hash_bits((uintptr_t)(k->word ^ k->pointer),
-                                     DEP_BUCKET_BITS)];
+        struct filc_async_dep_key** link = dep_bucket(k->word, k->space);
         while (*link != k)
             link = &(*link)->bucket_next;
         *link = k->bucket_next;
