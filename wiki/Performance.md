@@ -27,10 +27,14 @@ checks are in `demos/pragma/pragma_report.hh`.
 
 ### A runtime of the program's own (`make demo-rpc`)
 
-`demo_rpc_counter` sends `step` and `get` calls to a loopback TCP counter
-server through `runtime=rpc`, a runtime in the demo's own source. It checks
-the replies, and that only the `step` and the `get` after it wait for a
-lock: the two `get` calls before them are in flight together. See [The RPC runtime example](RPC-Runtime.md).
+Both demos send calls to a loopback TCP server through `runtime=rpc`, a
+runtime in the demos' own source. See
+[The RPC runtime example](RPC-Runtime.md).
+
+| Demo | Shows |
+|---|---|
+| `counter` | `step` and `get` calls on `runtime=rpc` alone: two `get` calls are in flight together, and only the `step` and the `get` after it wait for a lock |
+| `upload` | two runtimes in one loop: each file is read with io_uring and its buffer uploaded over rpc. Each upload waits for its own read, the reads still reach the kernel in one submit, and the server's checksums match the files |
 
 ### Explicit API (`make all-demos`)
 

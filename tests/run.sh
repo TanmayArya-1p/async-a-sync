@@ -313,6 +313,19 @@ run_unlinked_runtime() {
   fi
 }
 
+# run_rpc_demo <name>: builds and runs demos/rpc/demo_rpc_<name>.c against
+# the rpc demos' server (demos/rpc/run_rpc_demo.sh).
+run_rpc_demo() {
+  echo
+  echo "### demo_rpc_$1 (run_rpc_demo.sh $1)"
+  if PATCHED_CC="$PATCHED_CC" "$REPO/demos/rpc/run_rpc_demo.sh" "$1" "$OUT"; then
+    PASSED=$((PASSED + 1))
+  else
+    echo "!!! run_rpc_demo.sh $1 exited non-zero"
+    FAILED=$((FAILED + 1))
+  fi
+}
+
 # run_patched_neg <name> <source>: builds like run_patched but expects the
 # program to be rejected at startup (runtime-side op validation). Passes only
 # when it dies with the validator's rejection message.
@@ -380,16 +393,11 @@ if [ "$PATCHED_READY" -eq 1 ]; then
   run_mock_runtime
   needs_io_uring run_two_runtimes
   run_unlinked_runtime
-  # A runtime of the program's own: demo_rpc_counter sends its annotated calls
-  # to a loopback TCP server through demos/rpc/rpc_runtime.c, without io_uring.
-  echo
-  echo "### demo_rpc_counter: a TCP runtime (run_rpc_counter.sh)"
-  if PATCHED_CC="$PATCHED_CC" "$REPO/demos/rpc/run_rpc_counter.sh" "$OUT"; then
-    PASSED=$((PASSED + 1))
-  else
-    echo "!!! run_rpc_counter.sh exited non-zero"
-    FAILED=$((FAILED + 1))
-  fi
+  # A runtime of the program's own, demos/rpc/rpc_runtime.c, which sends
+  # annotated calls to a loopback TCP server: alone (counter), and next to
+  # io_uring (upload).
+  run_rpc_demo counter
+  needs_io_uring run_rpc_demo upload
   # Negative control: an unknown op= is accepted by the pass and rejected by
   # the runtime's startup validator (the runtime is the authority).
   run_patched_neg t_pragma_unknownop "$HERE/t_pragma_unknownop.c"

@@ -268,8 +268,9 @@ invariants:
 `tests/t_mock_runtime.c` shows the shape of such a test, and `tests/run.sh`
 builds it with `tests/mock_runtime.c` and checks that no io_uring symbol was
 linked. `tests/t_two_runtimes.c` links the mock runtime with the io_uring
-runtime and orders calls across them. `demos/rpc/demo_rpc_counter.c` does the
-same for a runtime that talks to a server (`make demo-rpc`).
+runtime and orders calls across them. `demos/rpc/demo_rpc_upload.c` does the
+same with a runtime that talks to a server: its uploads wait for io_uring
+reads (`make demo-rpc-upload`).
 
 ## See also
 

@@ -9,7 +9,7 @@ FILC_ROOT ?= $(REPO_DIR)/vendor/filc-0.685-linux-x86_64
 FILCC ?= $(FILC_ROOT)/build/bin/filcc
 PATCHED_CC ?= $(REPO_DIR)/vendor/fil-c-src/build/bin/filcc
 
-.PHONY: all help runtime demo-wordcount demo-plain demo-async demo-provenance all-demos demo-pragma demo-rpc disasm cfg clean
+.PHONY: all help runtime demo-wordcount demo-plain demo-async demo-provenance all-demos demo-pragma demo-rpc demo-rpc-counter demo-rpc-upload disasm cfg clean
 
 all: help
 
@@ -28,7 +28,9 @@ help:
 	@echo " make demo-pragma-coldread   : Cold-cache reads: blocking vs annotated vs hand-written"
 	@echo " make demo-pragma-scaling    : The same comparison for 1 to 2048 files"
 	@echo " make demo-pragma-overlap    : Read + hash: blocking vs annotated, overlapped"
-	@echo " make demo-rpc               : Annotated calls on a custom runtime: TCP requests to a counter server"
+	@echo " make demo-rpc               : Run both rpc demos"
+	@echo " make demo-rpc-counter       : Annotated calls on a custom runtime: TCP requests to a counter server"
+	@echo " make demo-rpc-upload        : Two runtimes: read files with io_uring, upload them with rpc"
 	@echo "------------------------------------------------------------------"
 	@echo " make disasm           : Inspect disassembly (GCC raw load vs Fil-C hook)"
 	@echo " make cfg              : Generate CFG graph (PNG image & AST dump)"
@@ -80,8 +82,10 @@ demo-pragma-%: runtime
 		$(REPO_DIR)/demos/pragma/demo_pragma_$*.c -lfilc_async_uring -lpizlo -lc
 	@$(OUT_DIR)/demo_pragma_$* $(OUT_DIR) $(ARGS)
 
-demo-rpc: runtime
-	@PATCHED_CC=$(PATCHED_CC) ./demos/rpc/run_rpc_counter.sh $(OUT_DIR)
+demo-rpc: demo-rpc-counter demo-rpc-upload
+
+demo-rpc-counter demo-rpc-upload: demo-rpc-%: runtime
+	@PATCHED_CC=$(PATCHED_CC) ./demos/rpc/run_rpc_demo.sh $* $(OUT_DIR)
 
 disasm:
 	@./demos/wordcount/inspect_disasm_cfg.sh

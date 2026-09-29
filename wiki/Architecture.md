@@ -35,8 +35,9 @@ the [Runtime API](Runtime-API.md) and [Framework API](Framework-API.md).
   - **The shipped runtime.** `runtime=io_uring` turns calls into io_uring
     requests. `tests/mock_runtime.c` is a second runtime, `runtime=mock`, and
     `tests/t_two_runtimes.c` uses both in one program. `demos/rpc/rpc_runtime.c`,
-    `runtime=rpc`, sends calls to a TCP server
-    ([example](RPC-Runtime.md)).
+    `runtime=rpc`, sends calls to a TCP server, and
+    `demos/rpc/demo_rpc_upload.c` reads files with io_uring and uploads them
+    with it ([example](RPC-Runtime.md)).
 
 **No runtime symbols in the framework.** The framework references no symbol
 of any runtime. It reaches a task's runtime only through the descriptor its

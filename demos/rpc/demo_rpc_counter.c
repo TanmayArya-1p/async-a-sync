@@ -2,12 +2,12 @@
  *
  * step() and get() in rpc_counter.hh look like plain functions of a port.
  * Their pragmas say runtime=rpc, so rpc_runtime.c sends each call to the
- * counter server (rpc_counter_server.c) and the call returns at once. The
- * server's reply is the call's result.
+ * server (rpc_server.c) and the call returns at once. The server's reply is
+ * the call's result.
  *
- * rpc_report.hh reads the port, prints the replies and checks them. */
+ * rpc_counter_report.hh reads the port, prints the replies and checks them. */
 
-#include "rpc_report.hh"
+#include "rpc_counter_report.hh"
 
 int main(int argc, char** argv) {
   unsigned port = rpc_setup(argc, argv);
