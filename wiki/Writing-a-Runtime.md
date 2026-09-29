@@ -268,11 +268,14 @@ invariants:
 `tests/t_mock_runtime.c` shows the shape of such a test, and `tests/run.sh`
 builds it with `tests/mock_runtime.c` and checks that no io_uring symbol was
 linked. `tests/t_two_runtimes.c` links the mock runtime with the io_uring
-runtime and orders calls across them.
+runtime and orders calls across them. `demos/rpc/demo_rpc_counter.c` does the
+same for a runtime that talks to a server (`make demo-rpc`).
 
 ## See also
 
 - [Runtime API](Runtime-API.md): the full contract.
 - [The io_uring runtime](io_uring-Runtime.md): a runtime that turns calls into
   kernel requests, batches them, and reclaims request slots.
+- [The RPC runtime example](RPC-Runtime.md): a runtime in the program's own
+  source that sends calls to a TCP server and returns its replies as results.
 - [Architecture](Architecture.md): where the stub, framework and runtime meet.

@@ -25,6 +25,13 @@ checks are in `demos/pragma/pragma_report.hh`.
 | `scaling` | that comparison for 1 to 2048 files, with the time spent inside each annotated call |
 | `overlap` | reading and hashing 256 files, with the reads and the hashing also timed alone |
 
+### A runtime of the program's own (`make demo-rpc`)
+
+`demo_rpc_counter` sends `step` and `get` calls to a loopback TCP counter
+server through `runtime=rpc`, a runtime in the demo's own source. It checks
+the replies, and that only the `step` and the `get` after it wait for a
+lock: the two `get` calls before them are in flight together. See [The RPC runtime example](RPC-Runtime.md).
+
 ### Explicit API (`make all-demos`)
 
 | Demo | Shows |

@@ -41,6 +41,8 @@ exactly, and explanation pages cover the design.
   descriptor layout and the stub entry points.
 - [The io_uring runtime](io_uring-Runtime.md): the shipped runtime, a worked
   example of the runtime API.
+- [The RPC runtime example](RPC-Runtime.md): a runtime a program brings
+  itself, which sends calls to a TCP server.
 - [Explicit API](Explicit-API.md): `fasync.h`, the hand-written io_uring
   request API.
 - [Tests](Testing.md): the test suite and what each check proves.

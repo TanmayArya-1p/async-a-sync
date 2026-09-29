@@ -20,7 +20,8 @@ Tests are **skipped**, not failed, in two cases:
 
 Read the skip count as well as the failure count.
 
-**Not covered.** `run.sh` does not run the Makefile demo targets,
+**Not covered.** `run.sh` runs `demos/wordcount/run_wordcount.sh` and
+`demos/rpc/run_rpc_counter.sh`, but not the other Makefile demo targets,
 `demos/wordcount/run_wordcount_3way.sh`, or
 `demos/wordcount/inspect_disasm_cfg.sh`. After
 changing the runtime or the link line, run `make demo-pragma`,
@@ -46,6 +47,7 @@ changing the runtime or the link line, run `make demo-pragma`,
 | `t_mock_runtime.c` with `mock_runtime.c` | annotated calls work with another runtime linked and no io_uring symbol present |
 | `t_two_runtimes.c` with `mock_runtime.c` and io_uring | two runtimes in one program: a lock and a pending buffer order calls across them |
 | `t_unlinked_runtime.c` | naming a runtime the program does not link fails at link time |
+| `demos/rpc/run_rpc_counter.sh` | a runtime in the program's own source (`demos/rpc/rpc_runtime.c`) sends calls to a loopback TCP server; its results and lock ordering come back through the framework |
 | `t_pending_registry.c`, `t_pragma_markpending.c` | the pending-mark contract: which arguments are marked, aliasing, ownerless marks |
 | `t_pragma_alloc.c` | the allocator interface |
 | `t_pragma_custom_validator.c`, `t_pragma_unknownop.c`, `t_pragma_ignore.c` | the runtime owns the op set, and a program validator replaces it |

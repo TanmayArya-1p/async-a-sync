@@ -379,6 +379,16 @@ if [ "$PATCHED_READY" -eq 1 ]; then
   run_mock_runtime
   needs_io_uring run_two_runtimes
   run_unlinked_runtime
+  # A runtime of the program's own: demo_rpc_counter sends its annotated calls
+  # to a loopback TCP server through demos/rpc/rpc_runtime.c, without io_uring.
+  echo
+  echo "### demo_rpc_counter: a TCP runtime (run_rpc_counter.sh)"
+  if PATCHED_CC="$PATCHED_CC" "$REPO/demos/rpc/run_rpc_counter.sh" "$OUT"; then
+    PASSED=$((PASSED + 1))
+  else
+    echo "!!! run_rpc_counter.sh exited non-zero"
+    FAILED=$((FAILED + 1))
+  fi
   # Negative control: an unknown op= is accepted by the pass and rejected by
   # the runtime's startup validator (the runtime is the authority).
   run_patched_neg t_pragma_unknownop "$HERE/t_pragma_unknownop.c"
