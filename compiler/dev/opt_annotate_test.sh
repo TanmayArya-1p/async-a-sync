@@ -10,7 +10,7 @@
 #     opts,args[]} with a [nargs x {i32,i32}] tail), and the ctor's 65535
 #     priority;
 #   - rewrite: alloc/submit greps, each call referencing its meta, original
-#     direct calls gone, staging intval/capability stores;
+#     direct calls gone, staging scalar/pointer stores;
 #   - erasure: llvm.global.annotations and use-empty .args/.str globals gone
 #     while the opts-array .str globals stay alive;
 #   - the -filc-async-debug gate (enrolled lines print only when enabled).
@@ -40,11 +40,14 @@ mkdir -p "$TMP"
 # Two annotated functions, each declared and called from main: declared-but-
 # unused functions get no llvm.global.annotations entry. Return types are
 # pointers (-> result = PTR = 2). main passes VARIABLE arguments so the
-# rewrite's zext/ptrtoint intval instructions are not folded away. The
+# rewrite's scalar extension and pointer staging are not folded away. The
 # annotations use the generic grammar (op never decides a kind): fd/bout on
 # procread (FD + BUFFER_OUT), fd/bin + a bare buf (FD + BUFFER_IN + PENDING)
 # on uopenat -- the bare buf= on an op=openat is what proves buf= is PENDING
-# and NOT inferred from the op name.
+# and NOT inferred from the op name. procread stays a declaration, so the pass
+# keeps its ordinary linker name (a cross-TU definition links): submit's impl
+# operand stays @procread. uopenat IS defined here, so the pass renames it to
+# @__filc_async_uopenat -- exercising the renamed-definition path.
 cat > "$SRC" <<'EOF'
 #pragma clang attribute push(__attribute__((annotate("filc_async", "op=pread", "fd=0", "bout=1"))), apply_to=function)
 void* procread(int fd, void* buf, unsigned long n);
@@ -53,6 +56,7 @@ void* procread(int fd, void* buf, unsigned long n);
 #pragma clang attribute push(__attribute__((annotate("filc_async", "op=openat", "fd=0", "bin=1", "buf=2"))), apply_to=function)
 void* uopenat(int dirfd, const char* path, int flags, int mode);
 #pragma clang attribute pop
+void* uopenat(int dirfd, const char* path, int flags, int mode) { return path; }
 
 int main(void) {
   int fd = 7;
@@ -104,7 +108,7 @@ expect_grep() {
 # The brief's six greps.
 expect_grep '@__filc_meta_procread' 'meta exists (@__filc_meta_procread)'
 expect_grep '@__filc_opts_procread' 'opts exist (@__filc_opts_procread)'
-expect_grep '@__filc_async_procread' 'renamed body (@__filc_async_procread)'
+expect_grep '@__filc_async_uopenat' 'renamed body (@__filc_async_uopenat, definition)'
 expect_grep '@__filc_async_meta_' 'per-TU meta table (@__filc_async_meta_*)'
 expect_grep 'filc_async_ctor' 'table ctor (filc_async_ctor)'
 expect_grep '@filc_async_validate_table' 'validator declared/called (@filc_async_validate_table)'
@@ -171,20 +175,21 @@ expect_grep '@filc_async_alloc' 'staging alloc present (@filc_async_alloc)'
 expect_grep '@filc_async_submit' 'submit present (@filc_async_submit)'
 expect_grep '@filc_async_submit(ptr @__filc_meta_procread' 'procread call references its meta'
 expect_grep '@filc_async_submit(ptr @__filc_meta_uopenat' 'uopenat call references its meta'
-expect_grep '@filc_async_submit(ptr @__filc_meta_procread, ptr @__filc_async_procread, ptr @__filc_opts_procread' \
-  'submit passes meta, renamed impl, opts in order'
+expect_grep '@filc_async_submit(ptr @__filc_meta_procread, ptr @procread, ptr @__filc_opts_procread' \
+  'submit passes meta, impl (declaration keeps its name), opts in order'
+expect_grep '@filc_async_submit(ptr @__filc_meta_uopenat, ptr @__filc_async_uopenat, ptr @__filc_opts_uopenat' \
+  'submit passes meta, impl (definition renamed), opts in order'
 
-# Staging stores: intval = zext(i32 fd/flags/mode) for integer params and
-# ptrtoint(buffer) for the pointer param; capability word zeroed.
+# Staging stores: scalar words are zero-extended (i32 fd/flags/mode -> i64);
+# pointer params are stored AS POINTERS so FilPizlonator widens the cell and
+# keeps the capability.
 expect_grep 'zext i32 %' 'integer params zero-extended to intval (R4)'
-expect_grep 'ptrtoint ptr %' 'buffer param ptrtoint-ed to intval (R4)'
+expect_grep 'store ptr %' 'pointer params staged with their capability'
 
-# Original direct calls to the annotated functions are gone. The rename
-# already renamed the declaration object itself, so a leftover direct call
-# would print as `call ... @__filc_async_procread(...)` (not `@procread(...)`) --
-# assert the load-bearing form: no `call` instruction may use the renamed body
-# as its callee. The rewritten sites call @filc_async_submit instead. Keep the
-# bare `@procread(`/`@uopenat(` sanity greps too.
+# Original direct calls to the annotated functions are gone. Declarations keep
+# their ordinary name, so `@procread(` may appear as submit's impl operand --
+# the load-bearing checks are that no `call` instruction uses @procread as its
+# callee, and that the rewritten sites call @filc_async_submit instead.
 if grep -qE 'call [^@]*@__filc_async_procread\(' "$OUT"; then
   fail 'direct call to @__filc_async_procread gone'
 else
@@ -195,15 +200,15 @@ if grep -qE 'call [^@]*@__filc_async_uopenat\(' "$OUT"; then
 else
   pass 'direct call to @__filc_async_uopenat gone'
 fi
-if grep -qF -- '@procread(' "$OUT"; then
-  fail 'bare @procread( absent (sanity)'
+if grep -qE 'call [^@]*@procread\(' "$OUT"; then
+  fail 'no direct call uses @procread as callee (sanity)'
 else
-  pass 'bare @procread( absent (sanity)'
+  pass 'no direct call uses @procread as callee (sanity)'
 fi
-if grep -qF -- '@uopenat(' "$OUT"; then
-  fail 'bare @uopenat( absent (sanity)'
+if grep -qE 'call [^@]*@uopenat\(' "$OUT"; then
+  fail 'no direct call uses @uopenat as callee (sanity)'
 else
-  pass 'bare @uopenat( absent (sanity)'
+  pass 'no direct call uses @uopenat as callee (sanity)'
 fi
 
 # ---- annotation erasure ----

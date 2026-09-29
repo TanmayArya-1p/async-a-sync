@@ -16,6 +16,11 @@ OUT=${OUT:-$REPO/build/tests}
 
 mkdir -p "$OUT"
 
+"$HERE/check_forwarders.sh"
+"$HERE/check_dependencies.sh"
+"$HERE/check_dependency_options.sh"
+"$HERE/check_callsite_pragma.sh"
+
 if [ ! -x "$FILCC" ]; then
   echo "run.sh: filcc not found at $FILCC (set FILC_ROOT)" >&2
   exit 1
@@ -29,11 +34,12 @@ PASSED=0
 
 run_filc_test() {
   name=$1
+  shift
   echo
   echo "### $name (Fil-C)"
   if "$FILCC" -O2 -static -I"$REPO/runtime/src" -L"$REPO/runtime/build/lib" \
-       -o "$OUT/$name" "$HERE/$name.c"; then
-    if "$OUT/$name"; then
+       -o "$OUT/$name" "$HERE/$name.c" -lpizlo -lc; then
+    if "$OUT/$name" "$@"; then
       PASSED=$((PASSED + 1))
     else
       echo "!!! $name exited non-zero"
@@ -92,6 +98,7 @@ run_filc_test stage5_trackers
 run_filc_test stage6_fd_provenance
 run_filc_test stage7_throughput
 run_filc_test t_pending_registry
+run_filc_test t_backend_io_uring "$OUT"
 
 # stage4, stage8, demo_plain_io and demo_wordcount all need the *patched*
 # compiler, because what they demonstrate is the hook it inserts. Built with the
@@ -103,9 +110,9 @@ PATCHED_CC=$REPO/vendor/fil-c-src/build/bin/filcc
 PATCHED_READY=0
 if [ -x "$PATCHED_CC" ]; then
   # The source-built clang looks for its Fil-C runtime at
-  # <binary>/../../../pizfix (i.e. $REPO/vendor/pizfix). Point that at the
+  # <binary>/../../pizfix (i.e. $REPO/vendor/fil-c-src/pizfix). Point that at the
   # distribution's pizfix so the patched compiler can find crt1.o, yolort, etc.
-  PATCHED_PIZFIX=$(cd "$(dirname "$PATCHED_CC")/../../.." && pwd)/pizfix
+  PATCHED_PIZFIX=$(cd "$(dirname "$PATCHED_CC")/../.." && pwd)/pizfix
   if [ ! -e "$PATCHED_PIZFIX" ]; then
     ln -sfn "$FILC_ROOT/pizfix" "$PATCHED_PIZFIX"
   fi
@@ -124,10 +131,11 @@ run_patched() {
   echo
   echo "### $name (patched compiler)"
   # shellcheck disable=SC2086
-  if "$PATCHED_CC" -O2 -static -DFASYNC_COMPILER_INSERTS_CHECKS \
+  if "$PATCHED_CC" -O2 -static -Werror=pragma-clang-attribute \
+       -DFASYNC_COMPILER_INSERTS_CHECKS \
        $RUN_PATCHED_FLAGS \
        -I"$REPO/runtime/src" -L"$REPO/runtime/build/lib" \
-       -o "$OUT/$name" "$src"; then
+       -o "$OUT/$name" "$src" -lpizlo -lc; then
     if "$OUT/$name" "$@"; then
       PASSED=$((PASSED + 1))
     else
@@ -136,6 +144,29 @@ run_patched() {
     fi
   else
     echo "!!! $name failed to build"
+    FAILED=$((FAILED + 1))
+  fi
+}
+
+# Compile a caller and annotated implementation in separate translation units,
+# then inspect the archive and final executable before running the program.
+run_patched_linked() {
+  echo
+  echo "### t_linked_async (patched compiler, two translation units)"
+  if "$PATCHED_CC" -O2 -static -DFASYNC_COMPILER_INSERTS_CHECKS \
+       -I"$REPO/runtime/src" -L"$REPO/runtime/build/lib" \
+       -o "$OUT/t_linked_async" \
+       "$HERE/t_linked_async_main.c" "$HERE/t_linked_async_def.c" \
+       -lpizlo -lc; then
+    if "$HERE/check_linkage.sh" "$REPO/runtime/build/lib/libpizlo.a" \
+         "$OUT/t_linked_async" && "$OUT/t_linked_async" "$OUT"; then
+      PASSED=$((PASSED + 1))
+    else
+      echo "!!! t_linked_async linkage or execution failed"
+      FAILED=$((FAILED + 1))
+    fi
+  else
+    echo "!!! t_linked_async failed to link"
     FAILED=$((FAILED + 1))
   fi
 }
@@ -153,7 +184,7 @@ run_patched_neg() {
   if "$PATCHED_CC" -O2 -static -DFASYNC_COMPILER_INSERTS_CHECKS \
        $RUN_PATCHED_FLAGS \
        -I"$REPO/runtime/src" -L"$REPO/runtime/build/lib" \
-       -o "$OUT/$name" "$src"; then
+       -o "$OUT/$name" "$src" -lpizlo -lc; then
     if err_out=$("$OUT/$name" 2>&1); then
       echo "!!! $name exited 0; runtime should have rejected the op"
       FAILED=$((FAILED + 1))
@@ -192,6 +223,17 @@ if [ "$PATCHED_READY" -eq 1 ]; then
   run_filc_test t_pragma_alloc
   run_patched t_pragma_ignore "$HERE/t_pragma_ignore.c"
   run_patched t_pragma_markpending "$HERE/t_pragma_markpending.c"
+  run_patched_linked
+  run_patched t_pragma_io_uring "$HERE/t_pragma_io_uring.c" "$OUT"
+  run_patched t_pragma_dependencies "$HERE/t_pragma_dependencies.c" "$OUT"
+  # Regression: every annotated call site must submit even when the call is
+  # foldable, i.e. the pass has to rewrite call sites before the Fil-C inliner
+  # gets a chance to remove them.
+  run_patched t_pragma_repeat_read "$HERE/t_pragma_repeat_read.c"
+  # Regression: an op on a bad fd must report -EBADF, not hang (the ring can
+  # steal the number of a closed fd from io_uring_setup). Self-bounding via
+  # alarm() so a regression fails the test instead of wedging the suite.
+  run_patched t_pragma_error_path "$HERE/t_pragma_error_path.c"
   # Negative control: an unknown op= is accepted by the pass and rejected by
   # the runtime's startup validator (the runtime is the authority).
   run_patched_neg t_pragma_unknownop "$HERE/t_pragma_unknownop.c"
@@ -211,7 +253,8 @@ if [ "$PATCHED_READY" -eq 1 ]; then
 else
   echo
   echo "### stage4_compiler_hook, stage8_latency, demo_plain_io, demo_async_io,"
-  echo "    demo_provenance, demo_wordcount, run_wordcount.sh:"
+  echo "    demo_provenance, demo_wordcount, t_linked_async, t_pragma_io_uring,"
+  echo "    t_pragma_dependencies, run_wordcount.sh:"
   echo "    SKIPPED (patched compiler not built)"
   echo "    build it with: ./compiler/build.sh"
 fi

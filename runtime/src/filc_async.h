@@ -3,42 +3,16 @@
 #include <stdint.h>
 #include <stdbool.h>
 
-/* Generic async-function interface.
- *
- * A function declared with `#pragma clang attribute` +
- * `__attribute__((annotate("filc_async", ...)))` has its call sites rewritten
- * by the FilAsync pass into filc_async_submit against this interface. The
- * only backend implemented so far is the immediate-fail placeholder in
- * filc_async.c (the io_uring runtime is a later branch).
- *
- * filc_async_meta must match, byte for byte, the descriptor global the pass
- * emits (name at 0, nargs at 16, opts at 32, args[0] at 48 once the 16-byte
- * Fil-C pointers are in play). Do not change field order.
- *
- * Ordering: submit never blocks, and there is no edge between calls from
- * program order. Dependencies are resolved lazily at the first data access to
- * a still-in-flight range (result buffers held by pending ops); bare pointer
- * passing does not synchronize, and two writers to one buffer need explicit
- * sequencing. A pending range always resolves, so waits always terminate.
- *
- * Pending marks: the pass calls mark_pending on the producing buffer args
- * (bout=, bare buf=, and unannotated pointer args) of an annotated call before
- * submit; bin= const inputs are never marked. is_pending reports range
- * coverage; mark_resolved clears a mark (the runtime auto-resolves a task's
- * buffers on completion, and the program can resolve early between calls).
- * Marking a range already claimed by an older op resolves that op first.
- * Marks are object-range records, not object-flag bits.
- */
+// Reference: wiki/2026-09-29-pragma-async-runtime-interface.md
+// Interface for calls annotated with the filc_async pragma. The compiler pass
+// rewrites every call site into filc_async_submit.
 
+// Result kinds.
 #define FILC_ASYNC_RESULT_NONE 0u
 #define FILC_ASYNC_RESULT_WORD 1u
 #define FILC_ASYNC_RESULT_PTR  2u
 
-/* Arg kinds. The pass records these from the pragma's positional tokens
- * ONLY -- op= never decides a kind: fd=<i> -> FD, bin=<i> -> BUFFER_IN,
- * bout=<i> -> BUFFER_OUT, buf=<i> -> PENDING (no direction annotated; the
- * runtime decides at use time). Unannotated pointer args also default to
- * PENDING (pessimistic); unannotated non-pointers stay IGNORED. */
+// Arg kinds, from the positional options only. op= never sets a kind.
 #define FILC_ASYNC_ARG_IGNORED    0u
 #define FILC_ASYNC_ARG_SCALAR     1u
 #define FILC_ASYNC_ARG_BUFFER_IN  2u
@@ -46,6 +20,17 @@
 #define FILC_ASYNC_ARG_FD         4u
 #define FILC_ASYNC_ARG_PENDING    5u
 
+// Dependency bits: flags, plus a resource namespace hashed into bits 8..31
+// where 0 means unnamed.
+#define FILC_ASYNC_DEP_NONE              0u
+#define FILC_ASYNC_DEP_READ              1u
+#define FILC_ASYNC_DEP_WRITE             2u
+#define FILC_ASYNC_DEP_POINTER           4u
+#define FILC_ASYNC_DEP_NAMESPACE_SHIFT   8u
+#define FILC_ASYNC_DEP_NAMESPACE_MASK    0x00FFFFFFu
+
+// Must match the descriptor global the pass emits, byte for byte. Do not
+// reorder.
 typedef struct {
     const char* name;
     uint32_t    nargs;
@@ -55,18 +40,28 @@ typedef struct {
     const char* const* opts;
     struct {
         uint32_t kind;
-        uint32_t size;
+        uint32_t dependency;
     } args[];
 } filc_async_meta;
 
-/* Explicit result handle for poll()/wait(). `pending` is the pointer submit
- * returned; the rewritten call site hands it back to the caller, who parks it
- * here so poll/wait can find the task. Defined in the header (not opaque)
- * because tests read .result/.state directly. */
+// Staged-argument cell. 16 bytes, not 8: a Fil-C capability has no inline
+// value to stage in the second word, and an 8-byte stride would read the next
+// cell's padding as an argument.
+typedef union {
+    void* ptr;
+    uint64_t word;
+} filc_async_arg_value;
+
+typedef struct {
+    filc_async_arg_value value;
+    uint64_t pad;
+} filc_async_arg;
+
+// Not opaque: tests read .result and .state directly.
 struct filc_async_result_s {
-    const void* pending;   /* the pointer returned by submit, for wait() */
-    long result;           /* bytes transferred / CQE res / -errno */
-    unsigned char state;   /* 0 done, 1 pending, 2 failed */
+    const void* pending;   // task pointer from submit, for wait()
+    long result;           // bytes transferred, CQE res, or -errno
+    unsigned char state;   // 0 done, 1 pending, 2 failed
 };
 
 typedef struct {
@@ -76,23 +71,18 @@ typedef struct {
     unsigned long sqes_queued;
     unsigned long kernel_submit_entries;
     unsigned long kernel_wait_entries;
-    unsigned long pending_resolves; /* mark_pending resolved a stale mark */
+    unsigned long pending_resolves; // stale marks resolved, lazy hook excluded
 } filc_async_stats;
 
-/* Takes ownership of staged_args (the pass-emitted arg array: nargs filc_ptr
- * slots) and returns a pending pointer the caller dereferences -- or parks in
- * a filc_async_result_s for explicit poll/wait. */
+// Takes ownership of the pass-emitted staged args and returns a task pointer.
 void* filc_async_submit(const filc_async_meta* meta, void* impl, void* opts,
                         void* staged_args, size_t nargs);
 bool  filc_async_poll(struct filc_async_result_s* out);
 void  filc_async_wait(struct filc_async_result_s* out);
 
-// Buffer pending-marking. The pass marks the producing args (bout=, bare
-// buf=, and unannotated pointers, all out-by-default) of an annotated call
-// before handing them to the runtime; bin= const inputs are never marked.
-// Marking a range already held by an older op resolves that op first (generic
-// gate), then re-marks. The runtime auto-resolves a task's marked buffers on
-// completion; the program can resolve early with mark_resolved.
+// Range pending marks. The stub marks the producing args of an annotated call;
+// bin= inputs are never marked. Marking a range held by an older op resolves
+// that op first.
 void  filc_async_mark_pending(void* buf);
 void  filc_async_mark_resolved(void* buf);
 bool  filc_async_is_pending(const void* buf);
@@ -100,11 +90,8 @@ bool  filc_async_is_pending(const void* buf);
 void  filc_async_capabilities(unsigned long* syscall_shaped, unsigned long* executes_bodies);
 void  filc_async_get_stats(filc_async_stats* out);
 
-/* Startup validation: the pass-emitted per-TU constructor calls
- * filc_async_validate_table before main. A program may install its own
- * validator with filc_async_set_register_fn; the default checks the op is
- * known and the arg kinds are consistent. */
+// Startup validation, called by the pass-generated constructor before main.
 typedef bool (*filc_async_register_fn)(const filc_async_meta* meta);
 void  filc_async_set_register_fn(filc_async_register_fn fn);
-void  filc_async_validate_table(const filc_async_meta* const* metas); /* called by pass-generated ctor */
+void  filc_async_validate_table(const filc_async_meta* const* metas);
 void  filc_async_fatal(const char* msg) __attribute__((noreturn));

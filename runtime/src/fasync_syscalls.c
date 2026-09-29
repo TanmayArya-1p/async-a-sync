@@ -2,6 +2,7 @@
 #include <pizlonated_syscalls.h>
 
 #include <errno.h>
+#include <stdint.h>
 #include <string.h>
 
 #include "fasync.h"
@@ -35,8 +36,10 @@ static int fasync_pending_fd_new(fasync_id id) {
 
 fasync_id fasync_pread(int fd, void* buf, size_t len, unsigned long offset) {
   long real = fasync_fd_resolve(fd); /* may wait on a pending open */
-  if (real < 0)
+  if (real < 0) {
+    errno = (int)-real;
     return 0;
+  }
   fd = (int)real;
 
   zcheck(buf, len); /* in bounds and writable */
@@ -45,8 +48,10 @@ fasync_id fasync_pread(int fd, void* buf, size_t len, unsigned long offset) {
 
 fasync_id fasync_pwrite(int fd, void* buf, size_t len, unsigned long offset) {
   long real = fasync_fd_resolve(fd);
-  if (real < 0)
+  if (real < 0) {
+    errno = (int)-real;
     return 0;
+  }
   fd = (int)real;
 
   zcheck_readonly(buf, len); /* the kernel only reads it */
@@ -60,15 +65,19 @@ fasync_id fasync_pwrite(int fd, void* buf, size_t len, unsigned long offset) {
 
 fasync_id fasync_fsync(int fd) {
   long real = fasync_fd_resolve(fd);
-  if (real < 0)
+  if (real < 0) {
+    errno = (int)-real;
     return 0;
+  }
   return fasync_push_sqe(FASYNC_OP_FSYNC, (int)real, 0, 0, 0, 0, 0, 0);
 }
 
 fasync_id fasync_close(int fd) {
   long real = fasync_fd_resolve(fd);
-  if (real < 0)
+  if (real < 0) {
+    errno = (int)-real;
     return 0;
+  }
   return fasync_push_sqe(FASYNC_OP_CLOSE, (int)real, 0, 0, 0, 0, 0, 0);
 }
 
@@ -84,8 +93,26 @@ fasync_id fasync_openat(int dirfd, const char* path, int flags, int mode) {
     errno = EFAULT;
     return 0;
   }
-  /* paths have no length so check terminator byte */
-  zcheck_readonly((void*)path, 1);
+  /* The kernel reads the path later. If it was produced by an earlier
+   * asynchronous read, finish that read before handing the path to io_uring. */
+  fasync_resolve_pending((void*)path, 1);
+
+  /* The kernel has no Fil-C capability. Prove the NUL terminator is inside
+   * the source object's bounds before lending the pointer to io_uring. */
+  uintptr_t start = (uintptr_t)path;
+  uintptr_t upper = (uintptr_t)zgetupper((void*)path);
+  if (upper <= start) {
+    errno = EFAULT;
+    return 0;
+  }
+  size_t available = upper - start;
+  if (available > 4096)
+    available = 4096;
+  zcheck_readonly((void*)path, available);
+  if (!memchr(path, 0, available)) {
+    errno = ENAMETOOLONG;
+    return 0;
+  }
 
   /* path rides in addr mode in len */
   return fasync_push_sqe(FASYNC_OP_OPENAT, dirfd, (unsigned long)(size_t)path,

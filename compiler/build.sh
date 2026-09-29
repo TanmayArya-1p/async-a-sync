@@ -15,7 +15,7 @@ REPO=$(cd "$HERE/.." && pwd)
 
 FILC_SRC=${FILC_SRC:-$REPO/vendor/fil-c-src}
 BUILD_DIR=${BUILD_DIR:-$FILC_SRC/build}
-JOBS=$(( $(nproc) > 12 ? 12 : $(nproc) ))
+JOBS=${JOBS:-$(( $(nproc) > 12 ? 12 : $(nproc) ))}
 BUILD_TYPE=${BUILD_TYPE:-Release}
 
 if [ ! -d "$FILC_SRC/llvm" ]; then
@@ -45,6 +45,19 @@ for f in $(cd "$HERE/upstream-overrides" && LC_ALL=C find . -type f); do
   fi
 done
 
+# Upstream's Release build omits AllocaSlices::AI, but its verbose log still
+# refers to that field. Apply the one-line fix without rewriting other sources.
+SROA_PATCH=$HERE/upstream-patches/sroa-release-verbose.patch
+if git -C "$FILC_SRC" apply --check "$SROA_PATCH" 2>/dev/null; then
+  echo "== installing: llvm/lib/Transforms/Scalar/SROA.cpp"
+  git -C "$FILC_SRC" apply "$SROA_PATCH"
+elif git -C "$FILC_SRC" apply --reverse --check "$SROA_PATCH" 2>/dev/null; then
+  echo "== already installed: llvm/lib/Transforms/Scalar/SROA.cpp"
+else
+  echo "build.sh: SROA Release patch does not match $FILC_SRC" >&2
+  exit 1
+fi
+
 # ---------------------------------------------------------------------
 # 2. Report the resource situation honestly before starting.
 # ---------------------------------------------------------------------
@@ -72,13 +85,13 @@ fi
 
 echo "== building clang (this is the long part)"
 ninja -C "$BUILD_DIR" -j "$JOBS" clang
+ln -sfn clang "$BUILD_DIR/bin/filcc"
 
 echo "== done"
 echo "   $BUILD_DIR/bin/clang"
 echo
 echo "Use it to link against a runtime built with the io_uring extension:"
-echo "   $BUILD_DIR/bin/filcc -static -DFASYNC_COMPILER_INSERTS_CHECKS \\"
-echo "     -I$REPO/runtime/src -L$REPO/runtime/build/lib ..."
+echo "   $BUILD_DIR/bin/filcc -static -DFASYNC_COMPILER_INSERTS_CHECKS -I$REPO/runtime/src -L$REPO/runtime/build/lib ... -lpizlo -lc"
 echo
 echo "NOTE: this build itself needs the pizfix runtime from a Fil-C distribution."
 echo "See compiler/README.md for the full sequence and the known gaps."

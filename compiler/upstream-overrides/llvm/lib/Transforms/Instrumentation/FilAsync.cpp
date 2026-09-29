@@ -1,21 +1,10 @@
 //===- FilAsync.cpp - filc_async annotation lowering ----------------------===//
 //
-// Sibling pass of FilPizlonator. Reads the `filc_async` annotations a stock
-// clang records for `#pragma clang attribute`, renames each enrolled body to
-// `__filc_async_<name>`, emits a `filc_async_meta` global `@__filc_meta_<name>`,
-// an options array `@__filc_opts_<name>`, a per-TU `@__filc_async_meta_table`,
-// and a constructor calling `filc_async_validate_table` at startup; then
-// rewrites every direct call site into the staging alloc + submit sequence and
-// erases the consumed annotations. Loadable via
-// `opt -load-pass-plugin=libFilAsync.so -passes="filc-async"`.
-//
-// Annotation entry layout (pre-pizlonation, opaque pointers):
-//   @llvm.global.annotations = appending global
-//     [1 x { ptr, ptr, ptr, i32, ptr }]
-//     [{ ptr, ptr, ptr, i32, ptr }
-//       { ptr @procread, ptr @.str, ptr @.str.1, i32 4, ptr @.args }]
-//   @.args = { ptr @.str.2, ptr @.str.3, ptr @.str.4 }  (one ptr per option)
-// element fields: {target, anno-string, unit-string, line, args}
+// Sibling pass of FilPizlonator. Lowers the `filc_async` annotations stock
+// clang records for `#pragma clang attribute` into meta globals, and rewrites
+// every direct call site into a staging alloc plus filc_async_submit.
+// Loadable via `opt -load-pass-plugin=libFilAsync.so -passes="filc-async"`.
+// See wiki/2026-09-29-pragma-async-runtime-interface.md.
 //
 //===----------------------------------------------------------------------===//
 
@@ -43,6 +32,7 @@
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Transforms/Utils/ModuleUtils.h"
 
+#include <cstdint>
 #include <utility>
 
 using namespace llvm;
@@ -60,12 +50,34 @@ static const unsigned ARG_BUFFER_OUT = 3;
 static const unsigned ARG_FD = 4;
 static const unsigned ARG_PENDING = 5;
 
+// Dependency bits: read/write/pointer in the low byte, 24-bit namespace hash
+// in bits 8..31, 0 = unnamed.
+static const unsigned DEP_NONE = 0;
+static const unsigned DEP_READ = 1;
+static const unsigned DEP_WRITE = 2;
+static const unsigned DEP_POINTER = 4;
+static const unsigned DEP_NAMESPACE_SHIFT = 8;
+static const unsigned DEP_NAMESPACE_MASK = 0x00FFFFFF;
+
 // Result constants; mirror FILC_ASYNC_RESULT_* in the runtime header.
 static const unsigned RESULT_WORD = 1;
 static const unsigned RESULT_PTR = 2;
 
-// Read a global string constant (the frontend's .str globals); empty
-// StringRef when C does not have that shape.
+// FNV-1a 24-bit, stable across TUs. A zero hash is forced to 1 so a named key
+// never aliases an unnamed one.
+static unsigned hashNamespaceName(StringRef Name) {
+  uint32_t H = 2166136261u;
+  for (unsigned char C : Name.bytes()) {
+    H ^= C;
+    H *= 16777619u;
+  }
+  H &= DEP_NAMESPACE_MASK;
+  if (H == 0)
+    H = 1;
+  return H;
+}
+
+// Reads the frontend's .str globals; empty when C has that shape.
 static StringRef underlyingString(Constant *C) {
   C = C->stripPointerCasts();
   auto *GV = dyn_cast<GlobalVariable>(C);
@@ -87,8 +99,7 @@ static Function *extractAnnotatedFunction(Constant *C) {
   return dyn_cast<Function>(V);
 }
 
-// Reuse an existing .str global matching string S; make a private copy only
-// when none exists (normally never hit).
+// Reuse a matching .str global rather than duplicating the string.
 static Constant *findOrCreateStringGlobal(Module &M, StringRef S) {
   for (GlobalVariable &GV : M.globals()) {
     if (!GV.hasInitializer())
@@ -109,29 +120,29 @@ static Constant *findOrCreateStringGlobal(Module &M, StringRef S) {
                             ".filc_async.opt");
 }
 
-// Only container constants are destroyed downstream: pooled leaves (constant
-// ints, string/inert arrays) must never reach destroyConstant/deleteConstant.
+// Container constants only: pooled leaves must never be destroyed.
 static bool isPoolConstant(Constant *C) {
   return isa<ConstantArray, ConstantStruct, ConstantVector, ConstantExpr>(C);
 }
 
-// Reads the positional option tokens into Kinds and counts them in Noped.
-// op= never decides a kind: fd=<i> -> ARG_FD; bin=<i> -> ARG_BUFFER_IN;
-// bout=<i> -> ARG_BUFFER_OUT; buf=<i> -> ARG_PENDING (direction decided at use
-// time by the runtime). Unannotated pointer args default to ARG_PENDING (the
-// pessimistic "undecided direction" case); unannotated non-pointers stay
-// ARG_IGNORED. A token that does not index an argument is a compile-time fatal.
+// Parses the positional tokens into Kinds/Deps and counts kinds in Noped.
+// op= never decides a kind; unannotated pointers are ARG_PENDING and
+// unannotated non-pointers are ARG_IGNORED. A token that does not index an
+// argument is a compile-time fatal.
 static void parseKinds(StringRef OrigName, FunctionType *FTy,
                        const FilAsyncPass::AnnotInfo &Info,
-                       SmallVectorImpl<unsigned> &Kinds, unsigned &Noped) {
+                       SmallVectorImpl<unsigned> &Kinds,
+                       SmallVectorImpl<unsigned> &Deps, unsigned &Noped) {
   unsigned NArgs = FTy->getNumParams();
   Kinds.assign(NArgs, ARG_IGNORED);
+  Deps.assign(NArgs, DEP_NONE);
   for (unsigned I = 0; I < NArgs; ++I)
     if (FTy->getParamType(I)->isPointerTy())
       Kinds[I] = ARG_PENDING;
   Noped = 0;
   for (StringRef Opt : Info.opts) {
     unsigned Kind = 0;
+    unsigned Dep = DEP_NONE;
     unsigned PrefixLen = 0;
     if (Opt.starts_with("fd=")) {
       Kind = ARG_FD;
@@ -145,27 +156,66 @@ static void parseKinds(StringRef OrigName, FunctionType *FTy,
     } else if (Opt.starts_with("buf=")) {
       Kind = ARG_PENDING;
       PrefixLen = 4;
+    } else if (Opt.starts_with("r_dep=")) {
+      Dep = DEP_READ;
+      PrefixLen = 6;
+    } else if (Opt.starts_with("w_dep=")) {
+      Dep = DEP_WRITE;
+      PrefixLen = 6;
+    } else if (Opt.starts_with("read_dep=") ||
+               Opt.starts_with("write_dep=")) {
+      errs() << "FilAsync: '" << Opt << "' uses an obsolete dependency name; "
+             << "use r_dep= or w_dep=\n";
+      report_fatal_error("FilAsync: malformed filc_async option");
     } else {
       continue;
     }
-    ++Noped;
+
     unsigned Idx = 0;
     StringRef Num = Opt.drop_front(PrefixLen);
+    StringRef Namespace;
+    size_t Colon = Num.find(':');
+    if (Colon != StringRef::npos) {
+      Namespace = Num.substr(Colon + 1);
+      Num = Num.substr(0, Colon);
+    }
     if (Num.empty() || Num.getAsInteger(10, Idx) || Idx >= NArgs) {
       errs() << "FilAsync: '" << Opt
              << "' does not index an argument of " << OrigName << "\n";
       report_fatal_error("FilAsync: malformed filc_async option");
     }
-    Kinds[Idx] = Kind;
+
+    if (Dep != DEP_NONE) {
+      Type *ArgTy = FTy->getParamType(Idx);
+      if (!ArgTy->isPointerTy() &&
+          (!ArgTy->isIntegerTy() || ArgTy->getIntegerBitWidth() > 64)) {
+        errs() << "FilAsync: dependency argument " << Idx << " of "
+               << OrigName << " must be a pointer or an integer up to 64 bits\n";
+        report_fatal_error("FilAsync: malformed filc_async option");
+      }
+      unsigned DepVal = Dep | (ArgTy->isPointerTy() ? DEP_POINTER : 0);
+      if (!Namespace.empty())
+        DepVal |= hashNamespaceName(Namespace) << DEP_NAMESPACE_SHIFT;
+      if (Deps[Idx] != DEP_NONE) {
+        unsigned Existing = Deps[Idx];
+        if ((Existing & (DEP_READ | DEP_WRITE)) != (DepVal & (DEP_READ | DEP_WRITE)) ||
+            (Existing >> DEP_NAMESPACE_SHIFT) !=
+                (DepVal >> DEP_NAMESPACE_SHIFT)) {
+          errs() << "FilAsync: conflicting dependencies on argument " << Idx
+                 << " of " << OrigName << "\n";
+          report_fatal_error("FilAsync: malformed filc_async option");
+        }
+      }
+      Deps[Idx] = DepVal;
+    } else {
+      ++Noped;
+      Kinds[Idx] = Kind;
+    }
   }
 }
 
-// Kinds the pass marks pending before submit: the op produces bytes into them
-// (bout=) or their direction is undecided (bare buf= and unannotated pointer
-// args, both ARG_PENDING, out by default). bin= const inputs are never marked.
-static bool isBufferKind(unsigned Kind) {
-  return Kind == ARG_BUFFER_OUT || Kind == ARG_PENDING;
-}
+// Buffer direction is decided at dispatch, not here: the submit stub marks the
+// producing args pending, and bin= inputs are never marked.
 
 } // anonymous namespace
 
@@ -176,7 +226,9 @@ FilAsyncPass::getAnnotInfo(const Function *F) const {
 }
 
 void FilAsyncPass::renameBody(Function *F, StringRef OrigName) {
-  F->setName("__filc_async_" + OrigName.str());
+  // Declarations keep their name: the definition may live in another TU.
+  if (!F->isDeclaration())
+    F->setName("__filc_async_" + OrigName.str());
 }
 
 GlobalVariable *
@@ -184,7 +236,7 @@ FilAsyncPass::emitOpts(Module &M, StringRef OrigName, const AnnotInfo &Info) {
   LLVMContext &Ctx = M.getContext();
   PointerType *PtrTy = PointerType::getUnqual(Ctx);
 
-  // One i8* per option into the existing .str globals; trailing null i8*.
+  // One i8* per option, trailing null i8*.
   SmallVector<Constant *, 8> Elems;
   for (StringRef Opt : Info.opts)
     Elems.push_back(findOrCreateStringGlobal(M, Opt));
@@ -208,16 +260,15 @@ GlobalVariable *FilAsyncPass::emitMeta(Function *F, StringRef OrigName,
 
   unsigned NArgs = F->getFunctionType()->getNumParams();
 
-  // Pointer return -> FILC_ASYNC_RESULT_PTR (2); anything else WORD (1).
+  // Pointer return -> FILC_ASYNC_RESULT_PTR, anything else WORD.
   unsigned Result = F->getReturnType()->isPointerTy() ? RESULT_PTR : RESULT_WORD;
 
-  // Kinds come from the positional option tokens ONLY -- op= never decides a
-  // kind (see parseKinds). noped_args counts the fd=/bin=/bout=/buf= options.
   SmallVector<unsigned, 8> Kinds;
+  SmallVector<unsigned, 8> Deps;
   unsigned Noped;
-  parseKinds(OrigName, F->getFunctionType(), Info, Kinds, Noped);
+  parseKinds(OrigName, F->getFunctionType(), Info, Kinds, Deps, Noped);
 
-  // The `name` field holds the ORIGINAL name, captured before renameBody in run().
+  // The name field holds the ORIGINAL name; run() renames the body after this.
   Constant *NameInit =
       ConstantDataArray::getString(Ctx, OrigName, /*AddNull=*/true);
   auto *NameGV = new GlobalVariable(M, NameInit->getType(),
@@ -225,21 +276,20 @@ GlobalVariable *FilAsyncPass::emitMeta(Function *F, StringRef OrigName,
                                     GlobalValue::PrivateLinkage, NameInit,
                                     "__filc_async_name_" + OrigName.str());
 
-  // args[] tail: exactly nargs {i32,i32} pairs. Field order matches the C header
-  // {name, nargs, noped_args, flags, result, opts, args[]}; the 16-byte
-  // pointers and the offsets they imply materialize under FilPizlonator.
+  // args[] tail: nargs {kind, dependency} pairs, in the C header's field order.
   SmallVector<Constant *, 8> ArgCs;
-  for (unsigned Kind : Kinds)
+  for (unsigned I = 0; I < NArgs; ++I)
     ArgCs.push_back(ConstantStruct::get(
-        PairTy, {ConstantInt::get(I32Ty, Kind), ConstantInt::get(I32Ty, 0)}));
+        PairTy, {ConstantInt::get(I32Ty, Kinds[I]),
+                 ConstantInt::get(I32Ty, Deps[I])}));
   ArrayType *ArgsTy = ArrayType::get(PairTy, NArgs);
   Constant *ArgsInit = ConstantArray::get(ArgsTy, ArgCs);
 
   StructType *MetaTy = StructType::get(
       Ctx, {PtrTy, I32Ty, I32Ty, I32Ty, I32Ty, PtrTy, ArgsTy},
       /*isPacked=*/false);
-  // Real pointer-typed constants (no ptrtoint i64): InvisiCap relocation
-  // requires pointer fields to be addressable.
+  // Real pointer-typed constants: InvisiCap relocation needs addressable
+  // pointer fields.
   Constant *Init = ConstantStruct::get(
       MetaTy, {NameGV, ConstantInt::get(I32Ty, NArgs),
                ConstantInt::get(I32Ty, Noped), ConstantInt::get(I32Ty, 0),
@@ -279,19 +329,17 @@ void FilAsyncPass::emitMetaTableAndCtor(Module &M,
   Builder.CreateCall(Validate, {Table});
   Builder.CreateRetVoid();
 
-  // User ctors (validator installation) run first; this ctor is deliberately
-  // LAST.
+  // Last ctor, so a user validator is already installed when this runs.
   appendToGlobalCtors(M, Ctor, /*Priority=*/65535);
 }
 
 void FilAsyncPass::rewriteCallSites(Module &M) {
   LLVMContext &Ctx = M.getContext();
   Type *Int64Ty = Type::getInt64Ty(Ctx);
-  Type *VoidTy = Type::getVoidTy(Ctx);
   PointerType *PtrTy = PointerType::getUnqual(Ctx);
 
-  // Contract: alloc(size: i64, align: i64) -> ptr;
-  // submit(meta, impl, opts, staging, nargs) -> ptr.
+  // alloc(size: i64, align: i64) -> ptr; submit(meta, impl, opts, staging,
+  // nargs) -> ptr.
   FunctionCallee AllocCallee =
       M.getOrInsertFunction("filc_async_alloc",
                             FunctionType::get(PtrTy, {Int64Ty, Int64Ty}, false));
@@ -299,25 +347,19 @@ void FilAsyncPass::rewriteCallSites(Module &M) {
       "filc_async_submit", FunctionType::get(
                                PtrTy, {PtrTy, PtrTy, PtrTy, PtrTy, Int64Ty},
                                /*isVarArg=*/false));
-  // mark_pending(ptr): buffer args go pending before the runtime takes them.
-  FunctionCallee MarkCallee = M.getOrInsertFunction(
-      "filc_async_mark_pending",
-      FunctionType::get(VoidTy, {PtrTy}, /*isVarArg=*/false));
 
   for (const auto &KV : Annotated) {
     Function *F = const_cast<Function *>(KV.first);
     auto DesIt = Emitted.find(F);
     if (DesIt == Emitted.end()) {
-      // Descriptors were always emitted for enrolled entries; guard anyway so a
-      // reader/emitter divergence names the function instead of null.
+      // Name the function rather than dereferencing a null descriptor.
       errs() << "FilAsync: no descriptor emitted for " << F->getName() << "\n";
       report_fatal_error("FilAsync: internal error: missing descriptor");
     }
     GlobalVariable *Meta = DesIt->second.Meta;
     GlobalVariable *Opts = DesIt->second.Opts;
 
-    // Snapshot the direct CallBase users first; rewriting does not erase F, but
-    // transform on a stable set rather than walking F->users().
+    // Snapshot the direct call sites; F survives the rewrite.
     SmallVector<CallBase *, 8> DirectCalls;
     for (User *U : F->users()) {
       if (auto *CB = dyn_cast<CallBase>(U))
@@ -327,9 +369,8 @@ void FilAsyncPass::rewriteCallSites(Module &M) {
 
     unsigned NArgs = F->getFunctionType()->getNumParams();
     for (CallBase *CB : DirectCalls) {
-      // Decide result handling BEFORE inserting anything: a non-void non-ptr
-      // return cannot take submit's ptr result, so skip the site entirely
-      // (diagnostic only). Inserting first and then leaving the old call
+      // Check the result type BEFORE inserting: a non-void non-ptr return
+      // cannot take submit's ptr result, and leaving the old call in place
       // would run the async op alongside the synchronous one.
       bool IsVoid = CB->getType()->isVoidTy();
       if (!IsVoid && !CB->getType()->isPointerTy()) {
@@ -340,55 +381,41 @@ void FilAsyncPass::rewriteCallSites(Module &M) {
       }
 
       IRBuilder<> Builder(CB);
-      // Staging: nargs filc_ptr slots x 16 bytes, 16-byte aligned (two i64
-      // words per slot: intval + capability lower word).
+      // nargs cells of 16 bytes, 16-byte aligned. Opaque here; FilPizlonator
+      // widens the pointer stores.
       Value *Staging = Builder.CreateCall(
           AllocCallee,
           {ConstantInt::get(Int64Ty, NArgs * 16), ConstantInt::get(Int64Ty, 16)},
           "staging");
 
-      // per-arg: intval at slot i*2, capability zero-word at i*2+1. Pointers
-      // become ptrtoint i64; integers up to 64 bits are zero-extended
-      // (i32 fd/flags/mode -> i64) or passed through at exactly i64; wider
-      // or otherwise unrepresentable ints are recorded as an ignored zero.
+      // Store pointer operands AS POINTERS so FilPizlonator preserves their
+      // capability; as integers the backend could not retain the buffer.
+      // Scalars take the low word, wider ints become an ignored zero, and the
+      // capability word is always zero.
       for (unsigned I = 0; I < NArgs; ++I) {
         Value *Arg = CB->getArgOperand(I);
         Type *ArgTy = Arg->getType();
-        Value *IntVal;
-        if (ArgTy->isPointerTy()) {
-          IntVal = Builder.CreatePtrToInt(Arg, Int64Ty);
-        } else if (ArgTy->isIntegerTy() && ArgTy->getIntegerBitWidth() < 64) {
-          IntVal = Builder.CreateZExt(Arg, Int64Ty);
-        } else if (ArgTy->isIntegerTy() && ArgTy->getIntegerBitWidth() == 64) {
-          IntVal = Arg;
-        } else {
-          IntVal = ConstantInt::get(Int64Ty, 0);
-        }
-        Value *IntGEP = Builder.CreateGEP(
+        Value *Slot = Builder.CreateGEP(
             Int64Ty, Staging, {ConstantInt::get(Int64Ty, I * 2)});
-        Builder.CreateStore(IntVal, IntGEP);
+        if (ArgTy->isPointerTy()) {
+          Builder.CreateStore(Arg, Slot);
+        } else {
+          Value *IntVal = ConstantInt::get(Int64Ty, 0);
+          if (ArgTy->isIntegerTy() && ArgTy->getIntegerBitWidth() < 64)
+            IntVal = Builder.CreateZExt(Arg, Int64Ty);
+          else if (ArgTy->isIntegerTy() &&
+                   ArgTy->getIntegerBitWidth() == 64)
+            IntVal = Arg;
+          Builder.CreateStore(IntVal, Slot);
+        }
         Value *CapGEP = Builder.CreateGEP(
             Int64Ty, Staging, {ConstantInt::get(Int64Ty, I * 2 + 1)});
         Builder.CreateStore(ConstantInt::get(Int64Ty, 0), CapGEP);
       }
 
-      // Mark producing buffer args (bout=, bare buf=) pending before the
-      // async runtime takes ownership; the resolve wrapper clears them on
-      // request. bin= const inputs are never marked.
-      SmallVector<unsigned, 8> &Kinds = DesIt->second.Kinds;
-      for (unsigned I = 0; I < NArgs; ++I) {
-        if (!isBufferKind(Kinds[I]))
-          continue;
-        Value *Arg = CB->getArgOperand(I);
-        if (!Arg->getType()->isPointerTy())
-          continue;
-        Builder.CreateCall(MarkCallee, {Arg});
-      }
-
-      // Opaque-pointer `ptr` operands -- no bitcasts; the globals and the
-      // renamed implementation pass straight through. The returned flight pair
-      // is the pending result pointer whose deref triggers the existing
-      // filc_resolve_pending hook; FilPizlonator pizlonates the return.
+      // The submit stub marks the producing args pending, so the call site
+      // needs no mark_pending of its own. The task pointer it returns is the
+      // pending result whose deref triggers the filc_resolve_pending hook.
       CallInst *Submit = Builder.CreateCall(
           SubmitCallee,
           {Meta, F, Opts, Staging, ConstantInt::get(Int64Ty, NArgs)},
@@ -397,8 +424,8 @@ void FilAsyncPass::rewriteCallSites(Module &M) {
       if (IsVoid) {
         CB->eraseFromParent();
       } else {
-        // Replacement is a pure swap: both the fixture return and submit are
-        // opaque `ptr`. Non-ptr non-void was rejected above, pre-insertion.
+        // Pure swap: both sides are opaque ptr. Non-ptr non-void was rejected
+        // above, before anything was inserted.
         CB->replaceAllUsesWith(Submit);
         CB->eraseFromParent();
       }
@@ -407,14 +434,11 @@ void FilAsyncPass::rewriteCallSites(Module &M) {
 }
 
 void FilAsyncPass::eraseAnnotations(Module &M) {
-  // Erasing llvm.global.annotations alone is not enough: its initializer is a
-  // pool-uniqued ConstantArray whose operand uses keep the .args/.str globals
-  // alive for as long as the enclosing constants are referenced by the pool.
-  // Sever GA from its initializer, then destroy the constant graph top-down
-  // (parent-before-child); each node is freed only once genuinely use_empty,
-  // which keeps shared leaves alive -- the opts arrays still use the option
-  // .str globals, so those stay. Only GlobalVariables are erased from the
-  // module; Functions/aliases are never touched.
+  // Erasing llvm.global.annotations alone leaves the .args/.str globals alive:
+  // its pool-uniqued ConstantArray holds their uses. So sever GA from its
+  // initializer, then destroy the graph parent-before-child, freeing a node
+  // only once use_empty. Shared leaves survive, so the option .str globals the
+  // opts arrays still use stay. Only GlobalVariables are erased.
   GlobalVariable *GA = M.getNamedGlobal("llvm.global.annotations");
   if (!GA || !GA->hasInitializer())
     return;
@@ -438,8 +462,8 @@ void FilAsyncPass::eraseAnnotations(Module &M) {
 
   for (Constant *C : Worklist) {
     if (auto *GV = dyn_cast<GlobalValue>(C)) {
-      // GlobalVariables in the annotation graph become use-empty once the
-      // constants around them are destroyed. Functions/aliases never are.
+      // GlobalVariables go use-empty once the surrounding constants are gone.
+      // Functions and aliases never do.
       if (auto *GVar = dyn_cast<GlobalVariable>(GV))
         if (GVar->use_empty())
           GVar->eraseFromParent();
@@ -452,8 +476,8 @@ void FilAsyncPass::eraseAnnotations(Module &M) {
 bool FilAsyncPass::enrollAnnotatedFunctions(Module &M) {
   GlobalVariable *GA = M.getNamedGlobal("llvm.global.annotations");
   if (!GA || !GA->hasInitializer()) {
-    // Nothing annotated is not an error; the backend never sees a filc_async
-    // function on this module.
+    // Not an error: a module with nothing annotated for us never sees a
+    // filc_async function.
     return true;
   }
 
@@ -487,8 +511,8 @@ bool FilAsyncPass::enrollAnnotatedFunctions(Module &M) {
       }
     }
 
-    // No op= validation here: the op set is the runtime's authority, enforced
-    // by its startup validator (filc_async_validate_table), not the compiler's.
+    // The op set is not validated here; the linked runtime's startup validator
+    // owns it.
 
     if (FilAsyncDebug) {
       errs() << "enrolled " << F->getName() << "\n";
@@ -506,8 +530,7 @@ PreservedAnalyses FilAsyncPass::run(Module &M, ModuleAnalysisManager &) {
     report_fatal_error(
         "FilAsync: malformed filc_async annotation; see diagnostics above");
 
-  // Deterministic emission order (table and globals follow name order; the
-  // map is keyed on Function*).
+  // Sort by name so the emitted globals and table are deterministic.
   SmallVector<std::pair<Function *, const AnnotInfo *>, 8> Work;
   for (const auto &KV : Annotated)
     Work.emplace_back(const_cast<Function *>(KV.first), &KV.second);
@@ -518,25 +541,19 @@ PreservedAnalyses FilAsyncPass::run(Module &M, ModuleAnalysisManager &) {
   SmallVector<GlobalVariable *, 8> Metas;
   for (auto &KV : Work) {
     Function *F = KV.first;
-    // The meta's name field holds the ORIGINAL name, so copy it before the
-    // rename invalidates F's name storage.
+    // Copy the name before the rename invalidates F's name storage.
     std::string OrigName = F->getName().str();
-    SmallVector<unsigned, 8> Kinds;
-    unsigned Noped;
-    parseKinds(OrigName, F->getFunctionType(), *KV.second, Kinds, Noped);
     renameBody(F, OrigName);
     GlobalVariable *Opts = emitOpts(M, OrigName, *KV.second);
     GlobalVariable *Meta = emitMeta(F, OrigName, *KV.second, Opts);
-    Emitted[F] = {Opts, Meta, OrigName, std::move(Kinds)};
+    Emitted[F] = {Opts, Meta, OrigName};
     Metas.push_back(Meta);
   }
   if (!Metas.empty())
     emitMetaTableAndCtor(M, Metas);
 
-  // Rewrite every direct call site, then drop the consumed annotations so
-  // FilPizlonator never sees them. Only when the pass actually enrolled
-  // entries: a module whose llvm.global.annotations holds nothing for us
-  // keeps it for other users.
+  // Drop the annotations only if we consumed some, so a module that holds
+  // nothing for us keeps them for other users.
   if (!Annotated.empty()) {
     rewriteCallSites(M);
     eraseAnnotations(M);

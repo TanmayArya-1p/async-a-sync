@@ -1045,6 +1045,11 @@ void EmitAssemblyHelper::RunOptimizationPipeline(
 
     PB.registerPipelineStartEPCallback(
         [](ModulePassManager &MPM, OptimizationLevel Level) {
+          // Must precede every optimization pass: the optimizer inlines the
+          // side-effect-free stub bodies, and a call site that no longer exists
+          // is never rewritten, so the submission silently vanishes. See the
+          // wiki.
+          MPM.addPass(FilAsyncPass());
           if (FilCKillUB)
             MPM.addPass(KillUBPass());
           if (Level != OptimizationLevel::O0 && FilCOptimize) {
@@ -1111,7 +1116,7 @@ void EmitAssemblyHelper::RunOptimizationPipeline(
               MPM.addPass(std::move(MIWP));
             }
           }
-          MPM.addPass(FilAsyncPass());
+          // Stays after the inline pipeline: it pizlonates FilAsync's pointers.
           MPM.addPass(FilPizlonatorPass());
         });
 
