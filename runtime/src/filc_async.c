@@ -290,8 +290,9 @@ static struct filc_async_task* lock_conflict(const struct filc_async_lock* l,
  * FilAsync passes an integer narrower than 64 bits zero-extended, so the same
  * value declared with different widths does not always match. For example, a
  * pending-open handle -2 is 0x00000000FFFFFFFE as an `int fd` argument and
- * 0xFFFFFFFFFFFFFFFE as a `long fd` argument, so a w_dep=0 call taking `int`
- * and an r_dep=0 call taking `long` on that handle are not ordered.
+ * 0xFFFFFFFFFFFFFFFE as a `long fd` argument, so a w_dep=fd:file call taking
+ * `int` and an r_dep=fd:file call taking `long` on that handle are not
+ * ordered.
  * Non-negative values are unaffected.
  *
  * A fix needs the signedness the pass does not record today: pass signed

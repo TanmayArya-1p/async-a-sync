@@ -369,6 +369,7 @@ if [ "$PATCHED_READY" -eq 1 ]; then
     -DLINKED_ANNOTATE_DEF
   needs_io_uring run_patched t_pragma_io_uring "$HERE/t_pragma_io_uring.c" "$OUT"
   needs_io_uring run_patched t_pragma_dependencies "$HERE/t_pragma_dependencies.c" "$OUT"
+  needs_io_uring run_patched t_param_names "$HERE/t_param_names.c" "$OUT"
   needs_io_uring run_patched t_pragma_same_tu_lazy "$HERE/t_pragma_same_tu_lazy.c" "$OUT"
   needs_io_uring run_patched t_pragma_lazy_many "$HERE/t_pragma_lazy_many.c" "$OUT"
   needs_io_uring run_patched t_pragma_reuse_lazy "$HERE/t_pragma_reuse_lazy.c" "$OUT"

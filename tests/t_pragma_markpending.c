@@ -1,8 +1,9 @@
 /* tests/t_pragma_markpending.c -- the buffer pending-marking contract.
  *
- * markfml is annotated bout=0 (out/result buffer), buf=1 (direction pending,
- * out by default), bin=2 (const input), and extra=3 is left unannotated (so it
- * defaults to PENDING -- the pessimistic case). An annotated call must:
+ * markfml is annotated bout=out (out/result buffer), buf=recv (direction
+ * pending, out by default), bin=const_in (const input), and extra is left
+ * unannotated (so it defaults to PENDING -- the pessimistic case). An
+ * annotated call must:
  *   - have submit mark out, recv, and extra pending from the descriptor's
  *     kinds: they probe pending in main before wait;
  *   - NOT mark const_in (bin= is a const input, never pending);
@@ -15,7 +16,7 @@
 #include <stdlib.h>
 #include "filc_async.h"
 
-#pragma clang attribute push(__attribute__((annotate("filc_async", "runtime=io_uring", "op=ignore", "bout=0", "buf=1", "bin=2"))), apply_to=function)
+#pragma clang attribute push(__attribute__((annotate("filc_async", "runtime=io_uring", "op=ignore", "bout=out", "buf=recv", "bin=const_in"))), apply_to=function)
 __attribute__((noinline)) void* markfml(char* out, char* recv, const char* const_in, char* extra)
 {
     volatile char sink = *out + *recv + *const_in + *extra;

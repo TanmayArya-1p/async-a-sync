@@ -18,16 +18,16 @@
  * emits (name at 0, nargs at 16, opts at 32, runtime at 48, args[0] at 64
  * once the 16-byte Fil-C pointers are in play). Do not change field order.
  *
- * Dependencies: repeat r_dep=<i> or w_dep=<i> on an annotated function
- * declaration or definition for each argument that names a dependency. They
- * follow the same placement rules as other options. The stub locks each such
- * argument's value before the call is handed to the runtime and the lock is
- * released when the call completes: a read lock is shared, a write lock is
- * exclusive, and a call waits in its stub until the locks it needs are free.
- * Scalar values are keys by value; pointer arguments are keys by object
- * identity. A :<name> suffix, as in w_dep=0:meta, puts the key in a
- * namespace: equal values in different namespaces are different resources,
- * and a key without a name is in a namespace of its own.
+ * Dependencies: repeat r_dep=<param>:<ns> or w_dep=<param>:<ns> on an
+ * annotated function declaration or definition for each parameter that names
+ * a dependency. They follow the same placement rules as other options. The
+ * stub locks each such argument before the call is handed to the runtime and
+ * the lock is released when the call completes: a read lock is shared, a
+ * write lock is exclusive, and a call waits in its stub until the locks it
+ * needs are free. The key is the argument's value (a scalar's value, or the
+ * object a pointer points into) together with the parameter's name and the
+ * namespace, so r_dep=fd:file and w_dep=fd:file conflict on equal fds while
+ * w_dep=fd:meta does not.
  *
  * Pending buffers: the stub marks the producing args (bout=, bare buf=, and
  * unannotated pointer args) pending; bin= inputs never are. Marking a buffer
@@ -43,9 +43,9 @@
 #define FILC_ASYNC_RESULT_WORD 1u
 #define FILC_ASYNC_RESULT_PTR  2u
 
-/* Arg kinds. The pass records these from the pragma's positional tokens
- * ONLY -- op= never decides a kind: bin=<i> -> BUFFER_IN, bout=<i> ->
- * BUFFER_OUT, buf=<i> -> PENDING (no direction annotated; the runtime decides
+/* Arg kinds. The pass records these from the pragma's argument options
+ * ONLY -- op= never decides a kind: bin=<p> -> BUFFER_IN, bout=<p> ->
+ * BUFFER_OUT, buf=<p> -> PENDING (no direction annotated; the runtime decides
  * at use time). Unannotated pointer args also default to PENDING
  * (pessimistic); unannotated non-pointers stay IGNORED. Value 4 is unused. */
 #define FILC_ASYNC_ARG_IGNORED    0u
@@ -56,9 +56,9 @@
 
 /* Dependency bits in args[i].dependency: read or write; the pointer bit,
  * which separates an object identity from a scalar with the same numeric
- * address; and a namespace in bits 8..31, a 24-bit hash of the <name> in
- * r_dep=<i>:<name> or w_dep=<i>:<name> (never 0), or 0 when the option names
- * none. Dependency options do not contribute to noped_args, which counts
+ * address; and a space in bits 8..31, a 24-bit FNV-1a hash of the
+ * "<param>:<ns>" in r_dep=<param>:<ns> or w_dep=<param>:<ns> (never 0). A
+ * collision only makes unrelated calls wait for each other. Dependency options do not contribute to noped_args, which counts
  * bin=/bout=/buf= only. */
 #define FILC_ASYNC_DEP_NONE            0u
 #define FILC_ASYNC_DEP_READ            1u

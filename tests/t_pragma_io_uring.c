@@ -10,7 +10,7 @@
 
 static volatile int body_calls;
 
-#pragma clang attribute push(__attribute__((annotate("filc_async", "runtime=io_uring", "op=openat", "bin=1"))), apply_to=function)
+#pragma clang attribute push(__attribute__((annotate("filc_async", "runtime=io_uring", "op=openat", "bin=path"))), apply_to=function)
 __attribute__((noinline)) void* async_openat(int dirfd, const char* path, int flags, int mode)
 {
     body_calls++;
@@ -18,7 +18,7 @@ __attribute__((noinline)) void* async_openat(int dirfd, const char* path, int fl
 }
 #pragma clang attribute pop
 
-#pragma clang attribute push(__attribute__((annotate("filc_async", "runtime=io_uring", "op=pread", "bout=1", "r_dep=0", "w_dep=1"))), apply_to=function)
+#pragma clang attribute push(__attribute__((annotate("filc_async", "runtime=io_uring", "op=pread", "bout=buf", "r_dep=fd:file", "w_dep=buf:mem"))), apply_to=function)
 __attribute__((noinline)) void* async_pread(int fd, void* buf, size_t len, unsigned long offset)
 {
     body_calls++;
@@ -26,7 +26,7 @@ __attribute__((noinline)) void* async_pread(int fd, void* buf, size_t len, unsig
 }
 #pragma clang attribute pop
 
-#pragma clang attribute push(__attribute__((annotate("filc_async", "runtime=io_uring", "op=pwrite", "bin=1", "w_dep=0"))), apply_to=function)
+#pragma clang attribute push(__attribute__((annotate("filc_async", "runtime=io_uring", "op=pwrite", "bin=buf", "w_dep=fd:file"))), apply_to=function)
 __attribute__((noinline)) void* async_pwrite(int fd, const void* buf, size_t len, unsigned long offset)
 {
     body_calls++;

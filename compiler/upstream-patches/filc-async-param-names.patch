@@ -1,0 +1,35 @@
+diff --git a/clang/lib/CodeGen/CodeGenModule.cpp b/clang/lib/CodeGen/CodeGenModule.cpp
+index eb8d3ceee..add96dc1d 100644
+--- a/clang/lib/CodeGen/CodeGenModule.cpp
++++ b/clang/lib/CodeGen/CodeGenModule.cpp
+@@ -3469,6 +3469,30 @@ void CodeGenModule::AddGlobalAnnotations(const ValueDecl *D,
+   // Get the struct elements for these annotations.
+   for (const auto *I : D->specific_attrs<AnnotateAttr>())
+     Annotations.push_back(EmitAnnotateAttr(GV, I, D->getLocation()));
++
++  // Fil-C async: filc_async options name arguments by parameter, and IR
++  // declarations carry no parameter names. Record one name per parameter,
++  // taken from this declaration or, where it has none, from another
++  // redeclaration, for the FilAsync pass.
++  const auto *FD = dyn_cast<FunctionDecl>(D);
++  auto *Fn = dyn_cast<llvm::Function>(GV);
++  if (!FD || !Fn ||
++      llvm::none_of(D->specific_attrs<AnnotateAttr>(), [](const auto *A) {
++        return A->getAnnotation() == "filc_async";
++      }))
++    return;
++  SmallVector<llvm::Metadata *, 8> Names;
++  for (unsigned I = 0, E = FD->getNumParams(); I != E; ++I) {
++    StringRef Name;
++    for (const FunctionDecl *R : FD->redecls())
++      if (I < R->getNumParams() && !R->getParamDecl(I)->getName().empty()) {
++        Name = R->getParamDecl(I)->getName();
++        break;
++      }
++    Names.push_back(llvm::MDString::get(getLLVMContext(), Name));
++  }
++  Fn->setMetadata("filc_async.params",
++                  llvm::MDNode::get(getLLVMContext(), Names));
+ }
+ 
+ bool CodeGenModule::isInNoSanitizeList(SanitizerMask Kind, llvm::Function *Fn,

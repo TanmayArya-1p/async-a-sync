@@ -1,7 +1,7 @@
 /* demo_pragma_ordering: what the r_dep= and w_dep= options buy.
  *
- * In pragma_io.hh async_pwrite has `w_dep=0` (it writes its fd) and
- * async_pread has `r_dep=0` (it reads its fd). Two calls on the same key
+ * In pragma_io.hh async_pwrite has `w_dep=fd:file` (it writes its fd) and
+ * async_pread has `r_dep=fd:file` (it reads its fd). Two calls on the same key
  * conflict unless both only read it, and a conflicting call waits, inside the
  * call, for the one before it. Everything else only queues, and the whole
  * queue goes to the kernel in one submit the first time a result is needed.

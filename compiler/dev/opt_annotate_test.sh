@@ -45,17 +45,17 @@ fi
 # unused functions get no llvm.global.annotations entry. Return types are
 # pointers (-> result = PTR = 2). main passes VARIABLE arguments so the
 # rewrite's scalar extension and pointer staging are not folded away. The
-# annotations use the generic grammar (op never decides a kind): fd/bout on
-# procread (FD + BUFFER_OUT), fd/bin + a bare buf (FD + BUFFER_IN + PENDING)
-# on uopenat -- the bare buf= on an op=openat is what proves buf= is PENDING
-# and NOT inferred from the op name. procread also declares two dependencies
+# annotations use the generic grammar (op never decides a kind): bout on
+# procread (BUFFER_OUT), bin + a bare buf (BUFFER_IN + PENDING) on uopenat
+# -- the bare buf= on an op=openat is what proves buf= is PENDING and NOT
+# inferred from the op name. procread also declares two dependencies
 # on different arguments: a scalar read key and a pointer write key.
 cat > "$SRC" <<'EOF'
-#pragma clang attribute push(__attribute__((annotate("filc_async", "runtime=io_uring", "op=pread", "bout=1", "r_dep=0", "w_dep=1"))), apply_to=function)
+#pragma clang attribute push(__attribute__((annotate("filc_async", "runtime=io_uring", "op=pread", "bout=buf", "r_dep=fd:file", "w_dep=buf:mem"))), apply_to=function)
 void* procread(int fd, void* buf, unsigned long n);
 #pragma clang attribute pop
 
-#pragma clang attribute push(__attribute__((annotate("filc_async", "runtime=io_uring", "op=openat", "bin=1", "buf=2"))), apply_to=function)
+#pragma clang attribute push(__attribute__((annotate("filc_async", "runtime=io_uring", "op=openat", "bin=path", "buf=scratch"))), apply_to=function)
 void* uopenat(int dirfd, const char* path, char* scratch, int mode);
 #pragma clang attribute pop
 
@@ -73,6 +73,8 @@ EOF
 echo "### generating fixture IR with host clang"
 "$HOST_CC" -S -emit-llvm -O0 -Werror=pragma-clang-attribute \
   -o "$IN" "$SRC"
+# The parameter names the patched clang would record.
+python3 "$REPO/tests/add_param_names.py" "$SRC" "$IN"
 
 echo "### building the plugin"
 cmake -S "$REPO/compiler/plugin" -B "$BUILD_DIR" -G Ninja \
@@ -110,16 +112,21 @@ expect_grep() {
 # The brief's six greps.
 expect_grep '@__filc_meta_procread' 'meta exists (@__filc_meta_procread)'
 expect_grep '@__filc_opts_procread' 'opts exist (@__filc_opts_procread)'
-expect_grep 'declare ptr @procread(' 'declaration keeps its linker name'
+# The declaration may carry attachments (!filc_async.params) after `declare`.
+if grep -qE '^declare .*ptr @procread\(' "$OUT"; then
+  pass 'declaration keeps its linker name'
+else
+  fail 'declaration keeps its linker name (missing: declare ... ptr @procread()'
+fi
 expect_grep '@__filc_async_meta_' 'per-TU meta table (@__filc_async_meta_*)'
 expect_grep 'filc_async_ctor' 'table ctor (filc_async_ctor)'
 expect_grep '@filc_async_validate_table' 'validator declared/called (@filc_async_validate_table)'
 
 # Meta field-order / initializer check. Fixture facts:
 #   procread: nargs=3, noped=1 (bout=), flags=0, result=PTR(2),
-#             kinds: arg0 -> 0 (ARG_IGNORED), bout=1 -> 3 (ARG_BUFFER_OUT),
-#             arg2 -> 0 (ARG_IGNORED); dependencies: fd read (1),
-#             buffer write + pointer (6)
+#             kinds: fd -> 0 (ARG_IGNORED), bout=buf -> 3 (ARG_BUFFER_OUT),
+#             n -> 0 (ARG_IGNORED); dependencies: fd read (1) and buffer
+#             write + pointer (6), each with the hash of <param>:<ns> << 8
 #   uopenat:  nargs=4, noped=2 (bin=,buf=), flags=0, result=PTR(2),
 #             kinds: 0 (ARG_IGNORED), 2 (ARG_BUFFER_IN via bin=),
 #             5 (ARG_PENDING via bare buf=, NOT inferred from op), 0
@@ -137,7 +144,7 @@ if [ -n "$META_P" ]; then
   else
     fail 'procread meta values (nargs=3, noped=1, flags=0, result=PTR, opts, runtime)'
   fi
-  if echo "$META_P" | grep -qF -- '[{ i32, i32 } { i32 0, i32 1 }, { i32, i32 } { i32 3, i32 6 }, { i32, i32 } zeroinitializer]'; then
+  if echo "$META_P" | grep -qF -- '[{ i32, i32 } { i32 0, i32 -520423167 }, { i32, i32 } { i32 3, i32 -1935689466 }, { i32, i32 } zeroinitializer]'; then
     pass 'procread args kinds and dependency list (read fd, write buffer)'
   else
     fail 'procread args kinds and dependency list (read fd, write buffer)'
@@ -181,8 +188,8 @@ expect_grep 'call ptr @__filc_async_stub_procread(' 'procread call goes to its s
 expect_grep 'call ptr @__filc_async_stub_uopenat(' 'uopenat call goes to its stub'
 expect_grep '@filc_async_alloc' 'staging alloc present (@filc_async_alloc)'
 expect_grep 'call ptr @filc_async_begin(ptr @__filc_meta_procread' 'procread stub starts a task with its meta'
-expect_grep 'call void @filc_async_lock_word(ptr %task, i64' 'r_dep=0 on the fd locks its value'
-expect_grep 'call void @filc_async_lock_ptr(ptr %task, ptr %1, i32 4, i32 2)' 'w_dep=1 write-locks the buffer object'
+expect_grep 'call void @filc_async_lock_word(ptr %task, i64' 'r_dep=fd:file on the fd locks its value'
+expect_grep 'call void @filc_async_lock_ptr(ptr %task, ptr %1, i32 -1935689468, i32 2)' 'w_dep=buf:mem write-locks the buffer object'
 expect_grep 'call void @filc_async_mark_pending(ptr %task, ptr %1)' 'bout=/buf= arguments are marked pending'
 expect_grep '@__filc_meta_procread, ptr @__filc_async_run_procread, ptr %staging, i64 3)' \
   'procread stub submits its meta, run thunk and staging'
@@ -268,6 +275,7 @@ int main(void) { return use_kr() + other(); }
 EOF
 "$HOST_CC" -std=gnu17 -Wno-deprecated-non-prototype -S -emit-llvm -O0 \
   -o "$MIXED_IN" "$MIXED_SRC"
+python3 "$REPO/tests/add_param_names.py" "$MIXED_SRC" "$MIXED_IN"
 if "$OPT" -load-pass-plugin="$PLUGIN" -passes="filc-async" "$MIXED_IN" -S \
     -o "$MIXED_OUT" 2> "$MIXED_ERR"; then
   pass 'mixed fixture: pass completes'

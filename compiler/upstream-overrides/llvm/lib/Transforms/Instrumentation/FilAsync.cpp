@@ -37,6 +37,7 @@
 #include "llvm/IR/GlobalVariable.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Instructions.h"
+#include "llvm/IR/Metadata.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Type.h"
 #include "llvm/Passes/PassBuilder.h"
@@ -66,8 +67,8 @@ static const unsigned DEP_NONE = 0;
 static const unsigned DEP_READ = 1;
 static const unsigned DEP_WRITE = 2;
 static const unsigned DEP_POINTER = 4;
-// A dependency's namespace, from r_dep=<i>:<name> or w_dep=<i>:<name>, goes in
-// bits 8..31 as a 24-bit hash of the name; 0 means the option named none.
+// A dependency's space, from r_dep=<param>:<ns> or w_dep=<param>:<ns>, goes in
+// bits 8..31 as a 24-bit hash of "<param>:<ns>".
 static const unsigned DEP_NAMESPACE_SHIFT = 8;
 static const unsigned DEP_NAMESPACE_MASK = 0x00FFFFFF;
 
@@ -78,8 +79,7 @@ static const unsigned RESULT_PTR = 2;
 // Read a global string constant (the frontend's .str globals); empty
 // StringRef when C does not have that shape.
 // FNV-1a folded to 24 bits, so every translation unit derives the same value
-// for a name. A hash of 0 becomes 1, so a named key never matches an unnamed
-// one.
+// for a name. A hash of 0 becomes 1, so a dependency's space is never 0.
 static unsigned hashNamespace(StringRef Name) {
   uint32_t H = 2166136261u;
   for (unsigned char C : Name.bytes()) {
@@ -141,17 +141,39 @@ static bool isPoolConstant(Constant *C) {
   return isa<ConstantArray, ConstantStruct, ConstantVector, ConstantExpr>(C);
 }
 
-// Reads the positional option tokens into Kinds and counts them in Noped.
-// op= never decides a kind: bin=<i> -> ARG_BUFFER_IN; bout=<i> ->
-// ARG_BUFFER_OUT; buf=<i> -> ARG_PENDING (direction decided at use time by the
-// runtime). Unannotated pointer args default to ARG_PENDING (the
-// pessimistic "undecided direction" case); unannotated non-pointers stay
-// ARG_IGNORED. A token that does not index an argument is a compile-time fatal.
-static void parseKinds(StringRef OrigName, FunctionType *FTy,
+// The name of each of F's parameters: from the !filc_async.params metadata
+// the patched clang attaches, else from the IR argument names (IR from a
+// clang that keeps value names). A parameter with no name is "".
+static SmallVector<StringRef, 8> paramNames(const Function &F) {
+  SmallVector<StringRef, 8> Names;
+  if (MDNode *MD = F.getMetadata("filc_async.params")) {
+    for (const MDOperand &Op : MD->operands()) {
+      auto *S = dyn_cast_or_null<MDString>(Op.get());
+      Names.push_back(S ? S->getString() : StringRef());
+    }
+    Names.resize(F.arg_size());
+    return Names;
+  }
+  for (const Argument &A : F.args())
+    Names.push_back(A.getName());
+  return Names;
+}
+
+// Reads the argument option tokens into Kinds and Deps and counts the buffer
+// options in Noped. Each option names a parameter: bin=<p> -> ARG_BUFFER_IN;
+// bout=<p> -> ARG_BUFFER_OUT; buf=<p> -> ARG_PENDING (direction decided at use
+// time by the runtime); r_dep=<p>:<ns> and w_dep=<p>:<ns> lock the argument's
+// value in a space hashed from "<p>:<ns>". op= never decides a kind.
+// Unannotated pointer args default to ARG_PENDING (the pessimistic "undecided
+// direction" case); unannotated non-pointers stay ARG_IGNORED. An option that
+// names no parameter is a compile-time fatal.
+static void parseKinds(StringRef OrigName, const Function &F,
                        const FilAsyncPass::AnnotInfo &Info,
                        SmallVectorImpl<unsigned> &Kinds,
                        SmallVectorImpl<unsigned> &Deps, unsigned &Noped) {
+  FunctionType *FTy = F.getFunctionType();
   unsigned NArgs = FTy->getNumParams();
+  SmallVector<StringRef, 8> Names = paramNames(F);
   Kinds.assign(NArgs, ARG_IGNORED);
   Deps.assign(NArgs, DEP_NONE);
   for (unsigned I = 0; I < NArgs; ++I)
@@ -190,49 +212,58 @@ static void parseKinds(StringRef OrigName, FunctionType *FTy,
     } else {
       continue;
     }
-    unsigned Idx = 0;
-    StringRef Num = Opt.drop_front(PrefixLen);
-    // Only a dependency takes a :<name> suffix; on anything else the colon
-    // makes the index malformed below.
-    StringRef Name;
-    size_t Colon = Dep != DEP_NONE ? Num.find(':') : StringRef::npos;
-    if (Colon != StringRef::npos) {
-      Name = Num.drop_front(Colon + 1);
-      Num = Num.take_front(Colon);
-      if (Name.empty()) {
+    StringRef Value = Opt.drop_front(PrefixLen);
+    // A dependency is <param>:<namespace>; on anything else a colon makes
+    // the parameter name unknown below.
+    StringRef Param = Value;
+    if (Dep != DEP_NONE) {
+      size_t Colon = Value.find(':');
+      if (Colon == StringRef::npos) {
+        errs() << "FilAsync: '" << Opt << "' on " << OrigName
+               << " needs a namespace: <param>:<namespace>\n";
+        report_fatal_error("FilAsync: malformed filc_async option");
+      }
+      Param = Value.take_front(Colon);
+      if (Value.drop_front(Colon + 1).empty()) {
         errs() << "FilAsync: '" << Opt << "' has an empty namespace name\n";
         report_fatal_error("FilAsync: malformed filc_async option");
       }
     }
-    if (Num.empty() || Num.getAsInteger(10, Idx) || Idx >= NArgs) {
-      errs() << "FilAsync: '" << Opt
-             << "' does not index an argument of " << OrigName << "\n";
+    const StringRef *Found = Param.empty() ? Names.end() : llvm::find(Names, Param);
+    if (Found == Names.end()) {
+      errs() << "FilAsync: '" << Opt << "' on " << OrigName
+             << " names no parameter; use a parameter name";
+      if (llvm::all_of(Names, [](StringRef N) { return N.empty(); }))
+        errs() << " (" << OrigName << " has no parameter names here)";
+      errs() << "\n";
       report_fatal_error("FilAsync: malformed filc_async option");
     }
+    unsigned Idx = Found - Names.begin();
     if (Dep != DEP_NONE) {
       Type *ArgTy = FTy->getParamType(Idx);
       if (!ArgTy->isPointerTy() &&
           (!ArgTy->isIntegerTy() || ArgTy->getIntegerBitWidth() > 64)) {
-        errs() << "FilAsync: dependency argument " << Idx << " of "
+        errs() << "FilAsync: dependency parameter " << Param << " of "
                << OrigName << " must be a pointer or an integer up to 64 bits\n";
         report_fatal_error("FilAsync: malformed filc_async option");
       }
-      unsigned Value = Dep | (ArgTy->isPointerTy() ? DEP_POINTER : 0);
-      if (!Name.empty())
-        Value |= hashNamespace(Name) << DEP_NAMESPACE_SHIFT;
+      // The space hashes the parameter's name with the namespace; the lock
+      // key adds the argument's value.
+      unsigned Word = Dep | (ArgTy->isPointerTy() ? DEP_POINTER : 0) |
+                      hashNamespace(Value) << DEP_NAMESPACE_SHIFT;
       // Repeating an option is harmless; a different mode or namespace for
-      // the same argument is a contradiction.
-      if (Deps[Idx] != DEP_NONE && Deps[Idx] != Value) {
-        errs() << "FilAsync: conflicting dependencies on argument " << Idx
+      // the same parameter is a contradiction.
+      if (Deps[Idx] != DEP_NONE && Deps[Idx] != Word) {
+        errs() << "FilAsync: conflicting dependencies on parameter " << Param
                << " of " << OrigName << "\n";
         report_fatal_error("FilAsync: malformed filc_async option");
       }
-      Deps[Idx] = Value;
+      Deps[Idx] = Word;
     } else {
       // The runtime marks buffer args pending from their kind alone, so a
       // buffer option must name a pointer.
       if (!FTy->getParamType(Idx)->isPointerTy()) {
-        errs() << "FilAsync: '" << Opt << "' names argument " << Idx << " of "
+        errs() << "FilAsync: '" << Opt << "' names " << Param << " of "
                << OrigName << ", which is not a pointer\n";
         report_fatal_error("FilAsync: malformed filc_async option");
       }
@@ -339,12 +370,12 @@ GlobalVariable *FilAsyncPass::emitMeta(Function *F, StringRef OrigName,
   // Pointer return -> FILC_ASYNC_RESULT_PTR (2); anything else WORD (1).
   unsigned Result = F->getReturnType()->isPointerTy() ? RESULT_PTR : RESULT_WORD;
 
-  // Kinds come from the positional option tokens ONLY -- op= never decides a
+  // Kinds come from the argument options ONLY -- op= never decides a
   // kind (see parseKinds). noped_args counts the bin=/bout=/buf= options.
   SmallVector<unsigned, 8> Kinds;
   SmallVector<unsigned, 8> Deps;
   unsigned Noped;
-  parseKinds(OrigName, F->getFunctionType(), Info, Kinds, Deps, Noped);
+  parseKinds(OrigName, *F, Info, Kinds, Deps, Noped);
 
   // The `name` field holds the ORIGINAL name, captured before renameBody in run().
   Constant *NameInit =
@@ -735,7 +766,7 @@ PreservedAnalyses FilAsyncPass::run(Module &M, ModuleAnalysisManager &) {
     SmallVector<unsigned, 8> Kinds;
     SmallVector<unsigned, 8> Deps;
     unsigned Noped;
-    parseKinds(OrigName, F->getFunctionType(), *KV.second, Kinds, Deps, Noped);
+    parseKinds(OrigName, *F, *KV.second, Kinds, Deps, Noped);
     renameBody(F, OrigName);
     GlobalVariable *Opts = emitOpts(M, OrigName, *KV.second);
     GlobalVariable *Meta = emitMeta(F, OrigName, *KV.second, Opts);

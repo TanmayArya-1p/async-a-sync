@@ -9,8 +9,8 @@
  *                counter server, and the server's reply is the call's result
  *   op=step      add one to the counter; the reply is the new value
  *   op=get       read the counter
- *   w_dep=0      the call writes the counter behind argument 0, the port
- *   r_dep=0      the call reads it
+ *   w_dep=port:counter  the call writes the counter behind the port
+ *   r_dep=port:counter  the call reads it
  *
  * A write lock is exclusive and a read lock is shared: two gets run
  * together, and a step waits, inside the call, for the calls before it.
@@ -18,13 +18,13 @@
 
 #include "filc_async.h"
 
-#pragma clang attribute push(__attribute__((annotate("filc_async", "runtime=rpc", "op=step", "w_dep=0"))), apply_to=function)
+#pragma clang attribute push(__attribute__((annotate("filc_async", "runtime=rpc", "op=step", "w_dep=port:counter"))), apply_to=function)
 void* step(unsigned port) {
   return 0;
 }
 #pragma clang attribute pop
 
-#pragma clang attribute push(__attribute__((annotate("filc_async", "runtime=rpc", "op=get", "r_dep=0"))), apply_to=function)
+#pragma clang attribute push(__attribute__((annotate("filc_async", "runtime=rpc", "op=get", "r_dep=port:counter"))), apply_to=function)
 void* get(unsigned port) {
   return 0;
 }

@@ -18,22 +18,22 @@
 
 #include "filc_async.h"
 
-#pragma clang attribute push(__attribute__((annotate("filc_async", "runtime=io_uring", "op=pwrite", "bin=1", "w_dep=0"))), apply_to=function)
+#pragma clang attribute push(__attribute__((annotate("filc_async", "runtime=io_uring", "op=pwrite", "bin=buf", "w_dep=fd:file"))), apply_to=function)
 void* write_at(int fd, const void* buf, size_t len, unsigned long offset);
 #pragma clang attribute pop
 
-#pragma clang attribute push(__attribute__((annotate("filc_async", "runtime=io_uring", "op=pread", "bout=1"))), apply_to=function)
+#pragma clang attribute push(__attribute__((annotate("filc_async", "runtime=io_uring", "op=pread", "bout=buf"))), apply_to=function)
 void* read_at(int fd, void* buf, size_t len, unsigned long offset);
 #pragma clang attribute pop
 
-#pragma clang attribute push(__attribute__((annotate("filc_async", "runtime=mock", "op=check", "r_dep=0", "bout=1"))), apply_to=function)
+#pragma clang attribute push(__attribute__((annotate("filc_async", "runtime=mock", "op=check", "r_dep=fd:file", "bout=out"))), apply_to=function)
 void* check_file(int fd, char* out, size_t len)
 {
     return (void*)(intptr_t)pread(fd, out, len, 0);
 }
 #pragma clang attribute pop
 
-#pragma clang attribute push(__attribute__((annotate("filc_async", "runtime=mock", "op=sum", "bin=0"))), apply_to=function)
+#pragma clang attribute push(__attribute__((annotate("filc_async", "runtime=mock", "op=sum", "bin=in"))), apply_to=function)
 void* sum_bytes(const char* in, size_t len)
 {
     uintptr_t sum = 0;

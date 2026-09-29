@@ -45,18 +45,23 @@ for f in $(cd "$HERE/upstream-overrides" && LC_ALL=C find . -type f); do
   fi
 done
 
-# Upstream's Release build omits AllocaSlices::AI, but its verbose log still
-# refers to that field. Apply the one-line fix without rewriting other sources.
-SROA_PATCH=$HERE/upstream-patches/sroa-release-verbose.patch
-if git -C "$FILC_SRC" apply --check "$SROA_PATCH" 2>/dev/null; then
-  echo "== installing: llvm/lib/Transforms/Scalar/SROA.cpp"
-  git -C "$FILC_SRC" apply "$SROA_PATCH"
-elif git -C "$FILC_SRC" apply --reverse --check "$SROA_PATCH" 2>/dev/null; then
-  echo "== already installed: llvm/lib/Transforms/Scalar/SROA.cpp"
-else
-  echo "build.sh: SROA Release patch does not match $FILC_SRC" >&2
-  exit 1
-fi
+# Small changes to large upstream files are patches instead of overrides:
+#   sroa-release-verbose.patch   Release builds omit AllocaSlices::AI, which
+#                                SROA's verbose log still refers to.
+#   filc-async-param-names.patch clang records the parameter names of each
+#                                filc_async function for the FilAsync pass.
+for patch in "$HERE"/upstream-patches/*.patch; do
+  name=$(basename "$patch")
+  if git -C "$FILC_SRC" apply --check "$patch" 2>/dev/null; then
+    echo "== installing: $name"
+    git -C "$FILC_SRC" apply "$patch"
+  elif git -C "$FILC_SRC" apply --reverse --check "$patch" 2>/dev/null; then
+    echo "== already installed: $name"
+  else
+    echo "build.sh: $name does not match $FILC_SRC" >&2
+    exit 1
+  fi
+done
 
 # ---------------------------------------------------------------------
 # 2. Report the resource situation honestly before starting.

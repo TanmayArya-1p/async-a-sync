@@ -8,16 +8,20 @@
  *
  *   runtime=io_uring  the runtime that runs the call
  *   op=<syscall>  the io_uring operation a call becomes
- *   bin=<i>       argument i is a buffer the kernel reads (never marked)
- *   bout=<i>      argument i is a buffer the kernel fills (marked pending
+ *   bin=<p>       parameter p is a buffer the kernel reads (never marked)
+ *   bout=<p>      parameter p is a buffer the kernel fills (marked pending
  *                 until the read lands; the first access waits for it)
- *   r_dep=<i>     argument i is a resource this call reads
- *   w_dep=<i>     argument i is a resource this call writes
+ *   r_dep=<p>:<ns>  the call reads the resource parameter p names, in
+ *                 namespace ns
+ *   w_dep=<p>:<ns>  the call writes it
  *
- * Each dependency option locks the argument's value: a read lock is shared
- * and a write lock is exclusive. Here the key is the fd, so a write, fsync or
- * close waits for earlier calls on the same fd, while reads of one fd may
- * overlap each other.
+ * The descriptor needs no option: it is argument 0 of every op, and the
+ * runtime knows that. Each dependency option locks the argument's value,
+ * together with the parameter's name and the namespace: a read lock is
+ * shared and a write lock is exclusive. Here fd:file is the file, so a
+ * write, fsync or close waits for earlier calls on the same fd, while reads
+ * of one fd may overlap each other; buf:mem makes two reads into one buffer
+ * take turns.
  *
  * The FilAsync pass redirects every call to a stub that takes those locks,
  * marks the output buffers pending and hands the call to the runtime, and
@@ -43,35 +47,35 @@ build with -DFASYNC_COMPILER_INSERTS_CHECKS"
 
 static volatile int pragma_body_calls;
 
-#pragma clang attribute push(__attribute__((annotate("filc_async", "runtime=io_uring", "op=openat", "bin=1"))), apply_to=function)
+#pragma clang attribute push(__attribute__((annotate("filc_async", "runtime=io_uring", "op=openat", "bin=path"))), apply_to=function)
 void* async_openat(int dirfd, const char* path, int flags, int mode) {
   pragma_body_calls++;
   return 0;
 }
 #pragma clang attribute pop
 
-#pragma clang attribute push(__attribute__((annotate("filc_async", "runtime=io_uring", "op=pread", "bout=1", "r_dep=0", "w_dep=1"))), apply_to=function)
+#pragma clang attribute push(__attribute__((annotate("filc_async", "runtime=io_uring", "op=pread", "bout=buf", "r_dep=fd:file", "w_dep=buf:mem"))), apply_to=function)
 void* async_pread(int fd, void* buf, size_t len, unsigned long offset) {
   pragma_body_calls++;
   return 0;
 }
 #pragma clang attribute pop
 
-#pragma clang attribute push(__attribute__((annotate("filc_async", "runtime=io_uring", "op=pwrite", "bin=1", "w_dep=0"))), apply_to=function)
+#pragma clang attribute push(__attribute__((annotate("filc_async", "runtime=io_uring", "op=pwrite", "bin=buf", "w_dep=fd:file"))), apply_to=function)
 void* async_pwrite(int fd, const void* buf, size_t len, unsigned long offset) {
   pragma_body_calls++;
   return 0;
 }
 #pragma clang attribute pop
 
-#pragma clang attribute push(__attribute__((annotate("filc_async", "runtime=io_uring", "op=fsync", "w_dep=0"))), apply_to=function)
+#pragma clang attribute push(__attribute__((annotate("filc_async", "runtime=io_uring", "op=fsync", "w_dep=fd:file"))), apply_to=function)
 void* async_fsync(int fd) {
   pragma_body_calls++;
   return 0;
 }
 #pragma clang attribute pop
 
-#pragma clang attribute push(__attribute__((annotate("filc_async", "runtime=io_uring", "op=close", "w_dep=0"))), apply_to=function)
+#pragma clang attribute push(__attribute__((annotate("filc_async", "runtime=io_uring", "op=close", "w_dep=fd:file"))), apply_to=function)
 void* async_close(int fd) {
   pragma_body_calls++;
   return 0;

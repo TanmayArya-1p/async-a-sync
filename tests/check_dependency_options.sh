@@ -1,8 +1,9 @@
 #!/bin/sh
 # Check r_dep/w_dep placement, the emitted dependency metadata including the
-# :<name> namespace hash, the runtime each descriptor names, and the rejection
+# hash of <param>:<namespace>, the runtime each descriptor names, and the rejection
 # of contradictory options, of a buffer option on an argument that is not a
-# pointer, of a missing, malformed or doubled runtime=, and of the removed fd=.
+# pointer, of a missing, malformed or doubled runtime=, of the removed fd=, and
+# of an index, an unknown parameter name or a missing namespace.
 set -eu
 ulimit -c 0
 
@@ -48,46 +49,62 @@ if [ -z "${FILASYNC_PLUGIN:-}" ]; then
     }
 fi
 
+# emit SOURCE OUT: IR as a stock clang writes it, plus the parameter names
+# the patched clang would record.
+emit() {
+    "$CLANG" -S -emit-llvm -O0 -Werror=pragma-clang-attribute "$1" -o "$2"
+    python3 "$HERE/add_param_names.py" "$1" "$2"
+}
+
 SRC="$HERE/t_dependency_option_placement.c"
-"$CLANG" -S -emit-llvm -O0 -Werror=pragma-clang-attribute \
-    "$SRC" -o "$TMP/placement.ll"
+emit "$SRC" "$TMP/placement.ll"
 "$OPT" -load-pass-plugin="$PLUGIN" -filc-async-debug -passes=filc-async \
     "$TMP/placement.ll" -S -o "$TMP/placement_out.ll" \
     2>"$TMP/placement_debug.err"
 
 sed 's/r_dep=/read_dep=/g' "$SRC" > "$TMP/legacy_read.c"
 sed 's/w_dep=/write_dep=/g' "$SRC" > "$TMP/legacy_write.c"
-"$CLANG" -S -emit-llvm -O0 "$TMP/legacy_read.c" -o "$TMP/legacy_read.ll"
-"$CLANG" -S -emit-llvm -O0 "$TMP/legacy_write.c" -o "$TMP/legacy_write.ll"
+emit "$TMP/legacy_read.c" "$TMP/legacy_read.ll"
+emit "$TMP/legacy_write.c" "$TMP/legacy_write.ll"
 
-"$CLANG" -S -emit-llvm -O0 "$HERE/t_dep_conflict.c" -o "$TMP/conflict.ll"
-sed 's/:right/:/' "$HERE/t_dep_conflict.c" > "$TMP/empty_name.c"
-"$CLANG" -S -emit-llvm -O0 "$TMP/empty_name.c" -o "$TMP/empty_name.ll"
+# Variants of one function with two dependency options: as written (they
+# conflict), and with an empty namespace, an index instead of a name, a name
+# no parameter has, and no namespace.
+CONFLICT="$HERE/t_dep_conflict.c"
+emit "$CONFLICT" "$TMP/conflict.ll"
+for variant in empty_name:'s/:right/:/' index:'s/r_dep=fd:left/r_dep=0:left/' \
+               unknown:'s/r_dep=fd:left/r_dep=nosuch:left/' \
+               no_namespace:'s/r_dep=fd:right/r_dep=fd/'; do
+  name=${variant%%:*}
+  sed "${variant#*:}" "$CONFLICT" > "$TMP/$name.c"
+  emit "$TMP/$name.c" "$TMP/$name.ll"
+done
 printf '%s\n' \
-  '#pragma clang attribute push(__attribute__((annotate("filc_async", "runtime=io_uring", "op=pread", "bout=2"))), apply_to=function)' \
+  '#pragma clang attribute push(__attribute__((annotate("filc_async", "runtime=io_uring", "op=pread", "bout=len"))), apply_to=function)' \
   'void* scalar_buffer(int fd, void* buf, unsigned long len, unsigned long offset);' \
   '#pragma clang attribute pop' \
   'void* invoke(int fd, void* buf) { return scalar_buffer(fd, buf, 1, 0); }' \
   > "$TMP/scalar_buffer.c"
-"$CLANG" -S -emit-llvm -O0 "$TMP/scalar_buffer.c" -o "$TMP/scalar_buffer.ll"
+emit "$TMP/scalar_buffer.c" "$TMP/scalar_buffer.ll"
 # The same well-formed call with its runtime= option dropped, malformed, or
 # given twice, and with the removed fd= option.
 for variant in none:'' bad:'"runtime=1bad", ' two:'"runtime=io_uring", "runtime=other", ' \
                fd:'"runtime=io_uring", "fd=0", '; do
   name=${variant%%:*}
   printf '%s\n' \
-    "#pragma clang attribute push(__attribute__((annotate(\"filc_async\", ${variant#*:}\"op=pread\", \"bout=1\"))), apply_to=function)" \
+    "#pragma clang attribute push(__attribute__((annotate(\"filc_async\", ${variant#*:}\"op=pread\", \"bout=buf\"))), apply_to=function)" \
     'void* runtime_read(int fd, void* buf, unsigned long len, unsigned long offset);' \
     '#pragma clang attribute pop' \
     'void* invoke(int fd, void* buf) { return runtime_read(fd, buf, 1, 0); }' \
     > "$TMP/runtime_$name.c"
-  "$CLANG" -S -emit-llvm -O0 "$TMP/runtime_$name.c" -o "$TMP/runtime_$name.ll"
+  emit "$TMP/runtime_$name.c" "$TMP/runtime_$name.ll"
 done
 
 python3 - "$TMP/placement_out.ll" "$TMP/placement_debug.err" "$OPT" "$PLUGIN" \
     "$TMP/legacy_read.ll" "$TMP/legacy_write.ll" "$TMP/conflict.ll" \
     "$TMP/empty_name.ll" "$TMP/scalar_buffer.ll" "$TMP/runtime_none.ll" \
-    "$TMP/runtime_bad.ll" "$TMP/runtime_two.ll" "$TMP/runtime_fd.ll" <<'PY'
+    "$TMP/runtime_bad.ll" "$TMP/runtime_two.ll" "$TMP/runtime_fd.ll" \
+    "$TMP/index.ll" "$TMP/unknown.ll" "$TMP/no_namespace.ll" <<'PY'
 import pathlib
 import re
 import subprocess
@@ -108,13 +125,16 @@ def i32(v):
 ir = pathlib.Path(sys.argv[1]).read_text()
 debug = pathlib.Path(sys.argv[2]).read_text()
 lines = ir.splitlines()
+# The space hashes "<param>:<namespace>"; 1 read, 2 write, 4 pointer.
+def dep(kind, bits, key):
+    return f"{{ i32 {kind}, i32 {i32(bits | ns_hash(key) << 8)} }}"
+
 expected = {
-    "declared": ("{ i32 0, i32 1 }", "{ i32 3, i32 6 }"),
-    "merged": ("{ i32 0, i32 2 }",),
-    "separate": ("{ i32 0, i32 1 }",),
-    "overridden": ("{ i32 0, i32 2 }",),
-    "named": (f"{{ i32 0, i32 {i32(1 | ns_hash('slotA') << 8)} }}",
-              f"{{ i32 3, i32 {i32(6 | ns_hash('slotB') << 8)} }}"),
+    "declared": (dep(0, 1, "fd:file"), dep(3, 6, "buf:mem")),
+    "merged": (dep(0, 2, "fd:file"),),
+    "separate": (dep(0, 1, "fd:file"),),
+    "overridden": (dep(0, 2, "fd:file"),),
+    "named": (dep(0, 1, "fd:slotA"), dep(3, 6, "buf:slotB")),
 }
 for name, dependencies in expected.items():
     prefix = f"@__filc_meta_{name} ="
@@ -133,9 +153,9 @@ if "@filc_async_runtime_io_uring = external" not in ir:
 
 override = re.search(r"enrolled overridden\n((?:  [^\n]*\n)+)", debug)
 if override is None or "  op=fsync\n" not in override.group(1) or \
-   "  w_dep=0\n" not in override.group(1) or \
+   "  w_dep=fd:file\n" not in override.group(1) or \
    "  op=close\n" in override.group(1) or \
-   "  r_dep=0\n" in override.group(1):
+   "  r_dep=fd:file\n" in override.group(1):
     raise SystemExit("FAIL: definition did not override op and dependency options")
 
 def rejected(source, message):
@@ -148,7 +168,7 @@ def rejected(source, message):
 for source in sys.argv[5:7]:
     if not rejected(source, "use r_dep= or w_dep="):
         raise SystemExit(f"FAIL: obsolete option in {source} was not rejected")
-if not rejected(sys.argv[7], "conflicting dependencies on argument 0"):
+if not rejected(sys.argv[7], "conflicting dependencies on parameter fd"):
     raise SystemExit("FAIL: two namespaces on one argument were not rejected")
 if not rejected(sys.argv[8], "has an empty namespace name"):
     raise SystemExit("FAIL: an empty namespace name was not rejected")
@@ -162,6 +182,12 @@ if not rejected(sys.argv[12], "names two runtimes, io_uring and other"):
     raise SystemExit("FAIL: two runtimes on one function were not rejected")
 if not rejected(sys.argv[13], "is no longer an option"):
     raise SystemExit("FAIL: the removed fd= option was not rejected")
+if not rejected(sys.argv[14], "names no parameter; use a parameter name"):
+    raise SystemExit("FAIL: an argument index was not rejected")
+if not rejected(sys.argv[15], "names no parameter; use a parameter name"):
+    raise SystemExit("FAIL: an unknown parameter name was not rejected")
+if not rejected(sys.argv[16], "needs a namespace: <param>:<namespace>"):
+    raise SystemExit("FAIL: a dependency without a namespace was not rejected")
 
 print("CHECK_DEPENDENCY_OPTIONS PASS")
 PY

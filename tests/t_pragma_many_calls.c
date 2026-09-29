@@ -17,7 +17,7 @@
 
 #define CALLS 200
 
-#pragma clang attribute push(__attribute__((annotate("filc_async", "runtime=io_uring", "op=ignore", "bout=0"))), apply_to=function)
+#pragma clang attribute push(__attribute__((annotate("filc_async", "runtime=io_uring", "op=ignore", "bout=out"))), apply_to=function)
 __attribute__((noinline)) void* fill(char* out)
 {
     volatile char sink = *out;
