@@ -125,10 +125,16 @@ void  filc_async_capabilities(unsigned long* syscall_shaped, unsigned long* exec
 void  filc_async_get_stats(filc_async_stats* out);
 
 /* Startup validation: the pass-emitted per-TU constructor calls
- * filc_async_validate_table before main. A program may install its own
- * validator with filc_async_set_register_fn; the default checks the op is
- * known and the arg kinds are consistent. */
-typedef bool (*filc_async_register_fn)(const filc_async_meta* meta);
-void  filc_async_set_register_fn(filc_async_register_fn fn);
+ * filc_async_validate_table before main. The default validator checks that
+ * the op is known and the arg kinds are consistent. The pass constructor runs
+ * last (priority 65535), so a program's own constructor that calls
+ * filc_async_set_validator is installed first and decides instead.
+ *
+ * This replaces the validator; it does not add an implementation for an op
+ * name. The op set is closed in the runtime, so a permissive validator cannot
+ * make an unknown op work, only stop the abort: the runtime re-checks the op
+ * and shape when the task starts and fails it with -EINVAL. */
+typedef bool (*filc_async_validator_fn)(const filc_async_meta* meta);
+void  filc_async_set_validator(filc_async_validator_fn fn);
 void  filc_async_validate_table(const filc_async_meta* const* metas); /* called by pass-generated ctor */
 void  filc_async_fatal(const char* msg) __attribute__((noreturn));

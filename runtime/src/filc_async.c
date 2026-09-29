@@ -150,7 +150,7 @@ static bool default_validator(const filc_async_meta* m)
     return arg_kinds_ok(m);
 }
 
-static filc_async_register_fn g_register_fn;
+static filc_async_validator_fn g_validator;
 
 /* Multiplicative hashing: the top `bits` bits of key * 2^64/phi. */
 static size_t hash_bits(uintptr_t key, unsigned bits)
@@ -935,14 +935,14 @@ void filc_async_get_stats(filc_async_stats* out)
     out->kernel_wait_entries = stats.kernel_wait_entries;
 }
 
-void filc_async_set_register_fn(filc_async_register_fn fn)
+void filc_async_set_validator(filc_async_validator_fn fn)
 {
-    g_register_fn = fn;
+    g_validator = fn;
 }
 
 void filc_async_validate_table(const filc_async_meta* const* metas)
 {
-    filc_async_register_fn validator = g_register_fn ? g_register_fn : default_validator;
+    filc_async_validator_fn validator = g_validator ? g_validator : default_validator;
     for (const filc_async_meta* const* p = metas; p && *p; ++p) {
         const filc_async_meta* m = *p;
         if (!validator(m))

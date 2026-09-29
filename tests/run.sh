@@ -332,6 +332,7 @@ if [ "$PATCHED_READY" -eq 1 ]; then
   # Negative control: an unknown op= is accepted by the pass and rejected by
   # the runtime's startup validator (the runtime is the authority).
   run_patched_neg t_pragma_unknownop "$HERE/t_pragma_unknownop.c"
+  run_patched t_pragma_custom_validator "$HERE/t_pragma_custom_validator.c"
 
   # The two-backend comparison, as a standalone script: the same word-count
   # source built one way with plain Fil-C and one way with the patched
