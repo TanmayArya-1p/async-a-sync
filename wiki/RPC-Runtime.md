@@ -63,11 +63,11 @@ has no framing, retries, or authentication.
 The annotations, from `rpc_counter.hh`:
 
 ```c
-#pragma clang attribute push(__attribute__((annotate("filc_async", "runtime=rpc", "op=step", "w_dep=0"))), apply_to=function)
+#pragma clang attribute push(__attribute__((annotate("filc_async", "runtime=rpc", "op=step", "w_dep=port:counter"))), apply_to=function)
 void* step(unsigned port) { return 0; }
 #pragma clang attribute pop
 
-#pragma clang attribute push(__attribute__((annotate("filc_async", "runtime=rpc", "op=get", "r_dep=0"))), apply_to=function)
+#pragma clang attribute push(__attribute__((annotate("filc_async", "runtime=rpc", "op=get", "r_dep=port:counter"))), apply_to=function)
 void* get(unsigned port) { return 0; }
 #pragma clang attribute pop
 ```
@@ -86,7 +86,7 @@ void* after = get(port);    /* waits for the step */
 - **Failures.** A refused connection completes the call with
   `-ECONNREFUSED`, a malformed reply with `-EPROTO`.
 - **Ordering.** The runtime ignores dependencies; the program declares them,
-  keyed by the port. `get` takes a read lock and `step` a write lock, so the
+  as `port:counter`. `get` takes a read lock and `step` a write lock, so the
   two `get` calls are in flight together, and the `step` and the last `get`
   each wait inside the call for the calls before them. The demo checks that
   exactly those two calls waited for a lock.

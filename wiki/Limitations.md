@@ -46,7 +46,7 @@ allocated in the arena.
 
 ## Maintenance
 
-- **Pinned revision.** The compiler overrides and the SROA patch are tied to
+- **Pinned revision.** The compiler overrides and patches are tied to
   Fil-C source revision `d80c8bba1c58`. A newer `deluge` may need them
   rebased.
 - **Untested targets.** `tests/run.sh` does not run the Makefile demo

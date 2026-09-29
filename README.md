@@ -25,7 +25,7 @@ runs asynchronously underneath.
   time a result is needed.
 
 ```c
-#pragma clang attribute push(__attribute__((annotate("filc_async", "runtime=io_uring", "op=pread", "bout=1"))), apply_to=function)
+#pragma clang attribute push(__attribute__((annotate("filc_async", "runtime=io_uring", "op=pread", "bout=buf"))), apply_to=function)
 void* read_at(int fd, void* buf, size_t len, unsigned long offset);
 #pragma clang attribute pop
 

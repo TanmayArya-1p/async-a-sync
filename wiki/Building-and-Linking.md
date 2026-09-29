@@ -19,7 +19,7 @@ linking programs against them. For a first-time walkthrough, see
 `d80c8bba1c58`:
 
 - the compiler overrides in `compiler/upstream-overrides/`;
-- `upstream-patches/sroa-release-verbose.patch`.
+- the patches in `compiler/upstream-patches/`.
 
 Build from that revision unless you intend to rebase them. At that revision,
 both compilers report Fil-C 0.685 and Clang 20.1.8. A shallower sparse
@@ -54,11 +54,15 @@ The script:
 
 - installs the repository's overrides into the source checkout
   (`FilAsync.cpp`, `FilPizlonator.cpp`, the pass registration);
-- applies the SROA patch, once;
+- applies each patch in `compiler/upstream-patches/`, once;
 - builds Clang into `vendor/fil-c-src/build/bin/filcc`.
 
-The SROA patch fixes a Release-build error where a log statement reads a
-field that is compiled out under `NDEBUG`.
+The patches:
+
+- **`sroa-release-verbose.patch`** fixes a Release-build error where a log
+  statement reads a field that is compiled out under `NDEBUG`.
+- **`filc-async-param-names.patch`** makes clang record the parameter names
+  of each `filc_async` function, which the options refer to.
 
 - **Memory.** The build has thousands of steps and needs a lot of RAM. On a
   13 GiB machine, 16 jobs got a compiler process killed, while 8 finished.

@@ -10,6 +10,7 @@ async-a-sync needs.
 | `upstream-overrides/llvm/.../FilPizlonator.cpp` | Fil-C's pointer pass with the pending-flag test at access sites |
 | `upstream-overrides/clang/lib/CodeGen/BackendUtil.cpp` | runs FilAsync first in Fil-C's pipeline |
 | `upstream-patches/sroa-release-verbose.patch` | fixes a Release-build error in the pinned revision |
+| `upstream-patches/filc-async-param-names.patch` | clang records each `filc_async` function's parameter names for the pass |
 
 See the wiki:
 

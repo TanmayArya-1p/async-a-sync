@@ -50,7 +50,7 @@ read_at(fd, buf, len, 0)
   └─► __filc_async_stub_read_at                          (emitted by FilAsync)
         stage args into 16-byte cells
         task = filc_async_begin(meta, staged)
-        filc_async_lock_word(task, fd, ns, READ)         one per r_dep=/w_dep=
+        filc_async_lock_word(task, fd, space, READ)      one per r_dep=/w_dep=
         filc_async_mark_pending(task, buf)               one per output buffer
         filc_async_submit(task, meta, run, staged, 4)    ─► meta->runtime->submit
         return task
@@ -93,7 +93,13 @@ definition can live in another translation unit. A definition in the same
 unit is renamed `__filc_async_F`. A non-static one keeps `F` as an alias, so
 other units still link (`tests/t_linked_async_*.c`).
 
-**What it leaves alone.** The pass only validates positional indices and
+**Parameter names.** Options name parameters (`bout=buf`, `r_dep=fd:file`).
+IR declarations carry no parameter names, so a small clang patch
+(`compiler/upstream-patches/filc-async-param-names.patch`) records them on
+each annotated function as `!filc_async.params`, and the pass resolves each
+option against that list.
+
+**What it leaves alone.** The pass only validates parameter names and
 dependency types. It never checks `op=`: the runtime decides which ops exist.
 
 ### The access hook
@@ -148,8 +154,9 @@ the object's lower bound.
 
 **Dependency locks.**
 
-- **Keys.** One lock per (key, namespace), where the key is an integer value
-  or an object base.
+- **Keys.** One lock per (value, space). The value is an integer or an object
+  base. The space is a hash of the dependency's `<param>:<namespace>`, plus
+  the pointer bit.
 - **Modes.** Readers share and writers exclude.
 - **Order.** Requests queue in arrival order, so a stream of readers cannot
   starve a waiting writer.

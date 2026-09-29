@@ -54,7 +54,7 @@ FILC_ASYNC_RUNTIME(mock, mock_submit, mock_poll, mock_validate);
 functions annotated with `runtime=mock` point to:
 
 ```c
-#pragma clang attribute push(__attribute__((annotate("filc_async", "runtime=mock", "op=double", "bout=0", "bin=1"))), apply_to=function)
+#pragma clang attribute push(__attribute__((annotate("filc_async", "runtime=mock", "op=double", "bout=out", "bin=in"))), apply_to=function)
 void* double_into(long* out, const long* in);
 #pragma clang attribute pop
 ```

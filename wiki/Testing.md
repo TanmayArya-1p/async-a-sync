@@ -20,6 +20,11 @@ Tests are **skipped**, not failed, in two cases:
 
 Read the skip count as well as the failure count.
 
+**Stock-clang checks.** `check_dependency_options.sh` and the
+`compiler/dev/opt_annotate*.sh` scripts run the pass on IR from a stock
+clang, which records no parameter names. `tests/add_param_names.py` adds
+them the way the clang patch does.
+
 **Not covered.** `run.sh` runs `demos/wordcount/run_wordcount.sh` and
 `demos/rpc/run_rpc_counter.sh`, but not the other Makefile demo targets,
 `demos/wordcount/run_wordcount_3way.sh`, or
@@ -33,7 +38,8 @@ changing the runtime or the link line, run `make demo-pragma`,
 
 | Check | Proves |
 |---|---|
-| `check_dependency_options.sh` | dependency metadata and namespace hashes, the runtime each descriptor points to, option precedence between declaration and definition, rejection of conflicting, empty-name and obsolete options and of a missing, malformed or doubled `runtime=` |
+| `check_dependency_options.sh` | dependency metadata and the hashes of `<param>:<namespace>`, the runtime each descriptor points to, option precedence between declaration and definition, rejection of conflicting, empty-namespace, namespace-less and obsolete options, of indices and unknown parameter names, of the removed `fd=`, and of a missing, malformed or doubled `runtime=` |
+| `t_param_names.c` | the patched clang gives an annotated prototype without parameter names the definition's names; dependencies conflict only when value, parameter name and namespace all match |
 | `check_callsite_pragma.sh` | a pragma around a call is an error with `-Werror=pragma-clang-attribute` |
 | `t_annotate_smoke.c` | Clang emits `llvm.global.annotations` for the pragma |
 | `stage4_compiler_hook.c` | the patched compiler inserts the pending-flag test and resolves buffers on access |

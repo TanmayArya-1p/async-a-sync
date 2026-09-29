@@ -27,7 +27,7 @@ through how it implements each runtime function.
 - **Example declaration:**
 
   ```c
-  #pragma clang attribute push(__attribute__((annotate("filc_async", "runtime=io_uring", "op=pwrite", "bin=1", "w_dep=0"))), apply_to=function)
+  #pragma clang attribute push(__attribute__((annotate("filc_async", "runtime=io_uring", "op=pwrite", "bin=buf", "w_dep=fd:file"))), apply_to=function)
   void* async_pwrite(int fd, const void* buf, size_t len, unsigned long offset);
   #pragma clang attribute pop
   ```
