@@ -265,6 +265,16 @@ fasync_id fasync_push_sqe(unsigned char op, int fd, unsigned long addr,
   if (fasync_ensure_ring() < 0)
     return 0;
 
+  /* io_uring_setup takes the lowest free descriptor, so the ring can have the
+   * number of an fd the caller has just closed. The kernel accepts an SQE on
+   * the ring's own fd and never completes it, which would hang the waiter;
+   * fail with the EBADF the closed fd deserves. */
+  if (fd == g_ring.fd) {
+    g_last_error = "fd is the io_uring ring's own descriptor";
+    errno = EBADF;
+    return 0;
+  }
+
   struct fasync_req_shared* r = fasync_req_alloc();
   if (!r) {
     g_last_error = "request table full";
