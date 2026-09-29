@@ -184,9 +184,9 @@ static void fasync_slot_mark(unsigned int index, int allocated) {
 
 static void fasync_req_table_init(void) {
   memset(g_shared.alloc_bits, 0, sizeof(g_shared.alloc_bits));
-  g_shared.memo.epoch = 0;
-  g_shared.memo.start = 0;
-  g_shared.memo.end = 0;
+  memset(g_shared.memo, 0, sizeof(g_shared.memo));
+  g_shared.memo_next = 0;
+  g_shared.alloc_epoch = 1;
   for (unsigned int i = 0; i < FASYNC_MAX_INFLIGHT; i++) {
     req_slots[i].state = FASYNC_REQ_FREE;
     /* one based so slot i links to slot i+1 */

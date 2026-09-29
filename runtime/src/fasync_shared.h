@@ -12,6 +12,10 @@
 
 #define FASYNC_ALLOC_WORDS (FASYNC_MAX_INFLIGHT / 64)
 
+/* gaps the memo keeps, so a loop reading a buffer and memory elsewhere (a
+ * global, a table) keeps one for each */
+#define FASYNC_MEMO_WAYS 4
+
 /* one in-flight request as the native resolver sees it */
 struct fasync_req_shared {
   unsigned long id;     /* handle handed to the caller */
@@ -35,15 +39,18 @@ struct fasync_shared {
   /* one bit per slot so free slots skipped 64 at a time */
   unsigned long alloc_bits[FASYNC_ALLOC_WORDS];
 
-  /* bumped on every allocation to invalidate the memo */
+  /* bumped on every allocation to invalidate the memo; starts at 1 so a
+   * zeroed memo entry is never current */
   unsigned long alloc_epoch;
 
-  /* range known to contain no pending result buffer */
+  /* ranges known to contain no pending result buffer, each the whole gap
+   * between two pending buffers */
   struct fasync_memo {
     unsigned long epoch;
-    const char* start;
-    const char* end;
-  } memo;
+    const char* start; /* 0 for the bottom of memory */
+    const char* end;   /* 0 for the top */
+  } memo[FASYNC_MEMO_WAYS];
+  unsigned int memo_next; /* the entry the next miss replaces */
 
   struct fasync_cqe* cqes;
   unsigned int* cq_head;
@@ -73,13 +80,17 @@ struct fasync_shared {
 
 static inline int fasync_memo_covers(const struct fasync_shared* sh, const char* p,
                                      size_t size) {
-  if (sh->memo.epoch != sh->alloc_epoch || !sh->memo.start)
-    return 0;
-  if (p < sh->memo.start)
-    return 0;
-  if (sh->memo.end && p + size > sh->memo.end)
-    return 0;
-  return 1;
+  for (unsigned int i = 0; i < FASYNC_MEMO_WAYS; i++) {
+    const struct fasync_memo* m = &sh->memo[i];
+    if (m->epoch != sh->alloc_epoch)
+      continue;
+    if (m->start && p < m->start)
+      continue;
+    if (m->end && p + size > m->end)
+      continue;
+    return 1;
+  }
+  return 0;
 }
 
 /* the pending request covering this range or zero */
@@ -92,7 +103,9 @@ static inline struct fasync_req_shared* fasync_shared_find(struct fasync_shared*
     return 0;
   }
 
-  const char* limit = 0; /* nearest pending buffer above p */
+  const char* below = 0; /* end of the nearest pending buffer below p */
+  const char* limit = 0; /* start of the nearest pending buffer above p */
+  int partial = 0;       /* a pending buffer holds part of the range */
   struct fasync_req_shared* found = 0;
 
   for (unsigned long w = 0; w < FASYNC_ALLOC_WORDS; w++) {
@@ -114,8 +127,12 @@ static inline struct fasync_req_shared* fasync_shared_find(struct fasync_shared*
         found = r;
         break;
       }
-      if (start > p && (!limit || start < limit))
+      if (start < p + size && p < end)
+        partial = 1;
+      else if (start >= p + size && (!limit || start < limit))
         limit = start;
+      else if (end <= p && end > below)
+        below = end;
     }
     if (found)
       break;
@@ -124,9 +141,14 @@ static inline struct fasync_req_shared* fasync_shared_find(struct fasync_shared*
   if (found)
     return found;
 
-  /* nothing pending up to limit so remember */
-  sh->memo.epoch = sh->alloc_epoch;
-  sh->memo.start = p;
-  sh->memo.end = limit;
+  /* Nothing pending in [below, limit), so remember that gap, unless part of
+   * the range is pending: then no gap around p is free of pending buffers. */
+  if (!partial) {
+    struct fasync_memo* m = &sh->memo[sh->memo_next];
+    sh->memo_next = (sh->memo_next + 1) % FASYNC_MEMO_WAYS;
+    m->epoch = sh->alloc_epoch;
+    m->start = below;
+    m->end = limit;
+  }
   return 0;
 }
