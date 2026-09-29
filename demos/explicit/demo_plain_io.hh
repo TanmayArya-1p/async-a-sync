@@ -1,6 +1,6 @@
 #pragma once
 
-#include "utils.hh"
+#include "../common/utils.hh"
 
 static int demo_plain_io() {
     for (int i = 0; i < demo_n; i++) {

@@ -34,7 +34,7 @@
 
 #include "fasync.h"
 #include "filc_async.h"
-#include "utils.hh"
+#include "../common/utils.hh"
 
 #ifndef FASYNC_COMPILER_INSERTS_CHECKS
 #error "the pragma demos need the patched compiler: \

@@ -351,13 +351,13 @@ if [ "$PATCHED_READY" -eq 1 ]; then
   needs_io_uring run_patched stage4_compiler_hook "$HERE/stage4_compiler_hook.c"
   needs_io_uring run_patched stage8_latency "$HERE/stage8_latency.c" "$OUT"
   RUN_PATCHED_FLAGS="-DFASYNC_IMPLICIT" needs_io_uring run_patched \
-    demo_plain_io "$REPO/demos/demo_plain_io.c" "$OUT"
+    demo_plain_io "$REPO/demos/explicit/demo_plain_io.c" "$OUT"
   RUN_PATCHED_FLAGS="-DFASYNC_IMPLICIT" needs_io_uring run_patched \
-    demo_async_io "$REPO/demos/demo_async_io.c" "$OUT"
+    demo_async_io "$REPO/demos/explicit/demo_async_io.c" "$OUT"
   RUN_PATCHED_FLAGS="-DFASYNC_IMPLICIT" needs_io_uring run_patched \
-    demo_provenance "$REPO/demos/demo_provenance.c" "$OUT"
+    demo_provenance "$REPO/demos/explicit/demo_provenance.c" "$OUT"
   RUN_PATCHED_FLAGS="-DFASYNC_IMPLICIT" needs_io_uring run_patched \
-    demo_wordcount "$REPO/demos/demo_wordcount.c" "$OUT"
+    demo_wordcount "$REPO/demos/wordcount/demo_wordcount.c" "$OUT"
 
   # The pragma-async interface tests: the patched compiler rewrites their
   # annotated call sites into filc_async_submit.
@@ -391,7 +391,7 @@ if [ "$PATCHED_READY" -eq 1 ]; then
   if [ "$IO_URING" -eq 1 ]; then
     echo
     echo "### wordcount: the same code, sync and implicit (run_wordcount.sh)"
-    if "$REPO/demos/run_wordcount.sh" "$OUT"; then
+    if "$REPO/demos/wordcount/run_wordcount.sh" "$OUT"; then
       PASSED=$((PASSED + 1))
     else
       echo "!!! run_wordcount.sh exited non-zero"

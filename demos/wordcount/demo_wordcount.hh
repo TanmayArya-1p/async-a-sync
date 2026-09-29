@@ -1,6 +1,6 @@
 #pragma once
 
-#include "utils.hh"
+#include "../common/utils.hh"
 
 static size_t demo_wordcount() {
     // invoke a read on all files and fill a buffer for each file

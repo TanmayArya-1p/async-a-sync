@@ -21,7 +21,8 @@ Tests are **skipped**, not failed, in two cases:
 Read the skip count as well as the failure count.
 
 **Not covered.** `run.sh` does not run the Makefile demo targets,
-`demos/run_wordcount_3way.sh`, or `demos/inspect_disasm_cfg.sh`. After
+`demos/wordcount/run_wordcount_3way.sh`, or
+`demos/wordcount/inspect_disasm_cfg.sh`. After
 changing the runtime or the link line, run `make demo-pragma`,
 `make all-demos` and `make disasm` by hand.
 

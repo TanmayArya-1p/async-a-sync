@@ -38,54 +38,54 @@ runtime:
 	@./runtime/build.sh
 
 demo-wordcount: runtime
-	@./demos/run_wordcount_3way.sh
+	@./demos/wordcount/run_wordcount_3way.sh
 
 demo-plain: runtime
 	@mkdir -p $(OUT_DIR)
 	@$(PATCHED_CC) -O2 -static -DFASYNC_IMPLICIT -DFASYNC_COMPILER_INSERTS_CHECKS \
-		-I$(REPO_DIR)/runtime/src -I$(REPO_DIR)/demos -L$(REPO_DIR)/runtime/build/lib \
-		-o $(OUT_DIR)/demo_plain_io $(REPO_DIR)/demos/demo_plain_io.c -lfilc_async_uring -lpizlo -lc
+		-I$(REPO_DIR)/runtime/src -L$(REPO_DIR)/runtime/build/lib \
+		-o $(OUT_DIR)/demo_plain_io $(REPO_DIR)/demos/explicit/demo_plain_io.c -lfilc_async_uring -lpizlo -lc
 	@$(OUT_DIR)/demo_plain_io $(OUT_DIR)
 
 demo-async: runtime
 	@mkdir -p $(OUT_DIR)
 	@$(PATCHED_CC) -O2 -static -DFASYNC_IMPLICIT -DFASYNC_COMPILER_INSERTS_CHECKS \
-		-I$(REPO_DIR)/runtime/src -I$(REPO_DIR)/demos -L$(REPO_DIR)/runtime/build/lib \
-		-o $(OUT_DIR)/demo_async_io $(REPO_DIR)/demos/demo_async_io.c -lfilc_async_uring -lpizlo -lc
+		-I$(REPO_DIR)/runtime/src -L$(REPO_DIR)/runtime/build/lib \
+		-o $(OUT_DIR)/demo_async_io $(REPO_DIR)/demos/explicit/demo_async_io.c -lfilc_async_uring -lpizlo -lc
 	@$(OUT_DIR)/demo_async_io $(OUT_DIR)
 
 demo-provenance: runtime
 	@mkdir -p $(OUT_DIR)
 	@$(PATCHED_CC) -O2 -static -DFASYNC_IMPLICIT -DFASYNC_COMPILER_INSERTS_CHECKS \
-		-I$(REPO_DIR)/runtime/src -I$(REPO_DIR)/demos -L$(REPO_DIR)/runtime/build/lib \
-		-o $(OUT_DIR)/demo_provenance $(REPO_DIR)/demos/demo_provenance.c -lfilc_async_uring -lpizlo -lc
+		-I$(REPO_DIR)/runtime/src -L$(REPO_DIR)/runtime/build/lib \
+		-o $(OUT_DIR)/demo_provenance $(REPO_DIR)/demos/explicit/demo_provenance.c -lfilc_async_uring -lpizlo -lc
 	@$(OUT_DIR)/demo_provenance $(OUT_DIR)
 
 all-demos: demo-wordcount demo-plain demo-async demo-provenance
 
 PRAGMA_FLAGS := -O2 -static -Werror=pragma-clang-attribute -DFASYNC_IMPLICIT \
-	-DFASYNC_COMPILER_INSERTS_CHECKS -I$(REPO_DIR)/runtime/src -I$(REPO_DIR)/demos \
+	-DFASYNC_COMPILER_INSERTS_CHECKS -I$(REPO_DIR)/runtime/src \
 	-L$(REPO_DIR)/runtime/build/lib
 
 PRAGMA_DEMOS := hello lifecycle ordering coldread scaling overlap
 
 demo-pragma: $(addprefix demo-pragma-,$(PRAGMA_DEMOS))
 
-# demo-pragma-<name> builds demos/demo_pragma_<name>.c and runs it on OUT_DIR.
+# demo-pragma-<name> builds demos/pragma/demo_pragma_<name>.c and runs it on OUT_DIR.
 # A pattern rule, so it is not listed in .PHONY (make skips those for them).
 demo-pragma-%: runtime
 	@mkdir -p $(OUT_DIR)
 	@$(PATCHED_CC) $(PRAGMA_FLAGS) -o $(OUT_DIR)/demo_pragma_$* \
-		$(REPO_DIR)/demos/demo_pragma_$*.c -lfilc_async_uring -lpizlo -lc
+		$(REPO_DIR)/demos/pragma/demo_pragma_$*.c -lfilc_async_uring -lpizlo -lc
 	@$(OUT_DIR)/demo_pragma_$* $(OUT_DIR) $(ARGS)
 
 disasm:
-	@./demos/inspect_disasm_cfg.sh
+	@./demos/wordcount/inspect_disasm_cfg.sh
 
 cfg:
 	@mkdir -p $(BUILD_DIR)
 	@echo "1. Generating GCC tree CFG (.dot and .png)..."
-	@cd $(BUILD_DIR) && gcc -O2 -I$(REPO_DIR)/demos -fdump-tree-cfg-graph $(REPO_DIR)/demos/demo_wordcount.c -o $(BUILD_DIR)/wc_gcc_cfg_bin
+	@cd $(BUILD_DIR) && gcc -O2 -fdump-tree-cfg-graph $(REPO_DIR)/demos/wordcount/demo_wordcount.c -o $(BUILD_DIR)/wc_gcc_cfg_bin
 	@DOT_FILE=$$(find $(BUILD_DIR) -name "*demo_wordcount*.dot" | head -n 1); \
 	if [ -n "$$DOT_FILE" ] && command -v dot >/dev/null 2>&1; then \
 		dot -Tpng "$$DOT_FILE" -o $(BUILD_DIR)/cfg_gcc_wordcount.png; \
@@ -93,8 +93,8 @@ cfg:
 	fi
 	@echo "2. Generating Fil-C post-instrumentation CFG (.dot and .png)..."
 	@$(PATCHED_CC) -O2 -DFASYNC_IMPLICIT -DFASYNC_COMPILER_INSERTS_CHECKS \
-		-I$(REPO_DIR)/runtime/src -I$(REPO_DIR)/demos \
-		-emit-llvm -S $(REPO_DIR)/demos/demo_wordcount.c -o $(BUILD_DIR)/wc_implicit.ll
+		-I$(REPO_DIR)/runtime/src \
+		-emit-llvm -S $(REPO_DIR)/demos/wordcount/demo_wordcount.c -o $(BUILD_DIR)/wc_implicit.ll
 	@$(REPO_DIR)/vendor/fil-c-src/build/bin/opt -passes=dot-cfg -disable-output $(BUILD_DIR)/wc_implicit.ll >/dev/null 2>&1
 	@if [ -f ".pizlonatedFIP1066_wordcount.dot" ] && command -v dot >/dev/null 2>&1; then \
 		dot -Tpng .pizlonatedFIP1066_wordcount.dot -o $(BUILD_DIR)/cfg_filc_wordcount.png; \

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -e
 
-REPO="$(cd "$(dirname "$0")/.." && pwd)"
+REPO="$(cd "$(dirname "$0")/../.." && pwd)"
 BUILD_DIR="$REPO/build/demos"
 OUT_DIR="$REPO/build/tests/wc"
 
@@ -12,16 +12,16 @@ FILCC="${FILCC:-$FILC_ROOT/build/bin/filcc}"
 PATCHED_CC="${PATCHED_CC:-$REPO/vendor/fil-c-src/build/bin/filcc}"
 
 
-gcc -O2 -I "$REPO/demos" -o "$BUILD_DIR/wc_gcc" "$REPO/demos/demo_wordcount.c"
+gcc -O2 -o "$BUILD_DIR/wc_gcc" "$REPO/demos/wordcount/demo_wordcount.c"
 
 if [ -x "$FILCC" ]; then
-  "$FILCC" -O2 -static -I "$REPO/demos" -o "$BUILD_DIR/wc_filc_sync" "$REPO/demos/demo_wordcount.c"
+  "$FILCC" -O2 -static -o "$BUILD_DIR/wc_filc_sync" "$REPO/demos/wordcount/demo_wordcount.c"
 fi
 
 "$REPO/runtime/build.sh" >/dev/null
 "$PATCHED_CC" -O2 -static -DFASYNC_IMPLICIT -DFASYNC_COMPILER_INSERTS_CHECKS \
-  -I "$REPO/runtime/src" -I "$REPO/demos" -L "$REPO/runtime/build/lib" \
-  -o "$BUILD_DIR/wc_filc_implicit" "$REPO/demos/demo_wordcount.c" -lfilc_async_uring -lpizlo -lc
+  -I "$REPO/runtime/src" -L "$REPO/runtime/build/lib" \
+  -o "$BUILD_DIR/wc_filc_implicit" "$REPO/demos/wordcount/demo_wordcount.c" -lfilc_async_uring -lpizlo -lc
 
 echo "Done building binaries."
 echo
@@ -53,7 +53,7 @@ echo
 # Generate GCC tree CFG graph
 (
   cd "$BUILD_DIR"
-  gcc -O2 -I "$REPO/demos" -fdump-tree-cfg-graph "$REPO/demos/demo_wordcount.c" -o "$BUILD_DIR/wc_gcc_cfg_bin"
+  gcc -O2 -fdump-tree-cfg-graph "$REPO/demos/wordcount/demo_wordcount.c" -o "$BUILD_DIR/wc_gcc_cfg_bin"
   DOT_FILE=$(find . -name "*demo_wordcount*.dot" | head -n 1)
   if [ -n "$DOT_FILE" ] && command -v dot >/dev/null 2>&1; then
     dot -Tpng "$DOT_FILE" -o "$BUILD_DIR/cfg_gcc_wordcount.png"
@@ -64,9 +64,9 @@ echo
 # Generate Clang / Fil-C AST CFG Dump
 echo "Generating Clang / Fil-C AST CFG dump..."
 "$PATCHED_CC" -fsyntax-only -DFASYNC_IMPLICIT -DFASYNC_COMPILER_INSERTS_CHECKS \
-  -I "$REPO/runtime/src" -I "$REPO/demos" \
+  -I "$REPO/runtime/src" \
   -Xclang -analyze -Xclang -analyzer-checker=debug.DumpCFG \
-  "$REPO/demos/demo_wordcount.c" > "$BUILD_DIR/cfg_filc_wordcount.txt" 2>&1
+  "$REPO/demos/wordcount/demo_wordcount.c" > "$BUILD_DIR/cfg_filc_wordcount.txt" 2>&1
 echo "Generated Fil-C AST CFG dump: $BUILD_DIR/cfg_filc_wordcount.txt"
 
 echo

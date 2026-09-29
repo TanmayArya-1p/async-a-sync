@@ -4,7 +4,7 @@
 set -e
 
 HERE=$(cd "$(dirname "$0")" && pwd)
-REPO=$(cd "$HERE/.." && pwd)
+REPO=$(cd "$HERE/../.." && pwd)
 
 FILC_ROOT=${FILC_ROOT:-$REPO/vendor/filc-0.685-linux-x86_64}
 FILCC=${FILCC:-$FILC_ROOT/build/bin/filcc}
@@ -25,13 +25,13 @@ mkdir -p "$OUT" "$DIR"
 echo "== building the two backends of the same source"
 "$PATCHED_CC" -O2 -static -DFASYNC_IMPLICIT -DFASYNC_COMPILER_INSERTS_CHECKS \
   -I"$REPO/runtime/src" -L"$REPO/runtime/build/lib" \
-  -o "$OUT/wc_implicit" "$REPO/demos/demo_wordcount.c" -lfilc_async_uring -lpizlo -lc
+  -o "$OUT/wc_implicit" "$HERE/demo_wordcount.c" -lfilc_async_uring -lpizlo -lc
 
 if [ -x "$FILCC" ]; then
-  "$FILCC" -O2 -static -o "$OUT/wc_sync" "$REPO/demos/demo_wordcount.c"
+  "$FILCC" -O2 -static -o "$OUT/wc_sync" "$HERE/demo_wordcount.c"
 else
   echo "  plain filcc not found ($FILCC); using cc for the sync arm"
-  cc -O2 -o "$OUT/wc_sync" "$REPO/demos/demo_wordcount.c"
+  cc -O2 -o "$OUT/wc_sync" "$HERE/demo_wordcount.c"
 fi
 
 sync_out=$("$OUT/wc_sync" "$DIR")

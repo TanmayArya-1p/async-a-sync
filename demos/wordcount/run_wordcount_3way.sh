@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -e
 
-REPO="$(cd "$(dirname "$0")/.." && pwd)"
+REPO="$(cd "$(dirname "$0")/../.." && pwd)"
 FILC_ROOT="${FILC_ROOT:-$REPO/vendor/filc-0.685-linux-x86_64}"
 FILCC="${FILCC:-$FILC_ROOT/build/bin/filcc}"
 PATCHED_CC="${PATCHED_CC:-$REPO/vendor/fil-c-src/build/bin/filcc}"
@@ -20,15 +20,15 @@ echo "=================================================================="
 
 "$REPO/runtime/build.sh" >/dev/null 2>&1
 
-# 2. Build 3 versions from the exact same source file: demos/demo_wordcount.c
-gcc -O2 -I "$REPO/demos" -o "$OUT/wc_gcc" "$REPO/demos/demo_wordcount.c"
+# 2. Build 3 versions from the exact same source file: demos/wordcount/demo_wordcount.c
+gcc -O2 -o "$OUT/wc_gcc" "$REPO/demos/wordcount/demo_wordcount.c"
 "$PATCHED_CC" -O2 -static -DFASYNC_IMPLICIT -DFASYNC_COMPILER_INSERTS_CHECKS \
-  -I "$REPO/runtime/src" -I "$REPO/demos" -L "$REPO/runtime/build/lib" \
-  -o "$OUT/wc_implicit" "$REPO/demos/demo_wordcount.c" -lfilc_async_uring -lpizlo -lc
+  -I "$REPO/runtime/src" -L "$REPO/runtime/build/lib" \
+  -o "$OUT/wc_implicit" "$REPO/demos/wordcount/demo_wordcount.c" -lfilc_async_uring -lpizlo -lc
 
 HAVE_FILC_SYNC=0
 if [ -x "$FILCC" ]; then
-  "$FILCC" -O2 -static -I "$REPO/demos" -o "$OUT/wc_filc_sync" "$REPO/demos/demo_wordcount.c"
+  "$FILCC" -O2 -static -o "$OUT/wc_filc_sync" "$REPO/demos/wordcount/demo_wordcount.c"
   HAVE_FILC_SYNC=1
 fi
 

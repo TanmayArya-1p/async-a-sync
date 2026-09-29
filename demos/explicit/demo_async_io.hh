@@ -5,7 +5,7 @@
 
 #include "fasync.h"
 #include "fasync_dep.h"
-#include "utils.hh"
+#include "../common/utils.hh"
 
 static unsigned char** demo_alloc_blocks(int blocks, size_t block_size) {
     unsigned char** bufs = calloc((size_t)blocks, sizeof(unsigned char*));

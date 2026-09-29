@@ -14,7 +14,7 @@ Run `make help` for the full list.
 
 Each demo prints a table, a `=>` result line, and `DEMO OK` when its checks
 pass. A demo's source holds only the code it demonstrates. Setup, timing and
-checks are in `demos/pragma_report.hh`.
+checks are in `demos/pragma/pragma_report.hh`.
 
 | Demo | Shows |
 |---|---|
@@ -50,7 +50,7 @@ an access, next to GCC's plain load.
 At 2048 files, the gain in `scaling` is lower and varies more between runs:
 calls wait for room in the 1024-entry request table.
 
-### Word count (`demos/run_wordcount.sh`)
+### Word count (`demos/wordcount/run_wordcount.sh`)
 
 One synchronous-looking program, built blocking and implicit, over 512 files
 with the page cache dropped:
