@@ -64,6 +64,19 @@ runtime's `poll` whenever something needs the task finished: a
 `filc_async_wait` or `filc_async_poll`, an access to one of its buffers, or a
 later call that needs one of its locks or buffers.
 
+## Source-authorized review findings (2026-09-30)
+
+Focused probes against the current runtime reproduced these issues:
+
+- concurrent collectors can both receive one task's result;
+- opposite-order acquisition of two dependency keys can deadlock;
+- a shared explicit token can allow conflicting tagged calls to overlap;
+- the explicit DAG can treat disjoint slices of one object as overlapping;
+- the 65th pending open can remain queued after the 64-handle limit is hit.
+
+These findings narrow the current implementation contract. They are recorded
+in [Limitations](Limitations.md) and are not additional guarantees.
+
 ## The runtime descriptor
 
 ```c

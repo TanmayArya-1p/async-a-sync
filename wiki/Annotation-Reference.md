@@ -49,6 +49,13 @@ Each dependency argument's value is a key, and the stub takes a lock on it.
 Read locks are shared and write locks are exclusive. Requests for one lock
 are granted in the order they were made.
 
+**Verified multi-key deadlock limitation (2026-09-30).** Lock acquisition is
+performed in annotation/argument order, with no global key ordering or cycle
+detection. Two concurrent tasks that acquire keys `(A,B)` and `(B,A)` can each
+hold their first key and wait forever for the second. A source-authorized probe
+reproduced this with two write locks. Use one application-level order for all
+multi-key annotations.
+
 | Key type | Compared by |
 |---|---|
 | integer | its value, zero-extended to 64 bits |
@@ -76,6 +83,13 @@ everywhere.
 
 The namespace hash is 32-bit FNV-1a over the name's bytes, masked to 24 bits,
 with 0 mapped to 1.
+
+**Verified collision issue (2026-09-30).** This encoding is not injective.
+Distinct names can produce the same 24-bit namespace value, and the current
+compiler/runtime use that encoded value for the dependency key. A source
+inspection and compiler IR probe found distinct names with equal dependencies.
+Either make namespace identity collision-resistant or document hash collisions
+as aliases.
 
 ## Call-site rewriting
 

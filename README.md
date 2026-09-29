@@ -1,89 +1,109 @@
 # async-a-sync
 
-**Write blocking-looking synchronous C that runs asynchronously**
+[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Platform](https://img.shields.io/badge/platform-Linux%20x86--64-lightgrey.svg)](wiki/Getting-Started.md)
+[![Language](https://img.shields.io/badge/language-C-informational.svg)](https://en.wikipedia.org/wiki/C_(programming_language))
 
-async-a-sync is a compiler and runtime system built on top of
-[Fil-C](https://github.com/pizlonator/fil-c). It brings zero-syntax implicit
-asynchronous futures to C: you write ordinary, blocking-looking code, and it
-runs asynchronously underneath.
+async-a-sync lets selected C calls run asynchronously while keeping ordinary
+call syntax. It is built on [Fil-C](https://github.com/pizlonator/fil-c), whose
+capability and object machinery lets the compiler wait when a pending buffer is
+accessed.
 
-**How it works:**
+The project exists to keep asynchronous work separate from application code:
+the compiler rewrites direct calls, a generic framework tracks tasks, buffers
+and dependencies, and a runtime performs the operation. The repository ships
+an io_uring runtime, but the framework can use other runtimes too.
 
-- **Annotated calls return at once.** A call to an annotated function is handed
-  to an asynchronous runtime and returns immediately.
-- **Buffers stay pending.** The buffers the call produces are pending until it
-  completes.
-- **The first access waits.** Fil-C's
-  [InvisiCaps](https://fil-c.org/invisicaps) give every pointer a reference to
-  its object's header. The patched compiler tests a pending flag there before
-  each access, so the first access to a pending buffer waits for its call, at
-  the access site itself.
-- **Pluggable runtimes.** The framework does not depend on any runtime. Each
-  annotated function names the runtime that runs it (`runtime=<name>`), and
-  one program can link several. This repository ships one that turns calls
-  into io_uring requests and sends them to the kernel in one batch, the first
-  time a result is needed.
+## General principles
+
+- An annotation names a runtime with `runtime=<name>`. A program can link more
+  than one runtime; each call goes to the runtime named by its function.
+- The generated stub takes dependency locks, marks output buffers pending, and
+  hands the call to the runtime.
+- `bin=` is read-only. `bout=`, `buf=`, and unannotated pointer arguments are
+  treated as pending until completion.
+- Read dependencies share a key. Write dependencies are exclusive and follow
+  submission order.
+- A runtime implements `submit`, `poll`, and `validate`. Completion clears
+  pending marks, releases dependency locks, and wakes waiters.
+
+## Small example
 
 ```c
+#include <fcntl.h>
+#include <stdio.h>
+#include <unistd.h>
+#include "filc_async.h"
+
 #pragma clang attribute push(__attribute__((annotate("filc_async", "runtime=io_uring", "op=pread", "fd=0", "bout=1"))), apply_to=function)
-void* read_at(int fd, void* buf, size_t len, unsigned long offset);
+void* read_at(int fd, void* buf, size_t len, unsigned long offset)
+{
+    return 0;
+}
 #pragma clang attribute pop
 
-// request every file: each call only queues a request; nothing blocks
-for (int i = 0; i < n; i++)
-  read_at(fd[i], buf[i], len, 0);
+int main(int argc, char** argv)
+{
+    int fd = open(argc > 1 ? argv[1] : "hello.txt", O_RDONLY);
+    char buf[64] = {0};
+    void* task = read_at(fd, buf, sizeof buf - 1, 0);
 
-// count every file: the first access sends the whole batch to the kernel
-// and waits for that one buffer; no submit or wait call appears anywhere
-for (int i = 0; i < n; i++)
-  if (count_words(buf[i]) != expect[i])
-    return 1;
+    putchar(buf[0]); // waits for the read
+
+    struct filc_async_result_s result = { .pending = task };
+    filc_async_wait(&result);
+    close(fd);
+    return result.state == 2;
+}
 ```
 
-Compiled normally, the first loop would block on every read in turn. Here,
-512 cold-cache reads finish about 3.5x faster than blocking `pread`.
+The call returns a task handle. The first access to `buf` waits for the read;
+there is no explicit submit or wait in the application code before that access.
 
-## Quickstart
+## Build and run
 
-On Linux x86-64 with io_uring available:
+Use Linux x86-64 with io_uring enabled. Fetch the Fil-C binary and the pinned
+source revision as described in [Getting started](wiki/Getting-Started.md).
+Then build the runtime and patched compiler:
 
 ```sh
-# Fil-C 0.685 and the source revision the compiler patches are tested on
-mkdir -p vendor
-curl -L https://github.com/pizlonator/fil-c/releases/download/v0.685/filc-0.685-linux-x86_64.tar.xz \
-  | tar -C vendor -xJ
-git clone --depth 1 --filter=blob:none --sparse -b deluge \
-  https://github.com/pizlonator/fil-c.git vendor/fil-c-src
-git -C vendor/fil-c-src sparse-checkout set clang cmake filc libpas lld llvm third-party
-git -C vendor/fil-c-src fetch --depth 1 --filter=blob:none origin d80c8bba1c58f68c33b0ed5e71113c44354f5bb8
-git -C vendor/fil-c-src checkout FETCH_HEAD
-
-./runtime/build.sh           # the framework and the io_uring runtime
-JOBS=8 ./compiler/build.sh   # the patched clang: the long step
-./tests/run.sh               # the test suite
-make demo-pragma             # the annotated-call demos
+./runtime/build.sh
+JOBS=8 ./compiler/build.sh
 ```
 
-In Docker, run with `--security-opt seccomp=unconfined`. The default seccomp
-profile blocks io_uring. Rosetta does not implement io_uring at all.
+Run the tests and an included demo:
+
+```sh
+./tests/run.sh
+make demo-pragma-hello
+```
+
+Build your own program with the patched compiler. Link every runtime named by
+your annotations before the framework and Fil-C libraries:
+
+```sh
+vendor/fil-c-src/build/bin/filcc -O2 -static \
+  -Werror=pragma-clang-attribute \
+  -Iruntime/src -Lruntime/build/lib \
+  -o app app.c -lfilc_async_uring -lpizlo -lc
+./app hello.txt
+```
+
+The `runtime=io_uring` annotation requires `-lfilc_async_uring`. A different
+runtime supplies its own descriptor and library. See [Build and link](wiki/Building-and-Linking.md)
+for the full link rules.
 
 ## Documentation
 
-The documentation lives in [`wiki/`](wiki/Home.md):
+- [Getting started](wiki/Getting-Started.md)
+- [Annotation reference](wiki/Annotation-Reference.md)
+- [Runtime API](wiki/Runtime-API.md)
+- [Framework API](wiki/Framework-API.md)
+- [Write a runtime](wiki/Writing-a-Runtime.md)
+- [Limitations](wiki/Limitations.md)
+- [Tests](wiki/Testing.md)
 
-| | |
-|---|---|
-| **Tutorial** | [Getting started](wiki/Getting-Started.md) |
-| **How-to** | [Annotate a function](wiki/Annotating-Functions.md) · [Write a runtime](wiki/Writing-a-Runtime.md) · [Build and link](wiki/Building-and-Linking.md) · [Troubleshooting](wiki/Troubleshooting.md) |
-| **Reference** | [Annotations](wiki/Annotation-Reference.md) · [Runtime API](wiki/Runtime-API.md) · [Framework API](wiki/Framework-API.md) · [io_uring runtime](wiki/io_uring-Runtime.md) · [Explicit API](wiki/Explicit-API.md) · [Tests](wiki/Testing.md) |
-| **Explanation** | [Architecture](wiki/Architecture.md) · [Demos and performance](wiki/Performance.md) · [Limitations](wiki/Limitations.md) · [Glossary](wiki/Glossary.md) |
-
-## Layout
-
-| Path | What it is |
-|---|---|
-| `compiler/` | overrides and patches for Fil-C's clang: the FilAsync pass and the access hook |
-| `runtime/` | the async framework, the runtime interface, and the io_uring runtime |
-| `demos/` | the demos (`make help`) |
-| `tests/` | the test suite (`./tests/run.sh`) |
-| `wiki/` | the documentation |
+io_uring may be blocked by a container seccomp profile. The current runtime
+also has documented limitations around multi-key dependency cycles, concurrent
+result collection, explicit token concurrency, effect-set ranges, and pending
+file-descriptor capacity.

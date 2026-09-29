@@ -12,6 +12,12 @@ can be mixed.
 Every function may be called from any thread. The lock adds safety, not
 parallelism.
 
+The request functions are protected by the ring lock, but an effect-set token
+(`fasync_tracker`) is not internally synchronized. Concurrent conflicting
+tagged calls using one tracker can overlap before either request is recorded.
+Serialize tagged calls per tracker until the token implementation provides
+its own synchronization.
+
 ## Requests
 
 ```c
@@ -58,6 +64,11 @@ first waits for the open, then uses the real fd.
 
 **Limit.** At most 64 pending handles exist at once.
 
+The current implementation checks this limit after queuing the open. When all
+64 slots are occupied, the 65th call returns `-1` with `errno == 0` while its
+request remains queued. Treat this as an implementation defect; do not assume
+that `-1` means no request was queued.
+
 ## Resolving from uninstrumented code
 
 ```c
@@ -99,8 +110,14 @@ For ordering explicit requests, there are two mechanisms:
   `fasync_tagged_pread`/`fasync_tagged_pwrite` wait for earlier tagged calls
   on the same token that conflict with their access kind.
 
+The token tracker is not safe for concurrent updates by multiple callers.
+
 This is separate from the `r_dep=`/`w_dep=` locks of annotated calls. See
 `demos/demo_async_io.c` and `demos/demo_provenance.c`.
+
+The effect-set range helper currently expands slices to the capability
+object's bounds. Disjoint slices of one object can therefore conflict, even
+though the DAG description says disjoint ranges are independent.
 
 ## Statistics
 

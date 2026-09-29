@@ -37,6 +37,13 @@ Set `out->pending` to the handle an annotated call returned.
 `out` keeps the result, but a later `poll` or `wait` with the same handle
 finds nothing and leaves `out` unchanged (`poll` returns `false`).
 
+**Verified implementation issue (2026-09-30).** The current framework does
+not serialize delivery for concurrent collectors. `filc_async_poll` drops the
+framework lock while asking the runtime to progress, so two collectors can
+both deliver the same completed task. A source-authorized probe observed one
+result delivered to two simultaneous `poll` callers. Until this is fixed, use
+one collector per handle.
+
 **Results you never collect.** You never have to collect a result. A call
 completes, and its buffers resolve, whether or not anyone waits on it.
 
