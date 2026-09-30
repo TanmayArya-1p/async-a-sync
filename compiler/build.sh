@@ -25,38 +25,32 @@ if [ ! -d "$FILC_SRC/llvm" ]; then
 fi
 
 # ---------------------------------------------------------------------
-# 1. Install our upstream overrides, idempotently.
+# 1. Put our changes into the Fil-C checkout, idempotently.
 #
-# Every file under upstream-overrides mirrors a file inside the Fil-C
-# source checkout; copy each one over the fetched checkout so the build
-# below carries them. This is how we patch generated sources (CMake
-# lists, clang BackendUtil, the FilPizlonator pass) without forking the
-# whole tree. The diff -q guard keeps repeated runs cheap and idempotent.
+# pass/ holds the FilAsync pass, our own code, which is copied into the LLVM
+# tree. patches/ holds our changes to upstream files, each a patch against the
+# pinned revision:
+#   backend-util-run-filasync.patch    runs FilAsync first in Fil-C's pipeline
+#   instrumentation-cmake-filasync.patch  builds FilAsync.cpp
+#   filpizlonator-pending-hook.patch   the pending-flag test at access sites
+#   filc-async-param-names.patch       clang records the parameter names of
+#                                      each filc_async function
+#   sroa-release-verbose.patch         Release builds omit AllocaSlices::AI,
+#                                      which SROA's verbose log still uses
 # ---------------------------------------------------------------------
-for f in $(cd "$HERE/upstream-overrides" && LC_ALL=C find . -type f); do
-  rel=${f#./}
-  dst="$FILC_SRC/$rel"
-  if diff -q "$HERE/upstream-overrides/$f" "$dst" >/dev/null 2>&1; then
-    echo "== already installed: $rel"
+install_file() {
+  dst=$FILC_SRC/$2
+  if diff -q "$1" "$dst" >/dev/null 2>&1; then
+    echo "== already installed: $2"
   else
-    echo "== installing: $rel"
+    echo "== installing: $2"
     mkdir -p "$(dirname "$dst")"
-    cp "$HERE/upstream-overrides/$f" "$dst"
+    cp "$1" "$dst"
   fi
-done
-
-# Upstream's Release build omits AllocaSlices::AI, but its verbose log still
-# refers to that field. Apply the one-line fix without rewriting other sources.
-SROA_PATCH=$HERE/upstream-patches/sroa-release-verbose.patch
-if git -C "$FILC_SRC" apply --check "$SROA_PATCH" 2>/dev/null; then
-  echo "== installing: llvm/lib/Transforms/Scalar/SROA.cpp"
-  git -C "$FILC_SRC" apply "$SROA_PATCH"
-elif git -C "$FILC_SRC" apply --reverse --check "$SROA_PATCH" 2>/dev/null; then
-  echo "== already installed: llvm/lib/Transforms/Scalar/SROA.cpp"
-else
-  echo "build.sh: SROA Release patch does not match $FILC_SRC" >&2
-  exit 1
-fi
+}
+install_file "$HERE/pass/FilAsync.cpp" llvm/lib/Transforms/Instrumentation/FilAsync.cpp
+install_file "$HERE/pass/FilAsync.h" llvm/include/llvm/Transforms/Instrumentation/FilAsync.h
+"$REPO/scripts/apply_filc_patches.sh" "$FILC_SRC" "$HERE/patches"
 
 # ---------------------------------------------------------------------
 # 2. Report the resource situation honestly before starting.
@@ -99,7 +93,8 @@ if [ ! -f "$BUILD_DIR/build.ninja" ]; then
     -DLLVM_ENABLE_ASSERTIONS=OFF
 fi
 
-# opt drives the FilAsync pass tests (compiler/dev) and `make cfg`.
+# opt drives the FilAsync pass tests (tests/compiler/opt_annotate*.sh) and
+# `make cfg`.
 echo "== building clang and opt (this is the long part)"
 ninja -C "$BUILD_DIR" -j "$JOBS" clang opt
 ln -sfn clang "$BUILD_DIR/bin/filcc"
@@ -123,7 +118,7 @@ echo "== done"
 echo "   $BUILD_DIR/bin/clang"
 echo
 echo "Use it to link against a runtime built with the io_uring extension:"
-echo "   $BUILD_DIR/bin/filcc -static -DFASYNC_COMPILER_INSERTS_CHECKS -I$REPO/runtime/src -L$REPO/runtime/build/lib ... -lfilc_async_uring -lpizlo -lc"
+echo "   $BUILD_DIR/bin/filcc -static -DFASYNC_COMPILER_INSERTS_CHECKS -I$REPO/runtime/include -L$REPO/runtime/build/lib ... -lfilc_async_uring -lpizlo -lc"
 echo
 echo "NOTE: this build itself needs the pizfix runtime from a Fil-C distribution."
 echo "See wiki/Building-and-Linking.md for the full sequence."

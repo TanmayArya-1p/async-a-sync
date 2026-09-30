@@ -9,7 +9,7 @@ meaning of every option, see the [annotation reference](Annotation-Reference.md)
 Wrap the declaration or definition in a `filc_async` annotation pragma:
 
 ```c
-#pragma clang attribute push(__attribute__((annotate("filc_async", "runtime=io_uring", "op=pread", "fd=0", "bout=1"))), apply_to=function)
+#pragma clang attribute push(__attribute__((annotate("filc_async", "runtime=io_uring", "op=pread", "bout=buf"))), apply_to=function)
 void* read_at(int fd, void* buf, size_t len, unsigned long offset);
 #pragma clang attribute pop
 ```
@@ -25,6 +25,8 @@ void* read_at(int fd, void* buf, size_t len, unsigned long offset);
   The io_uring runtime supports `pread`, `pwrite`, `openat`, `fsync` and `close`
   (see [its reference](io_uring-Runtime.md#supported-operations)). An op the
   runtime does not support aborts the program at startup.
+- **Arguments.** Options name parameters (`bout=buf`), never positions. Give
+  the parameters names in the annotated declaration, or in the definition.
 - **Warnings.** Always compile with `-Werror=pragma-clang-attribute`. A pragma
   placed around a call site instead of a function is otherwise only a warning,
   and it does nothing.
@@ -49,15 +51,16 @@ way each buffer flows:
 
 | Option | Meaning | Marked pending? |
 |---|---|---|
-| `bout=<i>` | the call writes argument *i* | yes, until the call completes |
-| `bin=<i>` | the call only reads argument *i* | no |
-| `buf=<i>` | direction unknown | yes |
+| `bout=<param>` | the call writes `<param>` | yes, until the call completes |
+| `bin=<param>` | the call only reads `<param>` | no |
+| `buf=<param>` | direction unknown | yes |
 | (no option) | an unannotated pointer argument is treated like `buf=` | yes |
 
 A pending buffer blocks the first access to it until the call completes. Mark
 inputs with `bin=` so reading them does not wait. `bin=`, `bout=` and `buf=`
-must name pointer arguments. `fd=<i>` marks a descriptor argument for the
-runtime.
+must name pointer arguments. Other arguments need no option: the runtime
+knows its own ops' signatures, such as the io_uring runtime's descriptor in
+argument 0.
 
 ## Order calls that share a resource
 
@@ -66,36 +69,36 @@ something the buffers do not show, such as a file descriptor, list what each
 call reads and writes:
 
 ```c
-#pragma clang attribute push(__attribute__((annotate("filc_async", "runtime=io_uring", "op=pwrite", "fd=0", "bin=1", "w_dep=0"))), apply_to=function)
+#pragma clang attribute push(__attribute__((annotate("filc_async", "runtime=io_uring", "op=pwrite", "bin=buf", "w_dep=fd:file"))), apply_to=function)
 void* write_at(int fd, const void* buf, size_t len, unsigned long offset);
 #pragma clang attribute pop
 
-#pragma clang attribute push(__attribute__((annotate("filc_async", "runtime=io_uring", "op=pread", "fd=0", "bout=1", "r_dep=0"))), apply_to=function)
+#pragma clang attribute push(__attribute__((annotate("filc_async", "runtime=io_uring", "op=pread", "bout=buf", "r_dep=fd:file"))), apply_to=function)
 void* read_at(int fd, void* buf, size_t len, unsigned long offset);
 #pragma clang attribute pop
 ```
 
-- **`r_dep=<i>`.** The call reads the resource named by argument *i*'s value.
-- **`w_dep=<i>`.** The call writes it.
+- **`r_dep=<param>:<namespace>`.** The call reads the resource `<param>`
+  names, in `<namespace>`.
+- **`w_dep=<param>:<namespace>`.** The call writes it.
+- **Keys.** A call's key is the argument's value together with the parameter
+  name and the namespace. An integer argument counts by its value, a pointer
+  argument by the object it points into.
 - **How calls are ordered.** Two calls whose keys match run in call order if
   either one writes, so the `read_at` above waits for an earlier `write_at` on
   the same fd. Two reads can overlap.
-- **Keys.** An integer argument is a key by value. A pointer argument is a key
-  by the object it points into.
 
-### Separate resources with a namespace
+### Name a resource the same way everywhere
 
-Equal values can mean different things. Fd 3 as "the file's data" and fd 3 as
-"the file's metadata" are two different resources. Add a `:<name>` suffix to
-keep them apart:
+Both functions above call their descriptor `fd` and use the namespace
+`file`, so their keys match. A function that calls it `handle`, or that
+uses `w_dep=fd:meta`, locks a different resource, and runs independently of
+them. That is how you keep apart things that share a value: fd 3 as "the
+file's data" (`fd:file`) and fd 3 as "the file's metadata" (`fd:meta`).
 
-```c
-"w_dep=0:meta"   // fd 3 in the "meta" namespace
-"w_dep=0"        // fd 3 in the default namespace; does not conflict with the above
-```
-
-If you list two dependency options on one argument, they must agree in mode
-and namespace.
+The namespace is required, so every dependency says what it protects. If you
+list two dependency options on one parameter, they must agree in mode and
+namespace.
 
 ## Get the result
 

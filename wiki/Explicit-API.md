@@ -1,7 +1,7 @@
 # Explicit API
 
-**Headers:** [`runtime/src/fasync.h`](../runtime/src/fasync.h),
-[`runtime/src/fasync_dep.h`](../runtime/src/fasync_dep.h)
+**Headers:** [`runtime/include/fasync.h`](../runtime/include/fasync.h),
+[`runtime/include/fasync_dep.h`](../runtime/include/fasync_dep.h)
 **Library:** `libfilc_async_uring.a`
 
 The explicit API issues io_uring requests by hand, with no annotation. It is
@@ -100,7 +100,7 @@ For ordering explicit requests, there are two mechanisms:
   on the same token that conflict with their access kind.
 
 This is separate from the `r_dep=`/`w_dep=` locks of annotated calls. See
-`demos/demo_async_io.c` and `demos/demo_provenance.c`.
+`demos/explicit/demo_async_io.c` and `demos/explicit/demo_provenance.c`.
 
 ## Statistics
 

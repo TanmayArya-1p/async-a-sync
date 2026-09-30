@@ -7,7 +7,7 @@
 | Missing `crtbegin.o`, `filc_crt.o`, or `-lyolort` | The patched driver cannot find `pizfix`. Check that `vendor/fil-c-src/pizfix` links to the distribution's `pizfix` (see [Build and link](Building-and-Linking.md#build-the-compiler)). |
 | `SROA.cpp`: `AI` undeclared in a Release build | The SROA patch was not applied. Rerun `compiler/build.sh` on the source checkout. |
 | A compiler process is killed during the Clang build | Out of memory. Lower `JOBS`; Ninja keeps finished objects. |
-| Override or patch fails to apply | The source checkout is not at the pinned revision `d80c8bba1c58`. |
+| `apply_filc_patches.sh: <patch> does not match` | The source checkout is not at the pinned revision `d80c8bba1c58`. |
 
 ## Link
 
@@ -24,6 +24,8 @@
 |---|---|
 | `FilAsync: malformed filc_async option` | An option is invalid. The line above it names the option. See [Errors](Annotation-Reference.md#errors). |
 | `FilAsync: <f> names no runtime; add runtime=<name>` | Every annotation needs `runtime=`, for example `"runtime=io_uring"`. |
+| `FilAsync: '<opt>' on <f> names no parameter` | Options name parameters, not positions: write `bout=buf`, not `bout=1`. If the parameter does exist, the compiler was built without `filc-async-param-names.patch`; rerun `compiler/build.sh`. |
+| `FilAsync: '<opt>' on <f> needs a namespace` | Dependencies need one: `r_dep=fd:file`, not `r_dep=fd`. |
 | `FilAsync: call to <f> returns i32 but the stub returns ptr; call left in place` | The annotated function returns a scalar. Make it return `void*` or `void`. |
 | `FilAsync: call to <f> is not a plain call matching its prototype` | The call goes through a different prototype or is an `invoke`. It stays a synchronous call. |
 | Warning (or error with `-Werror=pragma-clang-attribute`) about an unused attribute | The pragma surrounds a call, not a function declaration. Move it to the declaration. |
@@ -36,6 +38,7 @@
 | `io_uring_setup: Operation not permitted` | The environment blocks io_uring. In Docker, use `--security-opt seccomp=unconfined`. Rosetta does not support io_uring at all. |
 | An annotated read returns `-75` (`EOVERFLOW`) without reaching the kernel | Staged arguments were read with an 8-byte stride. Each cell is 16 bytes (see [Staged arguments](Runtime-API.md#staged-arguments)). |
 | A buffer passed to `memcmp`/`strlen`/`write` holds stale data | Fil-C's libc is not instrumented. Touch the buffer, wait on the call, or call `fasync_resolve_pending` first. |
+| Two calls that should be ordered run together | Their dependency options name different resources. A key is the value, the parameter name and the namespace: `r_dep=fd:file` and `w_dep=file:file` do not match. Use the same parameter name and namespace for one resource everywhere. |
 | The body of an annotated function never runs | The call was not rewritten (see Compile above), or your runtime does not run bodies. |
 | A program hangs with a custom runtime | The runtime does not make progress when polled with `FILC_ASYNC_POLL_BLOCK`, or holds a lock across `filc_async_run`. See [Rules for runtimes](Runtime-API.md#rules-for-runtimes). |
 

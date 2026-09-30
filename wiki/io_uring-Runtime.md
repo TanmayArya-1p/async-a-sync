@@ -1,7 +1,7 @@
 # The io_uring runtime
 
-**Source:** [`runtime/src/filc_async_uring.c`](../runtime/src/filc_async_uring.c),
-on top of the request layer in `runtime/src/fasync*.c`
+**Source:** [`runtime/io_uring/filc_async_uring.c`](../runtime/io_uring/filc_async_uring.c),
+on top of the request layer in `runtime/io_uring/fasync*.c`
 **Library:** `runtime/build/lib/libfilc_async_uring.a`
 
 This is the runtime shipped with the repository, `runtime=io_uring`. It turns
@@ -13,20 +13,21 @@ through how it implements each runtime function.
 
 | `op=` | Required signature (kinds) | io_uring request | Result |
 |---|---|---|---|
-| `pread` | `(fd=, bout= or buf=, len, offset)` | `IORING_OP_READ` | bytes read or `-errno` |
-| `pwrite` | `(fd=, bin= or buf=, len, offset)` | `IORING_OP_WRITE` | bytes written or `-errno` |
-| `openat` | `(fd=, bin= or buf= path, flags, mode)` | `IORING_OP_OPENAT` | the new fd or `-errno` |
-| `fsync` | `(fd=)` | `IORING_OP_FSYNC` | 0 or `-errno` |
-| `close` | `(fd=)` | `IORING_OP_CLOSE` | 0 or `-errno` |
+| `pread` | `(fd, bout= or buf=, len, offset)` | `IORING_OP_READ` | bytes read or `-errno` |
+| `pwrite` | `(fd, bin= or buf=, len, offset)` | `IORING_OP_WRITE` | bytes written or `-errno` |
+| `openat` | `(dirfd, bin= or buf= path, flags, mode)` | `IORING_OP_OPENAT` | the new fd or `-errno` |
+| `fsync` | `(fd)` | `IORING_OP_FSYNC` | 0 or `-errno` |
+| `close` | `(fd)` | `IORING_OP_CLOSE` | 0 or `-errno` |
 | `ignore` | anything | none | `-EOPNOTSUPP` when polled; for tests only |
 
-- **Arguments.** They follow the syscall's order. `len` and `offset` must be
-  unannotated integers. A `len` above `UINT_MAX` completes with `-EOVERFLOW`.
+- **Arguments.** They follow the syscall's order. The descriptor comes first,
+  and it, `len` and `offset` must be unannotated integers: the runtime finds
+  the descriptor by its position. A `len` above `UINT_MAX` completes with `-EOVERFLOW`.
   `read` and `write` are not supported because they have no offset.
 - **Example declaration:**
 
   ```c
-  #pragma clang attribute push(__attribute__((annotate("filc_async", "runtime=io_uring", "op=pwrite", "fd=0", "bin=1", "w_dep=0"))), apply_to=function)
+  #pragma clang attribute push(__attribute__((annotate("filc_async", "runtime=io_uring", "op=pwrite", "bin=buf", "w_dep=fd:file"))), apply_to=function)
   void* async_pwrite(int fd, const void* buf, size_t len, unsigned long offset);
   #pragma clang attribute pop
   ```
@@ -103,8 +104,8 @@ case URING_OP_READ:
            m->args[3].kind == FILC_ASYNC_ARG_IGNORED;
 ```
 
-Argument 0 must be `fd=`, and at least one buffer or fd option must be
-present. An unknown op or a wrong shape aborts the program before `main`.
+Argument 0, the descriptor, must be an unannotated integer. An unknown op or
+a wrong shape aborts the program before `main`.
 
 ### Submit
 
@@ -185,7 +186,7 @@ free request slots. When the table is full, the request layer fails with
 - stop at the first call still running;
 - if no call could be finished, send the queue and wait for the oldest.
 
-The new request then takes a freed slot. `tests/t_pragma_lazy_many.c` issues
+The new request then takes a freed slot. `tests/io_uring/t_pragma_lazy_many.c` issues
 more calls than the table holds.
 
 ### Locking

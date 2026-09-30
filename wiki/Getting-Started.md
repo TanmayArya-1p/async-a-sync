@@ -49,7 +49,7 @@ git -C vendor/fil-c-src checkout FETCH_HEAD
 ## 2. Build
 
 ```sh
-./runtime/build.sh           # the framework and the io_uring runtime
+./runtime/build.sh           # the framework and the runtimes
 JOBS=8 ./compiler/build.sh   # the patched clang: the long step
 ```
 
@@ -83,7 +83,7 @@ Save this as `first.c`:
 
 #include "filc_async.h"
 
-#pragma clang attribute push(__attribute__((annotate("filc_async", "runtime=io_uring", "op=pread", "fd=0", "bout=1"))), apply_to=function)
+#pragma clang attribute push(__attribute__((annotate("filc_async", "runtime=io_uring", "op=pread", "bout=buf"))), apply_to=function)
 void* read_at(int fd, void* buf, size_t len, unsigned long offset);
 #pragma clang attribute pop
 
@@ -114,20 +114,20 @@ int main(int argc, char** argv)
 }
 ```
 
-The pragma tells the compiler four things:
+The pragma tells the compiler three things:
 
 - calls to `read_at` run on the io_uring runtime (`runtime=io_uring`), which
   the link line brings in with `-lfilc_async_uring`;
 - `read_at` stands for `pread` (`op=pread`);
-- argument 0 is a file descriptor (`fd=0`);
-- argument 1 is a buffer the call fills (`bout=1`).
+- `buf` is a buffer the call fills (`bout=buf`). Options name parameters,
+  not positions.
 
 Build and run it:
 
 ```sh
 echo hello > hello.txt
 vendor/fil-c-src/build/bin/filcc -O2 -static -Werror=pragma-clang-attribute \
-  -Iruntime/src -Lruntime/build/lib -o first first.c \
+  -Iruntime/include -Lruntime/build/lib -o first first.c \
   -lfilc_async_uring -lpizlo -lc
 ./first hello.txt
 ```

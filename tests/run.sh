@@ -38,14 +38,15 @@ skip() {
   SKIPPED=$((SKIPPED + 1))
 }
 
-# run_check <script>: a host-side check script, counted like any test. Exit
-# status 77 means a prerequisite is missing (it says which), so it is skipped.
+# run_check <group>/<script>: a host-side check script, counted like any
+# test. Exit status 77 means a prerequisite is missing (it says which), so it
+# is skipped.
 run_check() {
-  name=$1
+  name=$(basename "$1")
   echo
   echo "### $name (host check)"
   status=0
-  "$HERE/$name.sh" || status=$?
+  "$HERE/$1.sh" || status=$?
   if [ "$status" -eq 0 ]; then
     PASSED=$((PASSED + 1))
   elif [ "$status" -eq 77 ]; then
@@ -56,16 +57,17 @@ run_check() {
   fi
 }
 
-run_check check_forwarders
-run_check check_dependencies
-run_check check_dependency_options
-run_check check_callsite_pragma
+run_check io_uring/check_forwarders
+run_check framework/check_dependencies
+run_check compiler/check_dependency_options
+run_check compiler/check_callsite_pragma
 
 # Most of the suite submits real requests, so it needs a working io_uring.
 # Without one those tests are skipped, not failed, so the ones that can run
-# still say something. See tests/probe_io_uring.c for why it goes missing.
+# still say something. See tests/probes/probe_io_uring.c for why it goes
+# missing.
 IO_URING=0
-if "$HOST_CC" -O2 -o "$OUT/probe_io_uring" "$HERE/probe_io_uring.c" &&
+if "$HOST_CC" -O2 -o "$OUT/probe_io_uring" "$HERE/probes/probe_io_uring.c" &&
    "$OUT/probe_io_uring"; then
   IO_URING=1
 else
@@ -86,13 +88,14 @@ needs_io_uring() {
 }
 
 run_filc_test() {
-  name=$1
+  src=$HERE/$1.c
+  name=$(basename "$1")
   shift
   echo
   echo "### $name (Fil-C)"
   # shellcheck disable=SC2086
-  if "$FILCC" -O2 -static $WARN -I"$REPO/runtime/src" -L"$REPO/runtime/build/lib" \
-       -o "$OUT/$name" "$HERE/$name.c" -lfilc_async_uring -lpizlo -lc; then
+  if "$FILCC" -O2 -static $WARN -I"$REPO/runtime/include" -L"$REPO/runtime/build/lib" \
+       -o "$OUT/$name" "$src" -lfilc_async_uring -lpizlo -lc; then
     if "$OUT/$name" "$@"; then
       PASSED=$((PASSED + 1))
     else
@@ -106,11 +109,12 @@ run_filc_test() {
 }
 
 run_host_test() {
-  name=$1
+  src=$HERE/$1.c
+  name=$(basename "$1")
   echo
   echo "### $name (plain C)"
   # shellcheck disable=SC2086
-  if "$HOST_CC" -O2 $WARN -o "$OUT/$name" "$HERE/$name.c"; then
+  if "$HOST_CC" -O2 $WARN -o "$OUT/$name" "$src"; then
     if "$OUT/$name"; then
       PASSED=$((PASSED + 1))
     else
@@ -126,11 +130,12 @@ run_host_test() {
 # Same, but a probe that needs threads to measure device parallelism. It takes the
 # directory to put its payload in, for the same real-filesystem reason as above.
 run_host_test_pthread() {
-  name=$1
+  src=$HERE/$1.c
+  name=$(basename "$1")
   echo
   echo "### $name (plain C, pthreads)"
   # shellcheck disable=SC2086
-  if "$HOST_CC" -O2 $WARN -pthread -o "$OUT/$name" "$HERE/$name.c"; then
+  if "$HOST_CC" -O2 $WARN -pthread -o "$OUT/$name" "$src"; then
     if "$OUT/$name" "$OUT"; then
       PASSED=$((PASSED + 1))
     else
@@ -143,23 +148,23 @@ run_host_test_pthread() {
   fi
 }
 
-run_host_test stage2b_mmap_probe
-needs_io_uring run_host_test stage6b_fd_chain_probe
-run_filc_test stage2c_gc_pin_probe
-needs_io_uring run_filc_test stage2_lazy_resolution
-needs_io_uring run_filc_test stage2_lazy_submit
-needs_io_uring run_filc_test stage_token_ordering
-needs_io_uring run_filc_test stage3_dependency
-needs_io_uring run_filc_test stage5_trackers
-needs_io_uring run_filc_test stage6_fd_provenance
-needs_io_uring run_filc_test stage7_throughput
-run_filc_test t_pending_registry
-run_filc_test t_dag_submit_failure
+run_host_test probes/stage2b_mmap_probe
+needs_io_uring run_host_test probes/stage6b_fd_chain_probe
+run_filc_test probes/stage2c_gc_pin_probe
+needs_io_uring run_filc_test io_uring/stage2_lazy_resolution
+needs_io_uring run_filc_test io_uring/stage2_lazy_submit
+needs_io_uring run_filc_test io_uring/stage_token_ordering
+needs_io_uring run_filc_test io_uring/stage3_dependency
+needs_io_uring run_filc_test io_uring/stage5_trackers
+needs_io_uring run_filc_test io_uring/stage6_fd_provenance
+needs_io_uring run_filc_test io_uring/stage7_throughput
+run_filc_test framework/t_pending_registry
+run_filc_test io_uring/t_dag_submit_failure
 # Allocator interface only (no annotations), so the stock filcc builds it.
-run_filc_test t_pragma_alloc
-needs_io_uring run_filc_test t_backend_io_uring "$OUT"
-needs_io_uring run_filc_test t_pending_open_failure "$OUT"
-needs_io_uring run_filc_test t_openat_pending_path "$OUT"
+run_filc_test framework/t_pragma_alloc
+needs_io_uring run_filc_test io_uring/t_backend_io_uring "$OUT"
+needs_io_uring run_filc_test io_uring/t_pending_open_failure "$OUT"
+needs_io_uring run_filc_test io_uring/t_openat_pending_path "$OUT"
 
 # stage4, stage8, demo_plain_io and demo_wordcount all need the *patched*
 # compiler, because what they demonstrate is the hook it inserts. Built with the
@@ -195,7 +200,7 @@ run_patched() {
   if "$PATCHED_CC" -O2 -static $WARN -Werror=pragma-clang-attribute \
        -DFASYNC_COMPILER_INSERTS_CHECKS \
        $RUN_PATCHED_FLAGS \
-       -I"$REPO/runtime/src" -L"$REPO/runtime/build/lib" \
+       -I"$REPO/runtime/include" -L"$REPO/runtime/build/lib" \
        -o "$OUT/$name" "$src" -lfilc_async_uring -lpizlo -lc; then
     if "$OUT/$name" "$@"; then
       PASSED=$((PASSED + 1))
@@ -220,11 +225,11 @@ run_patched_linked() {
   # shellcheck disable=SC2086
   if "$PATCHED_CC" -O2 -static $WARN -Werror=pragma-clang-attribute \
        -DFASYNC_COMPILER_INSERTS_CHECKS "$@" \
-       -I"$REPO/runtime/src" -L"$REPO/runtime/build/lib" \
+       -I"$REPO/runtime/include" -L"$REPO/runtime/build/lib" \
        -o "$OUT/$name" \
-       "$HERE/t_linked_async_main.c" "$HERE/t_linked_async_def.c" \
+       "$HERE/io_uring/t_linked_async_main.c" "$HERE/io_uring/t_linked_async_def.c" \
        -lfilc_async_uring -lpizlo -lc; then
-    if "$HERE/check_linkage.sh" "$REPO/runtime/build/lib" \
+    if "$HERE/io_uring/check_linkage.sh" "$REPO/runtime/build/lib" \
          "$OUT/$name" && "$OUT/$name" "$OUT"; then
       PASSED=$((PASSED + 1))
     else
@@ -237,9 +242,9 @@ run_patched_linked() {
   fi
 }
 
-# run_mock_runtime: builds t_mock_runtime with tests/mock_runtime.c as its
-# runtime and without the io_uring runtime library, checks that no io_uring
-# runtime symbol reached the binary, then runs it.
+# run_mock_runtime: builds t_mock_runtime with tests/support/mock_runtime.c
+# as its runtime and without the io_uring runtime library, checks that no
+# io_uring runtime symbol reached the binary, then runs it.
 run_mock_runtime() {
   name=t_mock_runtime
   echo
@@ -247,8 +252,9 @@ run_mock_runtime() {
   # shellcheck disable=SC2086
   if "$PATCHED_CC" -O2 -static $WARN -Werror=pragma-clang-attribute \
        -DFASYNC_COMPILER_INSERTS_CHECKS \
-       -I"$REPO/runtime/src" -L"$REPO/runtime/build/lib" \
-       -o "$OUT/$name" "$HERE/$name.c" "$HERE/mock_runtime.c" -lpizlo -lc; then
+       -I"$REPO/runtime/include" -L"$REPO/runtime/build/lib" \
+       -o "$OUT/$name" "$HERE/framework/$name.c" "$HERE/support/mock_runtime.c" \
+       -lpizlo -lc; then
     if nm "$OUT/$name" | grep -Eq "(fasync_(pread|submit|result)|filc_async_uring)"; then
       echo "!!! $name linked parts of the io_uring runtime"
       FAILED=$((FAILED + 1))
@@ -265,8 +271,8 @@ run_mock_runtime() {
 }
 
 # run_two_runtimes: builds t_two_runtimes with both the io_uring runtime and
-# tests/mock_runtime.c, checks that both descriptors reached the binary, then
-# runs it.
+# tests/support/mock_runtime.c, checks that both descriptors reached the
+# binary, then runs it.
 run_two_runtimes() {
   name=t_two_runtimes
   echo
@@ -274,8 +280,8 @@ run_two_runtimes() {
   # shellcheck disable=SC2086
   if "$PATCHED_CC" -O2 -static $WARN -Werror=pragma-clang-attribute \
        -DFASYNC_COMPILER_INSERTS_CHECKS \
-       -I"$REPO/runtime/src" -L"$REPO/runtime/build/lib" \
-       -o "$OUT/$name" "$HERE/$name.c" "$HERE/mock_runtime.c" \
+       -I"$REPO/runtime/include" -L"$REPO/runtime/build/lib" \
+       -o "$OUT/$name" "$HERE/framework/$name.c" "$HERE/support/mock_runtime.c" \
        -lfilc_async_uring -lpizlo -lc; then
     if ! nm "$OUT/$name" | grep -q 'filc_async_runtime_io_uring$' ||
        ! nm "$OUT/$name" | grep -q 'filc_async_runtime_mock$'; then
@@ -301,14 +307,27 @@ run_unlinked_runtime() {
   echo "### $name (patched compiler, expects a link failure)"
   # shellcheck disable=SC2086
   if err_out=$("$PATCHED_CC" -O2 -static $WARN -Werror=pragma-clang-attribute \
-       -I"$REPO/runtime/src" -L"$REPO/runtime/build/lib" \
-       -o "$OUT/$name" "$HERE/$name.c" -lfilc_async_uring -lpizlo -lc 2>&1); then
+       -I"$REPO/runtime/include" -L"$REPO/runtime/build/lib" \
+       -o "$OUT/$name" "$HERE/framework/$name.c" -lfilc_async_uring -lpizlo -lc 2>&1); then
     echo "!!! $name linked without the runtime it names"
     FAILED=$((FAILED + 1))
   elif echo "$err_out" | grep -q 'undefined.*filc_async_runtime_nosuch'; then
     PASSED=$((PASSED + 1))
   else
     echo "!!! $name failed for another reason: $(echo "$err_out" | head -1)"
+    FAILED=$((FAILED + 1))
+  fi
+}
+
+# run_rpc_demo <name>: builds and runs demos/rpc/demo_rpc_<name>.c against
+# the rpc demos' server (demos/rpc/run_rpc_demo.sh).
+run_rpc_demo() {
+  echo
+  echo "### demo_rpc_$1 (run_rpc_demo.sh $1)"
+  if PATCHED_CC="$PATCHED_CC" "$REPO/demos/rpc/run_rpc_demo.sh" "$1" "$OUT"; then
+    PASSED=$((PASSED + 1))
+  else
+    echo "!!! run_rpc_demo.sh $1 exited non-zero"
     FAILED=$((FAILED + 1))
   fi
 }
@@ -326,7 +345,7 @@ run_patched_neg() {
   if "$PATCHED_CC" -O2 -static $WARN -Werror=pragma-clang-attribute \
        -DFASYNC_COMPILER_INSERTS_CHECKS \
        $RUN_PATCHED_FLAGS \
-       -I"$REPO/runtime/src" -L"$REPO/runtime/build/lib" \
+       -I"$REPO/runtime/include" -L"$REPO/runtime/build/lib" \
        -o "$OUT/$name" "$src" -lfilc_async_uring -lpizlo -lc; then
     if err_out=$("$OUT/$name" 2>&1); then
       echo "!!! $name exited 0; runtime should have rejected the op"
@@ -348,50 +367,54 @@ run_patched_neg() {
 # trip, and /tmp is usually tmpfs. Both programs detect the no-latency case and
 # say so rather than quoting a ratio they cannot support.
 if [ "$PATCHED_READY" -eq 1 ]; then
-  needs_io_uring run_patched stage4_compiler_hook "$HERE/stage4_compiler_hook.c"
-  needs_io_uring run_patched stage8_latency "$HERE/stage8_latency.c" "$OUT"
+  needs_io_uring run_patched stage4_compiler_hook "$HERE/compiler/stage4_compiler_hook.c"
+  needs_io_uring run_patched stage8_latency "$HERE/io_uring/stage8_latency.c" "$OUT"
   RUN_PATCHED_FLAGS="-DFASYNC_IMPLICIT" needs_io_uring run_patched \
-    demo_plain_io "$REPO/demos/demo_plain_io.c" "$OUT"
+    demo_plain_io "$REPO/demos/explicit/demo_plain_io.c" "$OUT"
   RUN_PATCHED_FLAGS="-DFASYNC_IMPLICIT" needs_io_uring run_patched \
-    demo_async_io "$REPO/demos/demo_async_io.c" "$OUT"
+    demo_async_io "$REPO/demos/explicit/demo_async_io.c" "$OUT"
   RUN_PATCHED_FLAGS="-DFASYNC_IMPLICIT" needs_io_uring run_patched \
-    demo_provenance "$REPO/demos/demo_provenance.c" "$OUT"
+    demo_provenance "$REPO/demos/explicit/demo_provenance.c" "$OUT"
   RUN_PATCHED_FLAGS="-DFASYNC_IMPLICIT" needs_io_uring run_patched \
-    demo_wordcount "$REPO/demos/demo_wordcount.c" "$OUT"
+    demo_wordcount "$REPO/demos/wordcount/demo_wordcount.c" "$OUT"
 
   # The pragma-async interface tests: the patched compiler rewrites their
   # annotated call sites into filc_async_submit.
-  run_patched t_pragma_ignore "$HERE/t_pragma_ignore.c"
-  run_patched t_pragma_markpending "$HERE/t_pragma_markpending.c"
-  needs_io_uring run_patched t_pragma_many_calls "$HERE/t_pragma_many_calls.c"
+  run_patched t_pragma_ignore "$HERE/framework/t_pragma_ignore.c"
+  run_patched t_pragma_markpending "$HERE/framework/t_pragma_markpending.c"
+  needs_io_uring run_patched t_pragma_many_calls "$HERE/io_uring/t_pragma_many_calls.c"
   needs_io_uring run_patched_linked t_linked_async
   needs_io_uring run_patched_linked t_linked_async_annotated_def \
     -DLINKED_ANNOTATE_DEF
-  needs_io_uring run_patched t_pragma_io_uring "$HERE/t_pragma_io_uring.c" "$OUT"
-  needs_io_uring run_patched t_pragma_dependencies "$HERE/t_pragma_dependencies.c" "$OUT"
-  needs_io_uring run_patched t_pragma_same_tu_lazy "$HERE/t_pragma_same_tu_lazy.c" "$OUT"
-  needs_io_uring run_patched t_pragma_lazy_many "$HERE/t_pragma_lazy_many.c" "$OUT"
-  needs_io_uring run_patched t_pragma_reuse_lazy "$HERE/t_pragma_reuse_lazy.c" "$OUT"
-  needs_io_uring run_patched t_pragma_error_path "$HERE/t_pragma_error_path.c" "$OUT"
-  needs_io_uring run_patched t_pragma_repeat_read "$HERE/t_pragma_repeat_read.c" "$OUT"
-  needs_io_uring run_patched t_thread_compute "$HERE/t_thread_compute.c" "$OUT"
-  needs_io_uring run_patched t_threads "$HERE/t_threads.c" "$OUT"
+  needs_io_uring run_patched t_pragma_io_uring "$HERE/io_uring/t_pragma_io_uring.c" "$OUT"
+  needs_io_uring run_patched t_pragma_dependencies "$HERE/io_uring/t_pragma_dependencies.c" "$OUT"
+  needs_io_uring run_patched t_param_names "$HERE/compiler/t_param_names.c" "$OUT"
+  needs_io_uring run_patched t_pragma_same_tu_lazy "$HERE/compiler/t_pragma_same_tu_lazy.c" "$OUT"
+  needs_io_uring run_patched t_pragma_lazy_many "$HERE/io_uring/t_pragma_lazy_many.c" "$OUT"
+  needs_io_uring run_patched t_pragma_reuse_lazy "$HERE/io_uring/t_pragma_reuse_lazy.c" "$OUT"
+  needs_io_uring run_patched t_pragma_error_path "$HERE/io_uring/t_pragma_error_path.c" "$OUT"
+  needs_io_uring run_patched t_pragma_repeat_read "$HERE/compiler/t_pragma_repeat_read.c" "$OUT"
+  needs_io_uring run_patched t_thread_compute "$HERE/framework/t_thread_compute.c" "$OUT"
+  needs_io_uring run_patched t_threads "$HERE/io_uring/t_threads.c" "$OUT"
   run_mock_runtime
   needs_io_uring run_two_runtimes
   run_unlinked_runtime
+  # runtime=rpc (runtime/rpc), which sends annotated calls to the rpc demos'
+  # loopback TCP server: alone (counter), and next to io_uring (upload).
+  run_rpc_demo counter
+  needs_io_uring run_rpc_demo upload
   # Negative control: an unknown op= is accepted by the pass and rejected by
   # the runtime's startup validator (the runtime is the authority).
-  run_patched_neg t_pragma_unknownop "$HERE/t_pragma_unknownop.c"
-  run_patched t_pragma_custom_validator "$HERE/t_pragma_custom_validator.c"
+  run_patched_neg t_pragma_unknownop "$HERE/framework/t_pragma_unknownop.c"
+  run_patched t_pragma_custom_validator "$HERE/framework/t_pragma_custom_validator.c"
 
-  # The two-backend comparison, as a standalone script: the same word-count
-  # source built one way with plain Fil-C and one way with the patched
-  # compiler + io_uring, run on a real filesystem, and reported as two
-  # timings plus a ratio.
+  # The same word-count source built blocking (C, plain Fil-C) and implicit
+  # (patched compiler + io_uring), run on a real filesystem: timings, ratios,
+  # and a check that every build counts the same words.
   if [ "$IO_URING" -eq 1 ]; then
     echo
-    echo "### wordcount: the same code, sync and implicit (run_wordcount.sh)"
-    if "$REPO/demos/run_wordcount.sh" "$OUT"; then
+    echo "### wordcount: the same code, blocking and implicit (run_wordcount.sh)"
+    if "$REPO/demos/wordcount/run_wordcount.sh" "$OUT"; then
       PASSED=$((PASSED + 1))
     else
       echo "!!! run_wordcount.sh exited non-zero"
@@ -407,7 +430,7 @@ if [ "$PATCHED_READY" -eq 1 ]; then
     for script in opt_annotate opt_annotate_test; do
       echo
       echo "### $script.sh (FilAsync pass under opt)"
-      if "$REPO/compiler/dev/$script.sh"; then
+      if "$HERE/compiler/$script.sh"; then
         PASSED=$((PASSED + 1))
       else
         echo "!!! $script.sh exited non-zero"
@@ -415,7 +438,7 @@ if [ "$PATCHED_READY" -eq 1 ]; then
       fi
     done
   else
-    skip "compiler/dev pass tests" "opt not built; run ./compiler/build.sh"
+    skip "opt_annotate pass tests" "opt not built; run ./compiler/build.sh"
   fi
 else
   skip "stage4, stage8, the demos, the t_pragma_* and FilAsync pass tests" \
@@ -424,7 +447,7 @@ fi
 
 # Not a runtime test: it measures how much parallelism the device underneath these
 # benchmarks can actually sustain, so their numbers can be read against it.
-run_host_test_pthread stage9_device_parallelism
+run_host_test_pthread probes/stage9_device_parallelism
 
 echo
 echo "==============================================="

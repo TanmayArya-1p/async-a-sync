@@ -14,7 +14,7 @@ Run `make help` for the full list.
 
 Each demo prints a table, a `=>` result line, and `DEMO OK` when its checks
 pass. A demo's source holds only the code it demonstrates. Setup, timing and
-checks are in `demos/pragma_report.hh`.
+checks are in `demos/pragma/pragma_report.hh`.
 
 | Demo | Shows |
 |---|---|
@@ -24,6 +24,17 @@ checks are in `demos/pragma_report.hh`.
 | `coldread` | the same loop calling `pread` and an annotated `async_pread` over 512 cold files, next to hand-written `fasync_*` |
 | `scaling` | that comparison for 1 to 2048 files, with the time spent inside each annotated call |
 | `overlap` | reading and hashing 256 files, with the reads and the hashing also timed alone |
+
+### The rpc runtime (`make demo-rpc`)
+
+Both demos send calls to a loopback TCP server through `runtime=rpc`
+(`runtime/rpc/`). See
+[The RPC runtime example](RPC-Runtime.md).
+
+| Demo | Shows |
+|---|---|
+| `counter` | `step` and `get` calls on `runtime=rpc` alone. Each reply lands in a `bout=` value, and reading the value is the only wait. Two `get` calls are in flight together and only the `step` and the `get` after it wait for a lock: four 50 ms calls finish in about 150 ms instead of 200 |
+| `upload` | two runtimes in one loop: each file is read with io_uring and its buffer uploaded over rpc. Each upload waits for its own read, the reads still reach the kernel in one submit, and the server's checksums match the files |
 
 ### Explicit API (`make all-demos`)
 
@@ -50,18 +61,22 @@ an access, next to GCC's plain load.
 At 2048 files, the gain in `scaling` is lower and varies more between runs:
 calls wait for room in the 1024-entry request table.
 
-### Word count (`demos/run_wordcount.sh`)
+### Word count (`demos/wordcount/run_wordcount.sh`)
 
-One synchronous-looking program, built blocking and implicit, over 512 files
-with the page cache dropped:
+One synchronous-looking program, built three ways, over 512 files with the
+page cache dropped. The script also checks that every build counts the same
+words. `make demo-wordcount` and `tests/run.sh` both run it.
 
 ```text
-  sync        25.34 ms  (338154 words)
-  implicit    13.80 ms  (338154 words)
-  implicit finish in 1.84x the time
+  C                  25.93 ms  (338154 words)
+  Fil-C blocking     30.62 ms  (338154 words)
+  Fil-C implicit      9.87 ms  (338154 words)
+
+  C time / Fil-C implicit time: 2.63x
+  Fil-C blocking time / Fil-C implicit time: 3.10x
 ```
 
-### Throughput regime (`tests/stage7_throughput.c`)
+### Throughput regime (`tests/io_uring/stage7_throughput.c`)
 
 20,000 reads of 64 bytes from a warm page cache. Blocking code pays one
 kernel entry per read. The implicit program pays 1302 for all 20,000: it
@@ -73,7 +88,7 @@ submits 200 per batch and polls the completion ring in userspace.
   entries saved: 15.4x         observed wall clock: 1.10x
 ```
 
-### Latency regime (`tests/stage8_latency.c`)
+### Latency regime (`tests/io_uring/stage8_latency.c`)
 
 512 files of 4 KiB, with the page cache dropped before each pass. Three
 versions read the same bytes:
@@ -103,4 +118,4 @@ eagerly:
 - **The device is not saturated.** The implicit path reaches about 52 kIOPS,
   where plain threads sustain about 184 kIOPS. The gap comes from io_uring's
   `io-wq` worker ceiling, which has to be tuned per workload
-  (`tests/stage9_device_parallelism.c`).
+  (`tests/probes/stage9_device_parallelism.c`).

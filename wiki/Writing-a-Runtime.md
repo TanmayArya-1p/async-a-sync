@@ -21,7 +21,7 @@ reference.
 A runtime is three functions and a descriptor that names them. This one, the
 `mock` runtime, runs every call's body synchronously during submit and
 completes the call right away. It is
-[`tests/mock_runtime.c`](../tests/mock_runtime.c):
+[`tests/support/mock_runtime.c`](../tests/support/mock_runtime.c):
 
 ```c
 #include "filc_async_runtime.h"
@@ -54,7 +54,7 @@ FILC_ASYNC_RUNTIME(mock, mock_submit, mock_poll, mock_validate);
 functions annotated with `runtime=mock` point to:
 
 ```c
-#pragma clang attribute push(__attribute__((annotate("filc_async", "runtime=mock", "op=double", "bout=0", "bin=1"))), apply_to=function)
+#pragma clang attribute push(__attribute__((annotate("filc_async", "runtime=mock", "op=double", "bout=out", "bin=in"))), apply_to=function)
 void* double_into(long* out, const long* in);
 #pragma clang attribute pop
 ```
@@ -202,8 +202,8 @@ static bool my_validate(const filc_async_meta* meta)
 ```
 
 Check argument shapes here too. `meta->args[i].kind` says what each argument
-was annotated as (`FILC_ASYNC_ARG_FD`, `_BUFFER_IN`, `_BUFFER_OUT`,
-`_PENDING`, `_IGNORED`). Calls to functions that fail validation never
+was annotated as (`FILC_ASYNC_ARG_BUFFER_IN`, `_BUFFER_OUT`, `_PENDING`,
+`_IGNORED`). Calls to functions that fail validation never
 start: the program aborts before `main`. The io_uring runtime's
 [`shape_ok`](io_uring-Runtime.md#validation) is an example.
 
@@ -237,12 +237,12 @@ runtime the program's annotations name:
 ```sh
 # only your runtime
 vendor/fil-c-src/build/bin/filcc -O2 -static -Werror=pragma-clang-attribute \
-  -Iruntime/src -Lruntime/build/lib \
+  -Iruntime/include -Lruntime/build/lib \
   -o app app.c my_runtime.c -lpizlo -lc
 
 # your runtime and the io_uring runtime in one program
 vendor/fil-c-src/build/bin/filcc -O2 -static -Werror=pragma-clang-attribute \
-  -Iruntime/src -Lruntime/build/lib \
+  -Iruntime/include -Lruntime/build/lib \
   -o app app.c my_runtime.c -lfilc_async_uring -lpizlo -lc
 ```
 
@@ -263,16 +263,20 @@ invariants:
 - **Dependencies hold.** Two calls with a `w_dep=` on the same value run in
   call order: the second call's stub waits, polling the first with `BLOCK`.
 - **Threads work.** Calls from several threads touching each other's buffers
-  finish. `tests/t_threads.c` exercises this.
+  finish. `tests/io_uring/t_threads.c` exercises this.
 
-`tests/t_mock_runtime.c` shows the shape of such a test, and `tests/run.sh`
-builds it with `tests/mock_runtime.c` and checks that no io_uring symbol was
-linked. `tests/t_two_runtimes.c` links the mock runtime with the io_uring
-runtime and orders calls across them.
+`tests/framework/t_mock_runtime.c` shows the shape of such a test, and `tests/run.sh`
+builds it with `tests/support/mock_runtime.c` and checks that no io_uring symbol was
+linked. `tests/framework/t_two_runtimes.c` links the mock runtime with the io_uring
+runtime and orders calls across them. `demos/rpc/demo_rpc_upload.c` does the
+same with a runtime that talks to a server: its uploads wait for io_uring
+reads (`make demo-rpc-upload`).
 
 ## See also
 
 - [Runtime API](Runtime-API.md): the full contract.
 - [The io_uring runtime](io_uring-Runtime.md): a runtime that turns calls into
   kernel requests, batches them, and reclaims request slots.
+- [The RPC runtime example](RPC-Runtime.md): a runtime that sends calls to a
+  TCP server and returns its replies as results.
 - [Architecture](Architecture.md): where the stub, framework and runtime meet.

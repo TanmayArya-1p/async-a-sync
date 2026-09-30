@@ -9,7 +9,7 @@ FILC_ROOT ?= $(REPO_DIR)/vendor/filc-0.685-linux-x86_64
 FILCC ?= $(FILC_ROOT)/build/bin/filcc
 PATCHED_CC ?= $(REPO_DIR)/vendor/fil-c-src/build/bin/filcc
 
-.PHONY: all help runtime demo-wordcount demo-plain demo-async demo-provenance all-demos demo-pragma disasm cfg clean
+.PHONY: all help runtime demo-wordcount demo-plain demo-async demo-provenance all-demos demo-pragma demo-rpc demo-rpc-counter demo-rpc-upload disasm cfg clean
 
 all: help
 
@@ -28,6 +28,9 @@ help:
 	@echo " make demo-pragma-coldread   : Cold-cache reads: blocking vs annotated vs hand-written"
 	@echo " make demo-pragma-scaling    : The same comparison for 1 to 2048 files"
 	@echo " make demo-pragma-overlap    : Read + hash: blocking vs annotated, overlapped"
+	@echo " make demo-rpc               : Run both rpc demos"
+	@echo " make demo-rpc-counter       : Annotated calls on a custom runtime: TCP requests to a counter server"
+	@echo " make demo-rpc-upload        : Two runtimes: read files with io_uring, upload them with rpc"
 	@echo "------------------------------------------------------------------"
 	@echo " make disasm           : Inspect disassembly (GCC raw load vs Fil-C hook)"
 	@echo " make cfg              : Generate CFG graph (PNG image & AST dump)"
@@ -38,70 +41,57 @@ runtime:
 	@./runtime/build.sh
 
 demo-wordcount: runtime
-	@./demos/run_wordcount_3way.sh
+	@./demos/wordcount/run_wordcount.sh
 
 demo-plain: runtime
 	@mkdir -p $(OUT_DIR)
 	@$(PATCHED_CC) -O2 -static -DFASYNC_IMPLICIT -DFASYNC_COMPILER_INSERTS_CHECKS \
-		-I$(REPO_DIR)/runtime/src -I$(REPO_DIR)/demos -L$(REPO_DIR)/runtime/build/lib \
-		-o $(OUT_DIR)/demo_plain_io $(REPO_DIR)/demos/demo_plain_io.c -lfilc_async_uring -lpizlo -lc
+		-I$(REPO_DIR)/runtime/include -L$(REPO_DIR)/runtime/build/lib \
+		-o $(OUT_DIR)/demo_plain_io $(REPO_DIR)/demos/explicit/demo_plain_io.c -lfilc_async_uring -lpizlo -lc
 	@$(OUT_DIR)/demo_plain_io $(OUT_DIR)
 
 demo-async: runtime
 	@mkdir -p $(OUT_DIR)
 	@$(PATCHED_CC) -O2 -static -DFASYNC_IMPLICIT -DFASYNC_COMPILER_INSERTS_CHECKS \
-		-I$(REPO_DIR)/runtime/src -I$(REPO_DIR)/demos -L$(REPO_DIR)/runtime/build/lib \
-		-o $(OUT_DIR)/demo_async_io $(REPO_DIR)/demos/demo_async_io.c -lfilc_async_uring -lpizlo -lc
+		-I$(REPO_DIR)/runtime/include -L$(REPO_DIR)/runtime/build/lib \
+		-o $(OUT_DIR)/demo_async_io $(REPO_DIR)/demos/explicit/demo_async_io.c -lfilc_async_uring -lpizlo -lc
 	@$(OUT_DIR)/demo_async_io $(OUT_DIR)
 
 demo-provenance: runtime
 	@mkdir -p $(OUT_DIR)
 	@$(PATCHED_CC) -O2 -static -DFASYNC_IMPLICIT -DFASYNC_COMPILER_INSERTS_CHECKS \
-		-I$(REPO_DIR)/runtime/src -I$(REPO_DIR)/demos -L$(REPO_DIR)/runtime/build/lib \
-		-o $(OUT_DIR)/demo_provenance $(REPO_DIR)/demos/demo_provenance.c -lfilc_async_uring -lpizlo -lc
+		-I$(REPO_DIR)/runtime/include -L$(REPO_DIR)/runtime/build/lib \
+		-o $(OUT_DIR)/demo_provenance $(REPO_DIR)/demos/explicit/demo_provenance.c -lfilc_async_uring -lpizlo -lc
 	@$(OUT_DIR)/demo_provenance $(OUT_DIR)
 
 all-demos: demo-wordcount demo-plain demo-async demo-provenance
 
 PRAGMA_FLAGS := -O2 -static -Werror=pragma-clang-attribute -DFASYNC_IMPLICIT \
-	-DFASYNC_COMPILER_INSERTS_CHECKS -I$(REPO_DIR)/runtime/src -I$(REPO_DIR)/demos \
+	-DFASYNC_COMPILER_INSERTS_CHECKS -I$(REPO_DIR)/runtime/include \
 	-L$(REPO_DIR)/runtime/build/lib
 
 PRAGMA_DEMOS := hello lifecycle ordering coldread scaling overlap
 
 demo-pragma: $(addprefix demo-pragma-,$(PRAGMA_DEMOS))
 
-# demo-pragma-<name> builds demos/demo_pragma_<name>.c and runs it on OUT_DIR.
+# demo-pragma-<name> builds demos/pragma/demo_pragma_<name>.c and runs it on OUT_DIR.
 # A pattern rule, so it is not listed in .PHONY (make skips those for them).
 demo-pragma-%: runtime
 	@mkdir -p $(OUT_DIR)
 	@$(PATCHED_CC) $(PRAGMA_FLAGS) -o $(OUT_DIR)/demo_pragma_$* \
-		$(REPO_DIR)/demos/demo_pragma_$*.c -lfilc_async_uring -lpizlo -lc
+		$(REPO_DIR)/demos/pragma/demo_pragma_$*.c -lfilc_async_uring -lpizlo -lc
 	@$(OUT_DIR)/demo_pragma_$* $(OUT_DIR) $(ARGS)
 
+demo-rpc: demo-rpc-counter demo-rpc-upload
+
+demo-rpc-counter demo-rpc-upload: demo-rpc-%: runtime
+	@PATCHED_CC=$(PATCHED_CC) ./demos/rpc/run_rpc_demo.sh $* $(OUT_DIR)
+
 disasm:
-	@./demos/inspect_disasm_cfg.sh
+	@PATCHED_CC=$(PATCHED_CC) ./demos/wordcount/inspect_disasm.sh
 
 cfg:
-	@mkdir -p $(BUILD_DIR)
-	@echo "1. Generating GCC tree CFG (.dot and .png)..."
-	@cd $(BUILD_DIR) && gcc -O2 -I$(REPO_DIR)/demos -fdump-tree-cfg-graph $(REPO_DIR)/demos/demo_wordcount.c -o $(BUILD_DIR)/wc_gcc_cfg_bin
-	@DOT_FILE=$$(find $(BUILD_DIR) -name "*demo_wordcount*.dot" | head -n 1); \
-	if [ -n "$$DOT_FILE" ] && command -v dot >/dev/null 2>&1; then \
-		dot -Tpng "$$DOT_FILE" -o $(BUILD_DIR)/cfg_gcc_wordcount.png; \
-		echo "   -> GCC CFG image: $(BUILD_DIR)/cfg_gcc_wordcount.png"; \
-	fi
-	@echo "2. Generating Fil-C post-instrumentation CFG (.dot and .png)..."
-	@$(PATCHED_CC) -O2 -DFASYNC_IMPLICIT -DFASYNC_COMPILER_INSERTS_CHECKS \
-		-I$(REPO_DIR)/runtime/src -I$(REPO_DIR)/demos \
-		-emit-llvm -S $(REPO_DIR)/demos/demo_wordcount.c -o $(BUILD_DIR)/wc_implicit.ll
-	@$(REPO_DIR)/vendor/fil-c-src/build/bin/opt -passes=dot-cfg -disable-output $(BUILD_DIR)/wc_implicit.ll >/dev/null 2>&1
-	@if [ -f ".pizlonatedFIP1066_wordcount.dot" ] && command -v dot >/dev/null 2>&1; then \
-		dot -Tpng .pizlonatedFIP1066_wordcount.dot -o $(BUILD_DIR)/cfg_filc_wordcount.png; \
-		mv .*.dot $(BUILD_DIR)/ 2>/dev/null || true; \
-		echo "   -> Fil-C CFG image: $(BUILD_DIR)/cfg_filc_wordcount.png"; \
-	fi
-	@echo "All CFGs generated successfully in $(BUILD_DIR)"
+	@PATCHED_CC=$(PATCHED_CC) ./demos/wordcount/inspect_cfg.sh
 
 clean:
 	rm -rf $(REPO_DIR)/build/demos $(REPO_DIR)/build/tests

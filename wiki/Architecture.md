@@ -32,13 +32,18 @@ the [Runtime API](Runtime-API.md) and [Framework API](Framework-API.md).
     `runtime=<name>`, and the program links every runtime it names.
   - **What a runtime is.** A `filc_async_runtime` descriptor with submit, poll
     and validate functions, exported as `filc_async_runtime_<name>`.
-  - **The shipped runtime.** `runtime=io_uring` turns calls into io_uring
-    requests. `tests/mock_runtime.c` is a second runtime, `runtime=mock`, and
-    `tests/t_two_runtimes.c` uses both in one program.
+  - **The shipped runtimes.** `runtime=io_uring` (`runtime/io_uring/`) turns
+    calls into io_uring requests. `runtime=rpc` (`runtime/rpc/`) sends calls
+    to the rpc demos' TCP server, and `demos/rpc/demo_rpc_upload.c` reads
+    files with io_uring and uploads them with it
+    ([example](RPC-Runtime.md)). Each is a library of its own.
+  - **A program's own runtime.** `tests/support/mock_runtime.c`, `runtime=mock`, is
+    compiled into the tests that use it, and `tests/framework/t_two_runtimes.c` uses it
+    next to io_uring.
 
 **No runtime symbols in the framework.** The framework references no symbol
 of any runtime. It reaches a task's runtime only through the descriptor its
-function's `filc_async_meta` points to. `tests/check_linkage.sh` enforces
+function's `filc_async_meta` points to. `tests/io_uring/check_linkage.sh` enforces
 this.
 
 ## One call, end to end
@@ -48,7 +53,7 @@ read_at(fd, buf, len, 0)
   └─► __filc_async_stub_read_at                          (emitted by FilAsync)
         stage args into 16-byte cells
         task = filc_async_begin(meta, staged)
-        filc_async_lock_word(task, fd, ns, READ)         one per r_dep=/w_dep=
+        filc_async_lock_word(task, fd, space, READ)      one per r_dep=/w_dep=
         filc_async_mark_pending(task, buf)               one per output buffer
         filc_async_submit(task, meta, run, staged, 4)    ─► meta->runtime->submit
         return task
@@ -67,14 +72,14 @@ c = buf[0]
 
 ### FilAsync pass
 
-`compiler/upstream-overrides/llvm/lib/Transforms/Instrumentation/FilAsync.cpp`
+`compiler/pass/FilAsync.cpp`
 
 **Where it runs.** Clang records the pragma in `llvm.global.annotations`.
 `BackendUtil.cpp` installs FilAsync at the very start of Fil-C's pipeline,
 before any optimization and before FilPizlonator. Keep that order: the
 inliner and attribute inference must never see a direct call to an annotated
 function, or they could fold or inline it before it is redirected
-(`tests/t_pragma_same_tu_lazy.c`).
+(`tests/compiler/t_pragma_same_tu_lazy.c`).
 
 **What it emits.** For each annotated function `F`, the pass emits:
 
@@ -89,14 +94,21 @@ function, or they could fold or inline it before it is redirected
 **Linkage.** An annotated declaration keeps its ordinary linker name, so its
 definition can live in another translation unit. A definition in the same
 unit is renamed `__filc_async_F`. A non-static one keeps `F` as an alias, so
-other units still link (`tests/t_linked_async_*.c`).
+other units still link (`tests/io_uring/t_linked_async_*.c`).
 
-**What it leaves alone.** The pass only validates positional indices and
+**Parameter names.** Options name parameters (`bout=buf`, `r_dep=fd:file`).
+IR declarations carry no parameter names, so a small clang patch
+(`compiler/patches/filc-async-param-names.patch`) records them on
+each annotated function as `!filc_async.params`, and the pass resolves each
+option against that list.
+
+**What it leaves alone.** The pass only validates parameter names and
 dependency types. It never checks `op=`: the runtime decides which ops exist.
 
 ### The access hook
 
-`compiler/upstream-overrides/llvm/lib/Transforms/Instrumentation/FilPizlonator.cpp`
+`compiler/patches/filpizlonator-pending-hook.patch`, a patch to Fil-C's
+`FilPizlonator.cpp`
 
 FilPizlonator is Fil-C's pass that turns pointers into capabilities. Before
 the capability check on an access through an escaping pointer, the patched
@@ -120,7 +132,7 @@ original buffer, so the access proceeds on the same pointer.
 
 ## Framework
 
-`runtime/src/filc_async.c`, `filc_async_native.c`, `filc_async_arena.c`
+`runtime/framework/filc_async.c`, `filc_async_native.c`, `filc_async_arena.c`
 
 **Tasks.** One per call. Running tasks are kept in a list, oldest first, and
 tasks whose result has not been delivered are kept in a hash table of
@@ -146,8 +158,9 @@ the object's lower bound.
 
 **Dependency locks.**
 
-- **Keys.** One lock per (key, namespace), where the key is an integer value
-  or an object base.
+- **Keys.** One lock per (value, space). The value is an integer or an object
+  base. The space is a hash of the dependency's `<param>:<namespace>`, plus
+  the pointer bit.
 - **Modes.** Readers share and writers exclude.
 - **Order.** Requests queue in arrival order, so a stream of readers cannot
   starve a waiting writer.
@@ -215,7 +228,7 @@ their buffers.
 - **Arena.** The arena has its own lock.
 - **Compute-only threads.** A thread that only computes on its own memory
   never finds a pending flag, so it never calls into the framework
-  (`tests/t_thread_compute.c`).
+  (`tests/framework/t_thread_compute.c`).
 
 **io_uring runtime.** It serializes on one recursive lock around a single
 ring. That gives safety, not I/O parallelism across threads.
@@ -224,11 +237,13 @@ ring. That gives safety, not I/O parallelism across threads.
 
 | Area | Files |
 |---|---|
-| Call rewriting, descriptors, stubs, run thunks | `compiler/upstream-overrides/llvm/lib/Transforms/Instrumentation/FilAsync.cpp` |
-| Pending-flag test at access sites | `compiler/upstream-overrides/llvm/lib/Transforms/Instrumentation/FilPizlonator.cpp` |
-| Pass order | `compiler/upstream-overrides/clang/lib/CodeGen/BackendUtil.cpp` |
-| Framework | `runtime/src/filc_async.c`, `filc_async.h`, `filc_async_runtime.h` |
-| Header flag and resolver bridge | `runtime/src/filc_async_native.c` |
-| Allocator | `runtime/src/filc_async_arena.c`, `filc_async_alloc.h` |
-| io_uring runtime | `runtime/src/filc_async_uring.c`, `fasync*.c` |
-| Native forwarder generator | `runtime/upstream-overrides/generate_pizlonated_forwarders.rb` |
+| Call rewriting, descriptors, stubs, run thunks | `compiler/pass/FilAsync.cpp` |
+| Pending-flag test at access sites | `compiler/patches/filpizlonator-pending-hook.patch` |
+| Pass order | `compiler/patches/backend-util-run-filasync.patch` |
+| Public headers | `runtime/include/`: `filc_async.h`, `filc_async_runtime.h`, `filc_async_alloc.h`, and io_uring's `fasync.h`, `fasync_dep.h` |
+| Framework | `runtime/framework/filc_async.c` |
+| Header flag and resolver bridge | `runtime/framework/filc_async_native.c` |
+| Allocator | `runtime/framework/filc_async_arena.c` |
+| io_uring runtime | `runtime/io_uring/`: `filc_async_uring.c`, the request layer `fasync*.c`, and its native half `fasync_native.c` |
+| rpc runtime | `runtime/rpc/rpc_runtime.c` |
+| Native forwarders | `runtime/patches/libpas-forwarders.patch` |

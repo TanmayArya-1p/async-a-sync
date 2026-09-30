@@ -20,12 +20,13 @@ runs asynchronously underneath.
   the access site itself.
 - **Pluggable runtimes.** The framework does not depend on any runtime. Each
   annotated function names the runtime that runs it (`runtime=<name>`), and
-  one program can link several. This repository ships one that turns calls
+  one program can link several. This repository ships two: one turns calls
   into io_uring requests and sends them to the kernel in one batch, the first
-  time a result is needed.
+  time a result is needed; the other sends calls to a TCP server, for the rpc
+  demos.
 
 ```c
-#pragma clang attribute push(__attribute__((annotate("filc_async", "runtime=io_uring", "op=pread", "fd=0", "bout=1"))), apply_to=function)
+#pragma clang attribute push(__attribute__((annotate("filc_async", "runtime=io_uring", "op=pread", "bout=buf"))), apply_to=function)
 void* read_at(int fd, void* buf, size_t len, unsigned long offset);
 #pragma clang attribute pop
 
@@ -58,7 +59,7 @@ git -C vendor/fil-c-src sparse-checkout set clang cmake filc libpas lld llvm thi
 git -C vendor/fil-c-src fetch --depth 1 --filter=blob:none origin d80c8bba1c58f68c33b0ed5e71113c44354f5bb8
 git -C vendor/fil-c-src checkout FETCH_HEAD
 
-./runtime/build.sh           # the framework and the io_uring runtime
+./runtime/build.sh           # the framework and the runtimes
 JOBS=8 ./compiler/build.sh   # the patched clang: the long step
 ./tests/run.sh               # the test suite
 make demo-pragma             # the annotated-call demos
@@ -75,15 +76,16 @@ The documentation lives in [`wiki/`](wiki/Home.md):
 |---|---|
 | **Tutorial** | [Getting started](wiki/Getting-Started.md) |
 | **How-to** | [Annotate a function](wiki/Annotating-Functions.md) · [Write a runtime](wiki/Writing-a-Runtime.md) · [Build and link](wiki/Building-and-Linking.md) · [Troubleshooting](wiki/Troubleshooting.md) |
-| **Reference** | [Annotations](wiki/Annotation-Reference.md) · [Runtime API](wiki/Runtime-API.md) · [Framework API](wiki/Framework-API.md) · [io_uring runtime](wiki/io_uring-Runtime.md) · [Explicit API](wiki/Explicit-API.md) · [Tests](wiki/Testing.md) |
+| **Reference** | [Annotations](wiki/Annotation-Reference.md) · [Runtime API](wiki/Runtime-API.md) · [Framework API](wiki/Framework-API.md) · [io_uring runtime](wiki/io_uring-Runtime.md) · [RPC runtime example](wiki/RPC-Runtime.md) · [Explicit API](wiki/Explicit-API.md) · [Tests](wiki/Testing.md) |
 | **Explanation** | [Architecture](wiki/Architecture.md) · [Demos and performance](wiki/Performance.md) · [Limitations](wiki/Limitations.md) · [Glossary](wiki/Glossary.md) |
 
 ## Layout
 
 | Path | What it is |
 |---|---|
-| `compiler/` | overrides and patches for Fil-C's clang: the FilAsync pass and the access hook |
-| `runtime/` | the async framework, the runtime interface, and the io_uring runtime |
-| `demos/` | the demos (`make help`) |
+| `compiler/` | the FilAsync pass, and patches to Fil-C's clang for the pass and the access hook |
+| `runtime/` | `include/` the public headers, `framework/` the async framework, `io_uring/` and `rpc/` the runtimes, `patches/` Fil-C's forwarder generator |
+| `demos/` | the demos (`make help`): `pragma/` annotated calls, `explicit/` the `fasync_*` API, `wordcount/` one program built three ways, `rpc/` calls to a TCP server through `runtime=rpc`, `common/` shared helpers |
 | `tests/` | the test suite (`./tests/run.sh`) |
+| `scripts/` | build helpers shared by `compiler/` and `runtime/` |
 | `wiki/` | the documentation |

@@ -14,6 +14,7 @@
 - [Runtime API](Runtime-API.md)
 - [Framework API](Framework-API.md)
 - [The io_uring runtime](io_uring-Runtime.md)
+- [The RPC runtime example](RPC-Runtime.md)
 - [Explicit API](Explicit-API.md)
 - [Tests](Testing.md)
 

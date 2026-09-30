@@ -1,0 +1,12 @@
+diff --git a/llvm/lib/Transforms/Instrumentation/CMakeLists.txt b/llvm/lib/Transforms/Instrumentation/CMakeLists.txt
+index 6780bc965..a90f53ff6 100644
+--- a/llvm/lib/Transforms/Instrumentation/CMakeLists.txt
++++ b/llvm/lib/Transforms/Instrumentation/CMakeLists.txt
+@@ -6,6 +6,7 @@ add_llvm_component_library(LLVMInstrumentation
+   DataFlowSanitizer.cpp
+   DeleteRedundantPollchecks.cpp
+   FilPizlonator.cpp
++  FilAsync.cpp
+   GCOVProfiling.cpp
+   BlockCoverageInference.cpp
+   MemProfiler.cpp

@@ -1,7 +1,7 @@
 # Framework API
 
-**Header:** [`runtime/src/filc_async.h`](../runtime/src/filc_async.h)
-**Implementation:** [`runtime/src/filc_async.c`](../runtime/src/filc_async.c), in `libpizlo.a`
+**Header:** [`runtime/include/filc_async.h`](../runtime/include/filc_async.h)
+**Implementation:** [`runtime/framework/filc_async.c`](../runtime/framework/filc_async.c), in `libpizlo.a`
 
 The framework sits between annotated calls and the runtime. It owns tasks,
 pending buffer marks, and dependency locks. It never interprets `op=`. This
@@ -96,7 +96,7 @@ descriptors before `main`. Each descriptor must pass two checks:
 
 **Overriding the validator.** A program can install its own validator from an
 earlier constructor with `filc_async_set_validator`, as
-`tests/t_pragma_custom_validator.c` does. The program's validator decides
+`tests/framework/t_pragma_custom_validator.c` does. The program's validator decides
 instead of the runtime's. It only suppresses the startup abort: a call the
 runtime cannot run still fails when it is submitted.
 
@@ -104,7 +104,7 @@ runtime cannot run still fails when it is submitted.
 
 ### Allocator
 
-**Header:** [`runtime/src/filc_async_alloc.h`](../runtime/src/filc_async_alloc.h)
+**Header:** [`runtime/include/filc_async_alloc.h`](../runtime/include/filc_async_alloc.h)
 
 ```c
 typedef struct {
@@ -135,14 +135,14 @@ The pass emits one `filc_async_meta` per annotated function, named
 typedef struct {
     const char* name;          /* the function's source name */
     uint32_t    nargs;         /* parameter count */
-    uint32_t    noped_args;    /* how many fd=/bin=/bout=/buf= options it has */
+    uint32_t    noped_args;    /* how many bin=/bout=/buf= options it has */
     uint32_t    flags;         /* reserved, 0 */
     uint32_t    result;        /* FILC_ASYNC_RESULT_PTR or FILC_ASYNC_RESULT_WORD */
     const char* const* opts;   /* NULL-terminated copy of every option string */
     const struct filc_async_runtime* runtime; /* &filc_async_runtime_<name> from runtime=<name> */
     struct {
         uint32_t kind;         /* FILC_ASYNC_ARG_* */
-        uint32_t dependency;   /* FILC_ASYNC_DEP_* bits and namespace */
+        uint32_t dependency;   /* FILC_ASYNC_DEP_* bits and space */
     } args[];
 } filc_async_meta;
 ```
@@ -161,13 +161,13 @@ field for field. When you add a field, change the header, the pass
 | `FILC_ASYNC_ARG_SCALAR` | 1 | (reserved) |
 | `FILC_ASYNC_ARG_BUFFER_IN` | 2 | `bin=` |
 | `FILC_ASYNC_ARG_BUFFER_OUT` | 3 | `bout=` |
-| `FILC_ASYNC_ARG_FD` | 4 | `fd=` |
+| (none) | 4 | unused; it was the removed `fd=` |
 | `FILC_ASYNC_ARG_PENDING` | 5 | `buf=`, or an unannotated pointer |
 
 **Dependency bits.** `FILC_ASYNC_DEP_READ` (1), `FILC_ASYNC_DEP_WRITE` (2) and
-`FILC_ASYNC_DEP_POINTER` (4). The namespace is in bits
-`FILC_ASYNC_DEP_NAMESPACE_SHIFT` (8) and up, masked by
-`FILC_ASYNC_DEP_NAMESPACE_MASK` (`0x00FFFFFF`). See
+`FILC_ASYNC_DEP_POINTER` (4). The space, a hash of the option's
+`<param>:<namespace>`, is in bits `FILC_ASYNC_DEP_NAMESPACE_SHIFT` (8) and
+up, masked by `FILC_ASYNC_DEP_NAMESPACE_MASK` (`0x00FFFFFF`). See
 [Dependencies](Annotation-Reference.md#dependencies).
 
 ## Stub entry points
@@ -199,7 +199,7 @@ void* __filc_async_stub_F(int fd, void* buf, size_t len, unsigned long off)
     void* staged = filc_async_alloc(4 * 16, 16);      /* 16-byte cells */
     /* store fd, buf, len, off into the cells */
     void* task = filc_async_begin(&__filc_meta_F, staged);
-    filc_async_lock_word(task, fd, space_0, FILC_ASYNC_DEP_READ);  /* per r_dep/w_dep */
+    filc_async_lock_word(task, fd, space_fd, FILC_ASYNC_DEP_READ); /* per r_dep/w_dep */
     filc_async_mark_pending(task, buf);                /* per bout=/buf=/unannotated pointer */
     filc_async_submit(task, &__filc_meta_F, __filc_async_run_F, staged, 4);
     return task;
@@ -209,6 +209,6 @@ void* __filc_async_stub_F(int fd, void* buf, size_t len, unsigned long off)
 | Function | Behavior |
 |---|---|
 | `filc_async_begin` | Creates a task in the running state, belonging to `meta->runtime`. A runtime creates tasks of its own with [`filc_async_task_new`](Runtime-API.md#filc_async_task_new) instead. |
-| `filc_async_lock_word` / `_ptr` | Queues a read or write lock on a value or object in namespace `space` (the dependency bits minus the mode). It waits, polling the holder through the runtime, until the lock is granted. Released when the task completes. |
+| `filc_async_lock_word` / `_ptr` | Queues a read or write lock on a value or object in `space` (the dependency bits minus the mode: the pointer bit and the hash of `<param>:<namespace>`). It waits, polling the holder through the runtime, until the lock is granted. Released when the task completes. |
 | `filc_async_mark_pending` | Waits for every other call that owns the object `buf` points into, then marks it pending for `task` and sets the pending flag in the object's header. With a `NULL` task, the mark has no owner and only `filc_async_mark_resolved` clears it. |
 | `filc_async_submit` | Hands the call to `meta->runtime->submit`. |
