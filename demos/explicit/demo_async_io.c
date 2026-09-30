@@ -5,7 +5,7 @@
  *   all at once    the same reads, all queued, then waited for
  *   dependencies   which of four operations must wait for which */
 
-#include "explicit_utils.hh"
+#include "async_io_utils.hh"
 
 // Queue every read. Checking a block waits for it.
 static int lazy(int fd, unsigned char** block) {
@@ -61,12 +61,12 @@ static void dependencies(void) {
 }
 
 int main(int argc, char** argv) {
-  struct blocks b = async_io_setup(argc, argv);
+  struct demo d = setup(argc, argv);
 
-  step(&b, "lazy: queue all, check each", lazy(b.fd, b.block));
-  step(&b, "one blocking pread at a time", one_at_a_time(b.fd, b.block));
-  step(&b, "all queued, then waited for", all_at_once(b.fd, b.block));
+  step(&d, "lazy: queue all, check each", lazy(d.fd, d.block));
+  step(&d, "one blocking pread at a time", one_at_a_time(d.fd, d.block));
+  step(&d, "all queued, then waited for", all_at_once(d.fd, d.block));
   dependencies();
 
-  return async_io_report(&b);
+  return report(&d);
 }

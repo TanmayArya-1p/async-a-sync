@@ -8,7 +8,7 @@
  *
  * Usage: demo_pragma_scaling [dir] [max files] [passes] */
 
-#include "pragma_utils.hh"
+#include "scaling_utils.hh"
 
 // pread: the kernel fills buf.
 #pragma clang attribute push(__attribute__((annotate("filc_async", "runtime=io_uring", "op=pread", "bout=buf"))), apply_to=function)
@@ -58,16 +58,16 @@ static size_t read_by_hand(int n) {
 static const int sizes[] = {1, 4, 16, 64, 256, 512, 1024, 2048};
 
 int main(int argc, char** argv) {
-  struct timing t = scaling_setup(argc, argv);
+  struct demo d = setup(argc, argv);
 
-  for (int s = 0; s < 8 && sizes[s] <= t.files; s++) {
-    for (int pass = 0; pass < t.passes; pass++) {
-      time_pass(&t.blocking[pass], read_blocking, sizes[s]);
-      time_pass(&t.annotated[pass], read_annotated, sizes[s]);
-      time_pass(&t.by_hand[pass], read_by_hand, sizes[s]);
+  for (int s = 0; s < 8 && sizes[s] <= d.files; s++) {
+    for (int pass = 0; pass < d.passes; pass++) {
+      time_pass(&d.blocking[pass], read_blocking, sizes[s]);
+      time_pass(&d.annotated[pass], read_annotated, sizes[s]);
+      time_pass(&d.by_hand[pass], read_by_hand, sizes[s]);
     }
-    scaling_row(&t, sizes[s]);
+    row(&d, sizes[s]);
   }
 
-  return scaling_report(&t);
+  return report(&d);
 }

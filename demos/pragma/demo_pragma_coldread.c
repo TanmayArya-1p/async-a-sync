@@ -9,7 +9,7 @@
  *
  * Usage: demo_pragma_coldread [dir] [files] [passes] */
 
-#include "pragma_utils.hh"
+#include "coldread_utils.hh"
 
 // pread: the kernel fills buf.
 #pragma clang attribute push(__attribute__((annotate("filc_async", "runtime=io_uring", "op=pread", "bout=buf"))), apply_to=function)
@@ -57,13 +57,13 @@ static size_t read_by_hand(int n) {
 }
 
 int main(int argc, char** argv) {
-  struct timing t = coldread_setup(argc, argv);
+  struct demo d = setup(argc, argv);
 
-  for (int pass = 0; pass < t.passes; pass++) {
-    time_pass(&t.blocking[pass], read_blocking, t.files);
-    time_pass(&t.annotated[pass], read_annotated, t.files);
-    time_pass(&t.by_hand[pass], read_by_hand, t.files);
+  for (int pass = 0; pass < d.passes; pass++) {
+    time_pass(&d.blocking[pass], read_blocking, d.files);
+    time_pass(&d.annotated[pass], read_annotated, d.files);
+    time_pass(&d.by_hand[pass], read_by_hand, d.files);
   }
 
-  return coldread_report(&t);
+  return report(&d);
 }

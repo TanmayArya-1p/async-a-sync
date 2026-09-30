@@ -5,9 +5,9 @@
  * lands. Waiting for the first upload sends all the reads to the kernel in
  * one batch.
  *
- * Logging, setup and checks: rpc_utils.hh. */
+ * Logging, setup and checks: upload_utils.hh. */
 
-#include "rpc_utils.hh"
+#include "upload_utils.hh"
 
 // pread on io_uring: the kernel fills buf.
 #pragma clang attribute push(__attribute__((annotate("filc_async", "runtime=io_uring", "op=pread", "bout=buf"))), apply_to=function)
@@ -26,13 +26,13 @@ void* upload(unsigned port, const void* data, size_t len) {
 #pragma clang attribute pop
 
 int main(int argc, char** argv) {
-  struct upload u = upload_setup(argc, argv);
+  struct demo d = setup(argc, argv);
   void* sent[UPLOAD_FILES];
 
   for (int i = 0; i < UPLOAD_FILES; i++) {
-    async_pread(u.fd[i], u.buf[i], UPLOAD_BYTES, 0);  // queues the read
-    sent[i] = upload(u.port, u.buf[i], UPLOAD_BYTES); // sends once the read lands
+    async_pread(d.fd[i], d.buf[i], UPLOAD_BYTES, 0);  // queues the read
+    sent[i] = upload(d.port, d.buf[i], UPLOAD_BYTES); // sends once the read lands
   }
 
-  return upload_report(&u, sent);
+  return report(&d, sent);
 }

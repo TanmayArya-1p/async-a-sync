@@ -10,9 +10,9 @@
  *   r_dep=port:counter  reads it
  *   bout=value          reply lands in *value, pending until it arrives
  *
- * Logging, timeline and checks: rpc_utils.hh. */
+ * Logging, timeline and checks: counter_utils.hh. */
 
-#include "rpc_utils.hh"
+#include "counter_utils.hh"
 
 // Bodies run just before the call is sent; they only log.
 
@@ -29,7 +29,7 @@ void get(unsigned port, long* value) {
 #pragma clang attribute pop
 
 int main(int argc, char** argv) {
-  unsigned port = counter_setup(argc, argv);
+  unsigned port = setup(argc, argv);
   long first, second, stepped, after;
 
   get(port, &first);
@@ -38,5 +38,5 @@ int main(int argc, char** argv) {
   get(port, &after);    // waits here for the step
 
   // reading the values is the only wait
-  return counter_report(first, second, stepped, after);
+  return report(first, second, stepped, after);
 }

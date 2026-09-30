@@ -5,7 +5,7 @@
  * A conflicting call waits, inside the call, for the one before it.
  * Other calls only queue, and go to the kernel together. */
 
-#include "pragma_utils.hh"
+#include "ordering_utils.hh"
 
 #pragma clang attribute push(__attribute__((annotate("filc_async", "runtime=io_uring", "op=pwrite", "bin=buf", "w_dep=fd:file"))), apply_to=function)
 void* async_pwrite(int fd, const void* buf, size_t len, unsigned long offset) {
@@ -52,11 +52,11 @@ static int many_reads(int fd, char** record) {
 }
 
 int main(int argc, char** argv) {
-  struct ordering o = ordering_setup(argc, argv);
+  struct demo d = setup(argc, argv);
 
-  scenario("write, write, read, one file", same_file(o.fd[0]), WAITS);
-  scenario("8 writes to 8 different files", many_files(o.fd), BATCHES);
-  scenario("8 reads of one file", many_reads(o.records, o.record), BATCHES);
+  scenario("write, write, read, one file", same_file(d.fd[0]), WAITS);
+  scenario("8 writes to 8 different files", many_files(d.fd), BATCHES);
+  scenario("8 reads of one file", many_reads(d.records, d.record), BATCHES);
 
-  return ordering_report(&o);
+  return report(&d);
 }

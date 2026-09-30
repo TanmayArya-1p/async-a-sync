@@ -7,7 +7,7 @@
 #include "wordcount_utils.hh"
 
 int main(int argc, char** argv) {
-  wordcount_setup(argc, argv);
+  setup(argc, argv);
 
   for (int i = 0; i < files.n; i++)
 #ifdef FASYNC_IMPLICIT
@@ -20,5 +20,5 @@ int main(int argc, char** argv) {
   for (int i = 0; i < files.n; i++)
     words += count_words(files.buf[i]); // implicit: waits for that file
 
-  return wordcount_report(words);
+  return report(words);
 }

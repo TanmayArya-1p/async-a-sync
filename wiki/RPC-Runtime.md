@@ -5,7 +5,7 @@
 **Programs:** [`demos/rpc/demo_rpc_counter.c`](../demos/rpc/demo_rpc_counter.c), which
 holds its annotated functions and their calls, and
 [`demos/rpc/demo_rpc_upload.c`](../demos/rpc/demo_rpc_upload.c); their logging and
-checks are in `rpc_utils.hh`, and the server is
+checks are in `counter_utils.hh` and `upload_utils.hh`, and the server is
 [`demos/rpc/rpc_server.c`](../demos/rpc/rpc_server.c)
 **Run:** `make demo-rpc` (both), `make demo-rpc-counter`, `make demo-rpc-upload`,
 or `demos/rpc/run_rpc_demo.sh counter|upload [OUT_DIR]`
@@ -141,7 +141,7 @@ step(port, &stepped); // waits here for both gets
 get(port, &after);    // waits here for the step
 
 // reading the values is the only wait
-return counter_report(first, second, stepped, after);
+return report(first, second, stepped, after);
 ```
 
 - **Results.** The server's number lands in `*value`. `bout=value` marks
@@ -184,8 +184,8 @@ And the loop that calls them:
 
 ```c
 for (int i = 0; i < UPLOAD_FILES; i++) {
-  async_pread(u.fd[i], u.buf[i], UPLOAD_BYTES, 0);  // queues the read
-  sent[i] = upload(u.port, u.buf[i], UPLOAD_BYTES); // sends once the read lands
+  async_pread(d.fd[i], d.buf[i], UPLOAD_BYTES, 0);  // queues the read
+  sent[i] = upload(d.port, d.buf[i], UPLOAD_BYTES); // sends once the read lands
 }
 ```
 

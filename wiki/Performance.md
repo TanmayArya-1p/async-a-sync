@@ -14,9 +14,10 @@ Run `make help` for the full list.
 
 Each demo prints a table, a `=>` result line, and `DEMO OK` when its checks
 pass. A demo's source holds only its annotated functions, whose bodies only
-log, and the code that calls them. Setup, logging, timing and checks are in
-`demos/pragma/pragma_utils.hh`; each demo directory has a utils header like
-it.
+log, and the code that calls them; its `main` is `setup()`, the calls, and
+`report()`. Each demo's setup and report are in its own `<demo>_utils.hh`,
+and what a directory's demos share (the call log, counters, timing) is in
+`pragma_utils.hh` and its like.
 
 | Demo | Shows |
 |---|---|

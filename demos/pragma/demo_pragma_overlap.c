@@ -12,7 +12,7 @@
  *
  * Usage: demo_pragma_overlap [dir] [files] [passes] [rounds] */
 
-#include "pragma_utils.hh"
+#include "overlap_utils.hh"
 
 // pread: the kernel fills buf.
 #pragma clang attribute push(__attribute__((annotate("filc_async", "runtime=io_uring", "op=pread", "bout=buf"))), apply_to=function)
@@ -43,12 +43,12 @@ static unsigned long async_then_hash(int n) {
 }
 
 int main(int argc, char** argv) {
-  struct overlap o = overlap_setup(argc, argv);
+  struct demo d = setup(argc, argv);
 
-  for (int pass = 0; pass < o.passes; pass++) {
-    time_run(&o.blocking[pass], read_then_hash);
-    time_run(&o.async[pass], async_then_hash);
+  for (int pass = 0; pass < d.passes; pass++) {
+    time_run(&d.blocking[pass], read_then_hash);
+    time_run(&d.async[pass], async_then_hash);
   }
 
-  return overlap_report(&o);
+  return report(&d);
 }
