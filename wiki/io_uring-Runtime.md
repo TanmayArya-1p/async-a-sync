@@ -52,8 +52,8 @@ void* read_at(int fd, void* data, size_t len, unsigned long offset, prov_tag don
 void* write_at(int fd, const void* data, size_t len, unsigned long offset, prov_tag done);
 #pragma clang attribute pop
 
-prov_tag first = malloc(1);
-prov_tag second = malloc(1);
+prov_tag first = prov_alloc();
+prov_tag second = prov_alloc();
 prov_tag tags[] = { first, second };
 read_at(fd, first_buffer, first_size, 0, first);
 read_at(fd, second_buffer, second_size, first_size, second);

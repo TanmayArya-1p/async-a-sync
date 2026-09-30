@@ -682,6 +682,11 @@ static const filc_async_runtime g_join_runtime = {
     "wait_all", NULL, join_poll, NULL
 };
 
+void* prov_alloc(void)
+{
+    return zgc_aligned_alloc(16, 16);
+}
+
 void* filc_async_wait_all(const prov_tag* buffers, size_t count)
 {
     if ((!buffers && count) || count > SIZE_MAX / sizeof *buffers)
@@ -690,8 +695,7 @@ void* filc_async_wait_all(const prov_tag* buffers, size_t count)
         count * sizeof *snapshot) : NULL;
     for (size_t i = 0; i < count; ++i)
         snapshot[i] = buffers[i];
-    // arena slices share an object and cannot be independent pending tokens
-    void* token = zgc_aligned_alloc(16, 16);
+    void* token = prov_alloc();
     if (!token)
         filc_async_fatal("out of memory");
     lock();
