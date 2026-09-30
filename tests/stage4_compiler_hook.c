@@ -49,6 +49,12 @@ int main(void) {
 
   fasync_reset_stats();
 
+  /* The baseline comes before the read: filc_async_get_stats polls running
+   * calls, and polling after the submit could reap the read and clear the
+   * buffer's pending mark before the access below. */
+  filc_async_stats hook_before, hook_after;
+  filc_async_get_stats(&hook_before);
+
   fasync_id id = fasync_pread(fd, buf, BLOCK, 0);
   if (!id) {
     printf("  enqueue failed: %s\n", fasync_last_error());
@@ -66,9 +72,6 @@ int main(void) {
   /* No fasync_result(), no FASYNC_ACCESS(): an ordinary access through an
    * escaping pointer. Whatever resolved it was the compiler's instrumentation.
    */
-  filc_async_stats hook_before, hook_after;
-  filc_async_get_stats(&hook_before);
-
   unsigned sum = 0;
   for (int i = 0; i < BLOCK; i++)
     sum += buf[i];
