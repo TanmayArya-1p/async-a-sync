@@ -69,7 +69,7 @@ static inline size_t demo_fill_words(unsigned char* p, size_t cap,
   return words;
 }
 
-/* noinline keeps it a separate symbol for inspect_disasm_cfg.sh; unused
+/* noinline keeps it a separate symbol for inspect_disasm.sh; unused
  * because not every demo counts words */
 __attribute__((noinline, unused))
 static size_t wordcount(const char* p) {

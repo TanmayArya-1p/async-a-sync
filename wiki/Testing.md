@@ -36,11 +36,9 @@ stock clang, which records no parameter names.
 `tests/support/add_param_names.py` adds them the way the clang patch does.
 
 **Not covered.** `run.sh` runs `demos/wordcount/run_wordcount.sh` and both
-rpc demos, but not the other Makefile demo targets,
-`demos/wordcount/run_wordcount_3way.sh`, or
-`demos/wordcount/inspect_disasm_cfg.sh`. After changing the runtime or the
-link line, run `make demo-pragma`, `make all-demos` and `make disasm` by
-hand.
+rpc demos, but not the other Makefile demo targets or the inspection
+scripts (`make disasm`, `make cfg`). After changing the runtime or the link
+line, run `make demo-pragma`, `make all-demos` and `make disasm` by hand.
 
 ## What each check proves
 

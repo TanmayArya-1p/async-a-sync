@@ -408,13 +408,12 @@ if [ "$PATCHED_READY" -eq 1 ]; then
   run_patched_neg t_pragma_unknownop "$HERE/framework/t_pragma_unknownop.c"
   run_patched t_pragma_custom_validator "$HERE/framework/t_pragma_custom_validator.c"
 
-  # The two-backend comparison, as a standalone script: the same word-count
-  # source built one way with plain Fil-C and one way with the patched
-  # compiler + io_uring, run on a real filesystem, and reported as two
-  # timings plus a ratio.
+  # The same word-count source built blocking (C, plain Fil-C) and implicit
+  # (patched compiler + io_uring), run on a real filesystem: timings, ratios,
+  # and a check that every build counts the same words.
   if [ "$IO_URING" -eq 1 ]; then
     echo
-    echo "### wordcount: the same code, sync and implicit (run_wordcount.sh)"
+    echo "### wordcount: the same code, blocking and implicit (run_wordcount.sh)"
     if "$REPO/demos/wordcount/run_wordcount.sh" "$OUT"; then
       PASSED=$((PASSED + 1))
     else

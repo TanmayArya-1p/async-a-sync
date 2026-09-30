@@ -41,7 +41,7 @@ runtime:
 	@./runtime/build.sh
 
 demo-wordcount: runtime
-	@./demos/wordcount/run_wordcount_3way.sh
+	@./demos/wordcount/run_wordcount.sh
 
 demo-plain: runtime
 	@mkdir -p $(OUT_DIR)
@@ -88,28 +88,10 @@ demo-rpc-counter demo-rpc-upload: demo-rpc-%: runtime
 	@PATCHED_CC=$(PATCHED_CC) ./demos/rpc/run_rpc_demo.sh $* $(OUT_DIR)
 
 disasm:
-	@./demos/wordcount/inspect_disasm_cfg.sh
+	@PATCHED_CC=$(PATCHED_CC) ./demos/wordcount/inspect_disasm.sh
 
 cfg:
-	@mkdir -p $(BUILD_DIR)
-	@echo "1. Generating GCC tree CFG (.dot and .png)..."
-	@cd $(BUILD_DIR) && gcc -O2 -fdump-tree-cfg-graph $(REPO_DIR)/demos/wordcount/demo_wordcount.c -o $(BUILD_DIR)/wc_gcc_cfg_bin
-	@DOT_FILE=$$(find $(BUILD_DIR) -name "*demo_wordcount*.dot" | head -n 1); \
-	if [ -n "$$DOT_FILE" ] && command -v dot >/dev/null 2>&1; then \
-		dot -Tpng "$$DOT_FILE" -o $(BUILD_DIR)/cfg_gcc_wordcount.png; \
-		echo "   -> GCC CFG image: $(BUILD_DIR)/cfg_gcc_wordcount.png"; \
-	fi
-	@echo "2. Generating Fil-C post-instrumentation CFG (.dot and .png)..."
-	@$(PATCHED_CC) -O2 -DFASYNC_IMPLICIT -DFASYNC_COMPILER_INSERTS_CHECKS \
-		-I$(REPO_DIR)/runtime/include \
-		-emit-llvm -S $(REPO_DIR)/demos/wordcount/demo_wordcount.c -o $(BUILD_DIR)/wc_implicit.ll
-	@$(REPO_DIR)/vendor/fil-c-src/build/bin/opt -passes=dot-cfg -disable-output $(BUILD_DIR)/wc_implicit.ll >/dev/null 2>&1
-	@if [ -f ".pizlonatedFIP1066_wordcount.dot" ] && command -v dot >/dev/null 2>&1; then \
-		dot -Tpng .pizlonatedFIP1066_wordcount.dot -o $(BUILD_DIR)/cfg_filc_wordcount.png; \
-		mv .*.dot $(BUILD_DIR)/ 2>/dev/null || true; \
-		echo "   -> Fil-C CFG image: $(BUILD_DIR)/cfg_filc_wordcount.png"; \
-	fi
-	@echo "All CFGs generated successfully in $(BUILD_DIR)"
+	@PATCHED_CC=$(PATCHED_CC) ./demos/wordcount/inspect_cfg.sh
 
 clean:
 	rm -rf $(REPO_DIR)/build/demos $(REPO_DIR)/build/tests

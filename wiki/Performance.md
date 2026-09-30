@@ -63,13 +63,17 @@ calls wait for room in the 1024-entry request table.
 
 ### Word count (`demos/wordcount/run_wordcount.sh`)
 
-One synchronous-looking program, built blocking and implicit, over 512 files
-with the page cache dropped:
+One synchronous-looking program, built three ways, over 512 files with the
+page cache dropped. The script also checks that every build counts the same
+words. `make demo-wordcount` and `tests/run.sh` both run it.
 
 ```text
-  sync        25.34 ms  (338154 words)
-  implicit    13.80 ms  (338154 words)
-  implicit finish in 1.84x the time
+  C                  25.93 ms  (338154 words)
+  Fil-C blocking     30.62 ms  (338154 words)
+  Fil-C implicit      9.87 ms  (338154 words)
+
+  C time / Fil-C implicit time: 2.63x
+  Fil-C blocking time / Fil-C implicit time: 3.10x
 ```
 
 ### Throughput regime (`tests/io_uring/stage7_throughput.c`)
