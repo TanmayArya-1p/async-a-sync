@@ -686,6 +686,10 @@ void* filc_async_wait_all_array(const void* const* buffers, size_t count)
 {
     if ((!buffers && count) || count > SIZE_MAX / sizeof *buffers)
         filc_async_fatal("wait_all: invalid input array");
+    const void** snapshot = count ? (const void**)alloc_or_die(
+        count * sizeof *snapshot) : NULL;
+    for (size_t i = 0; i < count; ++i)
+        snapshot[i] = buffers[i];
     // arena slices share an object and cannot be independent pending tokens
     void* token = zgc_aligned_alloc(16, 16);
     if (!token)
@@ -695,9 +699,9 @@ void* filc_async_wait_all_array(const void* const* buffers, size_t count)
     const size_t max_entries =
         (SIZE_MAX - sizeof(struct join_state)) / sizeof(struct join_entry);
     for (size_t i = 0; i < count; ++i) {
-        if (!buffers[i])
+        if (!snapshot[i])
             continue;
-        uintptr_t lower = (uintptr_t)zgetlower((void*)buffers[i]);
+        uintptr_t lower = (uintptr_t)zgetlower((void*)snapshot[i]);
         for (filc_async_mark* m = *mark_bucket(lower); m; m = m->bucket_next)
             if (m->lower == lower) {
                 if (capacity == max_entries)
@@ -712,9 +716,9 @@ void* filc_async_wait_all_array(const void* const* buffers, size_t count)
     struct join_state* s = (struct join_state*)alloc_or_die(
         sizeof *s + capacity * sizeof s->entries[0]);
     for (size_t i = 0; i < count; ++i) {
-        if (!buffers[i])
+        if (!snapshot[i])
             continue;
-        uintptr_t lower = (uintptr_t)zgetlower((void*)buffers[i]);
+        uintptr_t lower = (uintptr_t)zgetlower((void*)snapshot[i]);
         for (filc_async_mark* m = *mark_bucket(lower); m; m = m->bucket_next) {
             if (m->lower != lower)
                 continue;
