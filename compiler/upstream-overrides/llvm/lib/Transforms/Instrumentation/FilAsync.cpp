@@ -313,12 +313,6 @@ static bool isFilcAsyncEntry(Value *E) {
 
 } // anonymous namespace
 
-const FilAsyncPass::AnnotInfo *
-FilAsyncPass::getAnnotInfo(const Function *F) const {
-  auto It = Annotated.find(F);
-  return It == Annotated.end() ? nullptr : &It->second;
-}
-
 void FilAsyncPass::renameBody(Function *F, StringRef OrigName) {
   // A declaration may be backed by an ordinary definition in another TU.
   // Keep its linker name; the annotated call still passes it as impl. An
@@ -358,7 +352,9 @@ FilAsyncPass::emitOpts(Module &M, StringRef OrigName, const AnnotInfo &Info) {
 
 GlobalVariable *FilAsyncPass::emitMeta(Function *F, StringRef OrigName,
                                        const AnnotInfo &Info,
-                                       GlobalVariable *Opts) {
+                                       GlobalVariable *Opts,
+                                       ArrayRef<unsigned> Kinds,
+                                       ArrayRef<unsigned> Deps, unsigned Noped) {
   Module &M = *F->getParent();
   LLVMContext &Ctx = M.getContext();
   Type *PtrTy = PointerType::getUnqual(Ctx);
@@ -369,13 +365,6 @@ GlobalVariable *FilAsyncPass::emitMeta(Function *F, StringRef OrigName,
 
   // Pointer return -> FILC_ASYNC_RESULT_PTR (2); anything else WORD (1).
   unsigned Result = F->getReturnType()->isPointerTy() ? RESULT_PTR : RESULT_WORD;
-
-  // Kinds come from the argument options ONLY -- op= never decides a
-  // kind (see parseKinds). noped_args counts the bin=/bout=/buf= options.
-  SmallVector<unsigned, 8> Kinds;
-  SmallVector<unsigned, 8> Deps;
-  unsigned Noped;
-  parseKinds(OrigName, *F, Info, Kinds, Deps, Noped);
 
   // The `name` field holds the ORIGINAL name, captured before renameBody in run().
   Constant *NameInit =
@@ -769,8 +758,9 @@ PreservedAnalyses FilAsyncPass::run(Module &M, ModuleAnalysisManager &) {
     parseKinds(OrigName, *F, *KV.second, Kinds, Deps, Noped);
     renameBody(F, OrigName);
     GlobalVariable *Opts = emitOpts(M, OrigName, *KV.second);
-    GlobalVariable *Meta = emitMeta(F, OrigName, *KV.second, Opts);
-    Emitted[F] = {Opts, Meta, OrigName, std::move(Kinds), std::move(Deps)};
+    GlobalVariable *Meta =
+        emitMeta(F, OrigName, *KV.second, Opts, Kinds, Deps, Noped);
+    Emitted[F] = {Meta, OrigName, std::move(Kinds), std::move(Deps)};
     Metas.push_back(Meta);
   }
   emitMetaTableAndCtor(M, Metas);

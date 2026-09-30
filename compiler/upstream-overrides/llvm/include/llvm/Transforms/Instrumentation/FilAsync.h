@@ -1,6 +1,7 @@
 #ifndef FILASYNC_H
 #define FILASYNC_H
 
+#include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/IR/PassManager.h"
@@ -47,8 +48,6 @@ public:
   // authority, enforced by its startup validator (filc_async_validate_table).
   bool enrollAnnotatedFunctions(Module &M);
 
-  const AnnotInfo *getAnnotInfo(const Function *F) const;
-
   PreservedAnalyses run(Module &M, ModuleAnalysisManager &MAM);
   static bool isRequired() { return true; }
 
@@ -59,9 +58,12 @@ public:
   // Meta: `@__filc_meta_<name>` = internal constant typed exactly like the C
   // `filc_async_meta` {name, nargs, noped_args, flags, result, opts, runtime,
   // args[]}, pointer fields as real pointers. `runtime` points at the external
-  // `filc_async_runtime_<name>` of the required runtime=<name> option.
+  // `filc_async_runtime_<name>` of the required runtime=<name> option. Kinds,
+  // Deps and Noped come from the argument options (parseKinds); op= never
+  // decides a kind.
   GlobalVariable *emitMeta(Function *F, StringRef OrigName, const AnnotInfo &Info,
-                           GlobalVariable *Opts);
+                           GlobalVariable *Opts, ArrayRef<unsigned> Kinds,
+                           ArrayRef<unsigned> Deps, unsigned Noped);
   // Renames a defined F to `__filc_async_<OrigName>` and, unless F is local,
   // keeps `<OrigName>` as an alias of it for callers in other TUs.
   // Declarations retain the ordinary linker name so the implementation can
@@ -94,10 +96,9 @@ private:
   std::map<const Function *, AnnotInfo> Annotated;
 
   // Per-enrolled-function emission results, so rewriteCallSites can reference
-  // the exact metas/opts globals and bake each argument's kind and dependency
+  // the exact meta global and bake each argument's kind and dependency
   // into the stub.
   struct Descriptors {
-    GlobalVariable *Opts;
     GlobalVariable *Meta;
     std::string OrigName;
     SmallVector<unsigned, 8> Kinds;

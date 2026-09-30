@@ -297,13 +297,11 @@ addSig nil, "int", "zsys_munmap", "filc_ptr", "size_t"
 #
 #   io_uring_setup(entries, params)                       syscall 425
 #   io_uring_enter(fd, to_submit, min_complete, flags)    syscall 426
-#   io_uring_register(fd, opcode, arg, nr_args)           syscall 427
 #
 # The signal-mask arguments of io_uring_enter are always passed as NULL, so they
 # are not part of the bridged signature; see fasync_native.c.
 addSig nil, "long", "zsys_io_uring_setup", "unsigned", "filc_ptr"
 addSig nil, "long", "zsys_io_uring_enter", "int", "unsigned", "unsigned", "unsigned"
-addSig nil, "long", "zsys_io_uring_register", "int", "unsigned", "filc_ptr", "size_t"
 
 # Async syscall runtime entry points (async-a-sync project). The compiler-emitted
 # resolution hook is a native symbol named directly by the patch; these are the

@@ -23,7 +23,7 @@ mkdir -p "$TMP/src/libpas"
 
 HEADER=$TMP/src/libpas/filc_native.h
 FORWARDERS=$TMP/src/libpas/filc_native_forwarders.c
-for name in zsys_io_uring_setup zsys_io_uring_enter zsys_io_uring_register \
+for name in zsys_io_uring_setup zsys_io_uring_enter \
             fasync_publish_state fasync_poll fasync_block; do
   grep -qF "filc_native_${name}(" "$HEADER" || {
     echo "missing native declaration: $name" >&2

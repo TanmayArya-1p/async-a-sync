@@ -125,12 +125,6 @@ static inline void demo_cold(void) {
     posix_fadvise(demo_fd[i], 0, demo_bytes, POSIX_FADV_DONTNEED);
 }
 
-static inline const char* read_file(int i) {
-  if (pread(demo_fd[i], demo_buf[i], demo_bytes, 0) != (ssize_t)demo_bytes)
-    return 0;
-  return (const char*)demo_buf[i];
-}
-
 static inline void read_all_files(void) {
   for (int i = 0; i < demo_n; i++) {
 #ifdef FASYNC_IMPLICIT

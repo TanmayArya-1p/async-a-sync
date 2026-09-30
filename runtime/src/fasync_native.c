@@ -11,17 +11,6 @@ static PAS_ALWAYS_INLINE long fasync_syscall2(long n, long a, long b) {
   return ret;
 }
 
-static PAS_ALWAYS_INLINE long fasync_syscall4(long n, long a, long b, long c,
-                                              long d) {
-  long ret;
-  register long r10 __asm__("r10") = d;
-  __asm__ volatile("syscall"
-                   : "=a"(ret)
-                   : "a"(n), "D"(a), "S"(b), "d"(c), "r"(r10)
-                   : "rcx", "r11", "memory");
-  return ret;
-}
-
 static PAS_ALWAYS_INLINE long fasync_syscall6(long n, long a, long b, long c,
                                               long d, long e, long f) {
   long ret;
@@ -71,18 +60,6 @@ PAS_API long filc_native_zsys_io_uring_enter(filc_thread* my_thread,
                              0L, 0L);
   filc_enter(my_thread);
 
-  return fasync_finish(ret);
-}
-
-PAS_API long filc_native_zsys_io_uring_register(filc_thread* my_thread,
-                                                int ring_fd, unsigned opcode,
-                                                filc_ptr arg,
-                                                size_t nr_args) {
-  filc_exit(my_thread);
-  long ret = fasync_syscall4(FASYNC_SYS_io_uring_register, (long)ring_fd,
-                             (long)opcode, (long)filc_ptr_ptr(arg),
-                             (long)nr_args);
-  filc_enter(my_thread);
   return fasync_finish(ret);
 }
 
