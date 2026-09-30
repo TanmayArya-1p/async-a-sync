@@ -4,11 +4,16 @@ project(FilAsyncPlugin)
 find_package(LLVM REQUIRED CONFIG NO_MODULE)
 message(STATUS "Found LLVM ${LLVM_PACKAGE_VERSION} in ${LLVM_DIR}")
 
-add_library(FilAsync MODULE ../upstream-overrides/llvm/lib/Transforms/Instrumentation/FilAsync.cpp)
-# The override header comes first so it wins over any older copy that
-# compiler/build.sh installed into the LLVM tree.
+add_library(FilAsync MODULE ../pass/FilAsync.cpp)
+# FilAsync.h is included as llvm/Transforms/Instrumentation/FilAsync.h. Map
+# that path onto pass/, ahead of any copy compiler/build.sh installed into the
+# LLVM tree.
+file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/include/llvm/Transforms/Instrumentation)
+file(CREATE_LINK ${CMAKE_CURRENT_SOURCE_DIR}/../pass/FilAsync.h
+  ${CMAKE_CURRENT_BINARY_DIR}/include/llvm/Transforms/Instrumentation/FilAsync.h
+  SYMBOLIC)
 target_include_directories(FilAsync BEFORE PRIVATE
-  ${CMAKE_CURRENT_SOURCE_DIR}/../upstream-overrides/llvm/include
+  ${CMAKE_CURRENT_BINARY_DIR}/include
   )
 target_include_directories(FilAsync PRIVATE ${LLVM_INCLUDE_DIRS})
 target_compile_features(FilAsync PRIVATE cxx_std_17)

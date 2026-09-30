@@ -70,7 +70,7 @@ c = buf[0]
 
 ### FilAsync pass
 
-`compiler/upstream-overrides/llvm/lib/Transforms/Instrumentation/FilAsync.cpp`
+`compiler/pass/FilAsync.cpp`
 
 **Where it runs.** Clang records the pragma in `llvm.global.annotations`.
 `BackendUtil.cpp` installs FilAsync at the very start of Fil-C's pipeline,
@@ -96,7 +96,7 @@ other units still link (`tests/t_linked_async_*.c`).
 
 **Parameter names.** Options name parameters (`bout=buf`, `r_dep=fd:file`).
 IR declarations carry no parameter names, so a small clang patch
-(`compiler/upstream-patches/filc-async-param-names.patch`) records them on
+(`compiler/patches/filc-async-param-names.patch`) records them on
 each annotated function as `!filc_async.params`, and the pass resolves each
 option against that list.
 
@@ -105,7 +105,8 @@ dependency types. It never checks `op=`: the runtime decides which ops exist.
 
 ### The access hook
 
-`compiler/upstream-overrides/llvm/lib/Transforms/Instrumentation/FilPizlonator.cpp`
+`compiler/patches/filpizlonator-pending-hook.patch`, a patch to Fil-C's
+`FilPizlonator.cpp`
 
 FilPizlonator is Fil-C's pass that turns pointers into capabilities. Before
 the capability check on an access through an escaping pointer, the patched
@@ -234,11 +235,11 @@ ring. That gives safety, not I/O parallelism across threads.
 
 | Area | Files |
 |---|---|
-| Call rewriting, descriptors, stubs, run thunks | `compiler/upstream-overrides/llvm/lib/Transforms/Instrumentation/FilAsync.cpp` |
-| Pending-flag test at access sites | `compiler/upstream-overrides/llvm/lib/Transforms/Instrumentation/FilPizlonator.cpp` |
-| Pass order | `compiler/upstream-overrides/clang/lib/CodeGen/BackendUtil.cpp` |
+| Call rewriting, descriptors, stubs, run thunks | `compiler/pass/FilAsync.cpp` |
+| Pending-flag test at access sites | `compiler/patches/filpizlonator-pending-hook.patch` |
+| Pass order | `compiler/patches/backend-util-run-filasync.patch` |
 | Framework | `runtime/src/filc_async.c`, `filc_async.h`, `filc_async_runtime.h` |
 | Header flag and resolver bridge | `runtime/src/filc_async_native.c` |
 | Allocator | `runtime/src/filc_async_arena.c`, `filc_async_alloc.h` |
 | io_uring runtime | `runtime/src/filc_async_uring.c`, `fasync*.c` |
-| Native forwarder generator | `runtime/upstream-overrides/generate_pizlonated_forwarders.rb` |
+| Native forwarders | `runtime/patches/libpas-forwarders.patch` |

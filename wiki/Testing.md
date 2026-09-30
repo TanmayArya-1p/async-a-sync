@@ -63,7 +63,7 @@ hand.
 
 | Check | Proves |
 |---|---|
-| `check_forwarders.sh` | the native forwarders for the io_uring syscalls are generated (needs only Ruby) |
+| `check_forwarders.sh` | the forwarders patch makes Fil-C's generator emit every native bridge the runtimes call (needs Ruby and the Fil-C checkout) |
 | `check_linkage.sh` with `t_linked_async_main.c`/`_def.c` | the archives hold what they should; the framework refers to no runtime; a declaration-only annotation links an implementation in another file |
 | `t_backend_io_uring.c` | hand-built descriptors naming the io_uring runtime reach every supported operation through `filc_async_submit` |
 | `t_pragma_io_uring.c`, `t_pragma_dependencies.c` | annotated calls dispatch end to end and honor dependency order |

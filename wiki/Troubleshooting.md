@@ -7,7 +7,7 @@
 | Missing `crtbegin.o`, `filc_crt.o`, or `-lyolort` | The patched driver cannot find `pizfix`. Check that `vendor/fil-c-src/pizfix` links to the distribution's `pizfix` (see [Build and link](Building-and-Linking.md#build-the-compiler)). |
 | `SROA.cpp`: `AI` undeclared in a Release build | The SROA patch was not applied. Rerun `compiler/build.sh` on the source checkout. |
 | A compiler process is killed during the Clang build | Out of memory. Lower `JOBS`; Ninja keeps finished objects. |
-| Override or patch fails to apply | The source checkout is not at the pinned revision `d80c8bba1c58`. |
+| `apply_filc_patches.sh: <patch> does not match` | The source checkout is not at the pinned revision `d80c8bba1c58`. |
 
 ## Link
 

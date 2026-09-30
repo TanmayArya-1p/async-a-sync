@@ -15,13 +15,9 @@ linking programs against them. For a first-time walkthrough, see
 
 ## Pin the Fil-C source revision
 
-`deluge` is a moving branch. Two things are tied to the source shape at
-`d80c8bba1c58`:
-
-- the compiler overrides in `compiler/upstream-overrides/`;
-- the patches in `compiler/upstream-patches/`.
-
-Build from that revision unless you intend to rebase them. At that revision,
+`deluge` is a moving branch. The patches in `compiler/patches/` and
+`runtime/patches/` are diffs against the source at `d80c8bba1c58`. Build
+from that revision unless you intend to rebase them. At that revision,
 both compilers report Fil-C 0.685 and Clang 20.1.8. A shallower sparse
 checkout is enough for the runtime, but not for a complete Clang build.
 
@@ -33,8 +29,9 @@ checkout is enough for the runtime, but not for a complete Clang build.
 
 The script:
 
-- regenerates Fil-C's native forwarders to include the io_uring syscalls and
-  the framework's native helpers;
+- applies `runtime/patches/libpas-forwarders.patch` to Fil-C's forwarder
+  generator, and regenerates the native forwarders, which then include the
+  io_uring syscalls and the framework's native helpers;
 - copies the distribution's `libpizlo.a` into
   `runtime/build/lib/libpizlo.a`, adding the framework and native bridges;
 - archives the io_uring runtime as `runtime/build/lib/libfilc_async_uring.a`.
@@ -52,17 +49,25 @@ JOBS=8 ./compiler/build.sh
 
 The script:
 
-- installs the repository's overrides into the source checkout
-  (`FilAsync.cpp`, `FilPizlonator.cpp`, the pass registration);
-- applies each patch in `compiler/upstream-patches/`, once;
+- copies the FilAsync pass (`compiler/pass/`) into the source checkout;
+- applies each patch in `compiler/patches/`, once;
 - builds Clang into `vendor/fil-c-src/build/bin/filcc`.
 
 The patches:
 
-- **`sroa-release-verbose.patch`** fixes a Release-build error where a log
-  statement reads a field that is compiled out under `NDEBUG`.
+- **`backend-util-run-filasync.patch`** runs FilAsync first in Fil-C's
+  pipeline, and **`instrumentation-cmake-filasync.patch`** builds it.
+- **`filpizlonator-pending-hook.patch`** adds the pending-flag test that
+  FilPizlonator puts before each access.
 - **`filc-async-param-names.patch`** makes clang record the parameter names
   of each `filc_async` function, which the options refer to.
+- **`sroa-release-verbose.patch`** fixes a Release-build error where a log
+  statement reads a field that is compiled out under `NDEBUG`.
+
+**Applying them.** Each patch holds only our change. `scripts/apply_filc_patches.sh`
+applies a patch once, and leaves an already-patched file alone so it is not
+rebuilt. If a file holds something else, such as a whole-file copy an older
+version of this repository installed, it first restores the upstream file.
 
 - **Memory.** The build has thousands of steps and needs a lot of RAM. On a
   13 GiB machine, 16 jobs got a compiler process killed, while 8 finished.

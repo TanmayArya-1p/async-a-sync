@@ -82,8 +82,9 @@ The documentation lives in [`wiki/`](wiki/Home.md):
 
 | Path | What it is |
 |---|---|
-| `compiler/` | overrides and patches for Fil-C's clang: the FilAsync pass and the access hook |
+| `compiler/` | the FilAsync pass, and patches to Fil-C's clang for the pass and the access hook |
 | `runtime/` | the async framework, the runtime interface, and the io_uring runtime |
 | `demos/` | the demos (`make help`): `pragma/` annotated calls, `explicit/` the `fasync_*` API, `wordcount/` one program built three ways, `rpc/` a runtime of the program's own, `common/` shared helpers |
 | `tests/` | the test suite (`./tests/run.sh`) |
+| `scripts/` | build helpers shared by `compiler/` and `runtime/` |
 | `wiki/` | the documentation |

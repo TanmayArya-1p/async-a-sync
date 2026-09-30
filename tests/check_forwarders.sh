@@ -1,6 +1,8 @@
 #!/bin/sh
-# Verify the checked-in generator emits every native io_uring bridge that the
-# memory-safe runtime calls. This test needs Ruby, but not a Fil-C checkout.
+# Verify that runtime/patches/libpas-forwarders.patch makes Fil-C's forwarder
+# generator emit every native bridge the runtimes call. Needs Ruby and the
+# Fil-C source checkout the patch applies to; it runs on a copy of the
+# upstream generator, so the checkout is left alone.
 set -eu
 
 if ! command -v ruby >/dev/null 2>&1; then
@@ -9,22 +11,29 @@ if ! command -v ruby >/dev/null 2>&1; then
 fi
 
 REPO=$(cd "$(dirname "$0")/.." && pwd)
+FILC_SRC=${FILC_SRC:-$REPO/vendor/fil-c-src}
+GENERATOR=libpas/src/libpas/generate_pizlonated_forwarders.rb
+if ! git -C "$FILC_SRC" cat-file -e "HEAD:$GENERATOR" 2>/dev/null; then
+  echo "check_forwarders: no Fil-C source checkout at $FILC_SRC" >&2
+  exit 77
+fi
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT HUP INT TERM
-mkdir -p "$TMP/src/libpas"
+mkdir -p "$TMP/libpas/src/libpas" "$TMP/out/src/libpas"
+git -C "$FILC_SRC" show "HEAD:$GENERATOR" > "$TMP/$GENERATOR"
+(cd "$TMP" && git apply "$REPO/runtime/patches/libpas-forwarders.patch")
 
 (
-  cd "$TMP"
-  ruby "$REPO/runtime/upstream-overrides/generate_pizlonated_forwarders.rb" \
-    src/libpas/filc_native.h
-  ruby "$REPO/runtime/upstream-overrides/generate_pizlonated_forwarders.rb" \
-    src/libpas/filc_native_forwarders.c
+  cd "$TMP/out"
+  ruby "$TMP/$GENERATOR" src/libpas/filc_native.h
+  ruby "$TMP/$GENERATOR" src/libpas/filc_native_forwarders.c
 )
 
-HEADER=$TMP/src/libpas/filc_native.h
-FORWARDERS=$TMP/src/libpas/filc_native_forwarders.c
+HEADER=$TMP/out/src/libpas/filc_native.h
+FORWARDERS=$TMP/out/src/libpas/filc_native_forwarders.c
 for name in zsys_io_uring_setup zsys_io_uring_enter \
-            fasync_publish_state fasync_poll fasync_block; do
+            fasync_publish_state fasync_poll fasync_block \
+            zasync_set_pending zasync_set_resolver; do
   grep -qF "filc_native_${name}(" "$HEADER" || {
     echo "missing native declaration: $name" >&2
     exit 1

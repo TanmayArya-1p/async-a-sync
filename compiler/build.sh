@@ -25,43 +25,32 @@ if [ ! -d "$FILC_SRC/llvm" ]; then
 fi
 
 # ---------------------------------------------------------------------
-# 1. Install our upstream overrides, idempotently.
+# 1. Put our changes into the Fil-C checkout, idempotently.
 #
-# Every file under upstream-overrides mirrors a file inside the Fil-C
-# source checkout; copy each one over the fetched checkout so the build
-# below carries them. This is how we patch generated sources (CMake
-# lists, clang BackendUtil, the FilPizlonator pass) without forking the
-# whole tree. The diff -q guard keeps repeated runs cheap and idempotent.
+# pass/ holds the FilAsync pass, our own code, which is copied into the LLVM
+# tree. patches/ holds our changes to upstream files, each a patch against the
+# pinned revision:
+#   backend-util-run-filasync.patch    runs FilAsync first in Fil-C's pipeline
+#   instrumentation-cmake-filasync.patch  builds FilAsync.cpp
+#   filpizlonator-pending-hook.patch   the pending-flag test at access sites
+#   filc-async-param-names.patch       clang records the parameter names of
+#                                      each filc_async function
+#   sroa-release-verbose.patch         Release builds omit AllocaSlices::AI,
+#                                      which SROA's verbose log still uses
 # ---------------------------------------------------------------------
-for f in $(cd "$HERE/upstream-overrides" && LC_ALL=C find . -type f); do
-  rel=${f#./}
-  dst="$FILC_SRC/$rel"
-  if diff -q "$HERE/upstream-overrides/$f" "$dst" >/dev/null 2>&1; then
-    echo "== already installed: $rel"
+install_file() {
+  dst=$FILC_SRC/$2
+  if diff -q "$1" "$dst" >/dev/null 2>&1; then
+    echo "== already installed: $2"
   else
-    echo "== installing: $rel"
+    echo "== installing: $2"
     mkdir -p "$(dirname "$dst")"
-    cp "$HERE/upstream-overrides/$f" "$dst"
+    cp "$1" "$dst"
   fi
-done
-
-# Small changes to large upstream files are patches instead of overrides:
-#   sroa-release-verbose.patch   Release builds omit AllocaSlices::AI, which
-#                                SROA's verbose log still refers to.
-#   filc-async-param-names.patch clang records the parameter names of each
-#                                filc_async function for the FilAsync pass.
-for patch in "$HERE"/upstream-patches/*.patch; do
-  name=$(basename "$patch")
-  if git -C "$FILC_SRC" apply --check "$patch" 2>/dev/null; then
-    echo "== installing: $name"
-    git -C "$FILC_SRC" apply "$patch"
-  elif git -C "$FILC_SRC" apply --reverse --check "$patch" 2>/dev/null; then
-    echo "== already installed: $name"
-  else
-    echo "build.sh: $name does not match $FILC_SRC" >&2
-    exit 1
-  fi
-done
+}
+install_file "$HERE/pass/FilAsync.cpp" llvm/lib/Transforms/Instrumentation/FilAsync.cpp
+install_file "$HERE/pass/FilAsync.h" llvm/include/llvm/Transforms/Instrumentation/FilAsync.h
+"$REPO/scripts/apply_filc_patches.sh" "$FILC_SRC" "$HERE/patches"
 
 # ---------------------------------------------------------------------
 # 2. Report the resource situation honestly before starting.

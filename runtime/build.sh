@@ -26,9 +26,6 @@ if [ ! -d "$FILC_SRC/libpas" ]; then
   exit 1
 fi
 
-GENERATOR=$FILC_SRC/libpas/src/libpas/generate_pizlonated_forwarders.rb
-OVERRIDE=$HERE/upstream-overrides/generate_pizlonated_forwarders.rb
-
 BUILD=$HERE/build
 OBJ=$BUILD/obj
 LIB=$BUILD/lib
@@ -49,8 +46,10 @@ if [ ! -e "$HERE/os-include/linux" ]; then
   ln -sfn /usr/include/asm-generic "$HERE/os-include/asm-generic"
 fi
 
-echo "== installing the forwarders-generator override"
-cp "$OVERRIDE" "$GENERATOR"
+# patches/libpas-forwarders.patch adds the native entry points the runtimes
+# call (the io_uring syscalls, the completion drain, the pending flag) to
+# Fil-C's forwarder generator.
+"$REPO/scripts/apply_filc_patches.sh" "$FILC_SRC" "$HERE/patches"
 
 PAS_INCLUDES="-nostdinc -isystem $FILC_ROOT/pizfix/include \
   -isystem $HERE/os-include \

@@ -46,8 +46,7 @@ allocated in the arena.
 
 ## Maintenance
 
-- **Pinned revision.** The compiler overrides and patches are tied to
-  Fil-C source revision `d80c8bba1c58`. A newer `deluge` may need them
-  rebased.
+- **Pinned revision.** The patches to Fil-C are tied to source revision
+  `d80c8bba1c58`. A newer `deluge` may need them rebased.
 - **Untested targets.** `tests/run.sh` does not run the Makefile demo
   targets. Run them by hand after changing the runtime or the link line.
