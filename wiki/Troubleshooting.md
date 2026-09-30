@@ -38,6 +38,7 @@
 | A buffer passed to `memcmp`/`strlen`/`write` holds stale data | Fil-C's libc is not instrumented. Touch the buffer, wait on the call, or call `fasync_resolve_pending` first. |
 | The body of an annotated function never runs | The call was not rewritten (see Compile above), or your runtime does not run bodies. |
 | A program hangs with a custom runtime | The runtime does not make progress when polled with `FILC_ASYNC_POLL_BLOCK`, or holds a lock across `filc_async_run`. See [Rules for runtimes](Runtime-API.md#rules-for-runtimes). |
+| `filc safety error: cannot read pointer with null object` in `filc_async_validate_table`, before `main` | Known defect on `c070bda`. The pass never emits a reference to `filc_async_runtime_<name>`, so `meta->runtime` is statically zero. See [below](#annotated-calls-panic-before-main-runtime-descriptor-never-referenced). |
 
 ## Tests
 
@@ -45,3 +46,87 @@
 |---|---|
 | Many tests fail at request creation | io_uring is blocked in this environment. This is not a dispatch bug. |
 | Tests reported as skipped | The patched compiler is missing, or io_uring is unavailable. The run prints which. |
+
+## Annotated calls panic before `main`: runtime descriptor never referenced
+
+Every annotated program on `c070bda` dies before `main`:
+
+```
+filc safety error: cannot read pointer with null object.  pointer: 0x20000001c
+semantic origin: runtime/src/filc_async.c:805:62: filc_async_validate_table
+    <somewhere>: __filc_async_ctor
+```
+
+`make demo-pragma-hello` reproduces it, so no pragma demo runs.
+
+### Symptom
+
+`filc_async_validate_table` reads `m->runtime` (line 805) to call
+`m->runtime->validate(m)`. Line 803 guards it with `if (!m->runtime)`, but
+that guard does not fire: under Fil-C the field holds a *tagged* null, not a
+zero word, so the test is false and the dereference proceeds and traps. The
+zero capability is also why the "function names no runtime" message never
+appears.
+
+### Cause
+
+`FilAsync.cpp` asks for the runtime descriptor with:
+
+```cpp
+Constant *Runtime = M.getOrInsertGlobal(
+    ("filc_async_runtime_" + parseRuntime(OrigName, Info)).str(), PtrTy);
+```
+
+`getOrInsertGlobal` with no initializer and no linkage creates a *tentative
+definition* — a global this module owns — not a declaration of the symbol the
+runtime library exports. Nothing in the demo's object file refers to
+`filc_async_runtime_io_uring`, so nothing links against the definition in
+`libfilc_async_uring.a`, and the field stays statically zero.
+
+```
+$ readelf -sW hello.o | grep -i runtime_io_uring      # no output
+$ strings hello.o | grep runtime=                      # runtime=io_uring
+$ nm runtime/build/lib/libfilc_async_uring.a | grep ' T .*runtime_io_uring'
+0000000000000000 T pizlonated_filc_async_runtime_io_uring
+```
+
+A C `extern` declaration and a tentative definition behave differently, which
+is the whole bug:
+
+| Declaration in the module | Emitted symbol |
+|---|---|
+| `extern void* ext;` | `UND pizlonated_ext_runtime` — a real reference |
+| `void* tent;` | `LOCAL OBJECT pizlonatedDO_tent_runtime` — a local zeroed object, no relocation |
+
+Two consequences beyond the panic:
+
+- The documented link-time safety net does not work. Both
+  [Annotation-Reference](Annotation-Reference.md) and
+  [Writing-a-Runtime](Writing-a-Runtime.md) promise an undefined
+  `pizlonated_filc_async_runtime_<name>` when a named runtime is not linked. No
+  such error is produced, so a missing runtime is discovered as a null
+  dereference at startup instead.
+- The failure is silent at compile and link time, which is why a green build
+  does not imply a working program.
+
+### Fix
+
+Emit a declaration with explicit external linkage so the reference survives:
+
+```cpp
+Constant *Runtime = new GlobalVariable(
+    M, PtrTy, /*isConstant=*/true, GlobalValue::ExternalLinkage,
+    /*Initializer=*/nullptr,
+    ("filc_async_runtime_" + parseRuntime(OrigName, Info)).str());
+```
+
+This is the one-line change; it also restores the intended link error for an
+unlinked runtime. Two things are worth checking alongside it:
+
+- Line 803's guard should test the capability properly rather than relying on
+  the field being a zero word, so a null descriptor reports the intended
+  message instead of trapping.
+- `validate_table` may be indexing past the end of `metas` if the pass's
+  per-TU table is terminated differently. Not the cause here, but it is the
+  next thing to read if the panic survives the fix.
+
