@@ -136,6 +136,17 @@ void  filc_async_wait(struct filc_async_result_s* out);
 void  filc_async_mark_resolved(void* buf);
 bool  filc_async_is_pending(const void* buf);
 
+// returns a separate completion object without waiting for the inputs
+// captures current marks; later marks on an input are not included
+// null inputs and an empty array are allowed; errors stay with each task
+// the returned object is gc-managed; do not free it or use it as data
+void* filc_async_wait_all_array(const void* const* buffers, size_t count);
+
+// c convenience form; use the array function for a variable input count
+#define filc_async_wait_all(...)                                         \
+    filc_async_wait_all_array((const void* const[]){__VA_ARGS__},          \
+        sizeof((const void* const[]){__VA_ARGS__}) / sizeof(const void*))
+
 void  filc_async_get_stats(filc_async_stats* out);
 
 /* Startup validation: the pass-emitted per-TU constructor calls

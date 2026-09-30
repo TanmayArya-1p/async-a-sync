@@ -13,6 +13,8 @@ runs asynchronously underneath.
   to an asynchronous runtime and returns immediately.
 - **Buffers stay pending.** The buffers the call produces are pending until it
   completes.
+  `filc_async_wait_all(...)` joins completion pointers when a later call needs
+  to wait for several operations. See the [group contract](wiki/Framework-API.md#joining-pending-buffers).
 - **The first access waits.** Fil-C's
   [InvisiCaps](https://fil-c.org/invisicaps) give every pointer a reference to
   its object's header. The patched compiler tests a pending flag there before

@@ -35,6 +35,38 @@ through how it implements each runtime function.
 - **Capacity.** At most 1024 requests are in flight (`FASYNC_MAX_INFLIGHT`).
   All threads share one ring.
 
+### Completion pointers
+
+Supported syscall signatures can include trailing completion pointers after
+their required arguments. These must be unannotated pointers, `bout=` or
+`buf=` arguments. The framework marks them before submission and resolves them
+on completion; the io_uring request uses only the required syscall arguments.
+Trailing scalars and `bin=` arguments are rejected.
+
+```c
+#pragma clang attribute push(__attribute__((annotate("filc_async", "runtime=io_uring", "op=pread", "bout=data"))), apply_to=function)
+void* read_at(int fd, void* data, size_t len, unsigned long offset, void* done);
+#pragma clang attribute pop
+
+#pragma clang attribute push(__attribute__((annotate("filc_async", "runtime=io_uring", "op=pwrite", "bin=data"))), apply_to=function)
+void* write_at(int fd, const void* data, size_t len, unsigned long offset, void* done);
+#pragma clang attribute pop
+
+void* first = calloc(1, 1);
+void* second = calloc(1, 1);
+read_at(fd, first_buffer, first_size, 0, first);
+read_at(fd, second_buffer, second_size, first_size, second);
+void* result = write_at(fd, output, output_size, 0,
+                       filc_async_wait_all(first, second));
+```
+
+The reads can overlap. The writer's stub waits for both read marks before
+queuing its request. The read buffers and completion pointers must each be
+separate objects. The writer may start after failed reads too; inspect their
+results if the write should depend on success. See the
+[group contract](Framework-API.md#joining-pending-buffers) for array inputs,
+pointer reuse, and lifetime.
+
 ## How it works
 
 The runtime's descriptor is the only symbol programs refer to. It is declared
@@ -99,12 +131,14 @@ then checks the argument kinds against the op's syscall (`shape_ok`):
 
 ```c
 case URING_OP_READ:
-    return m->nargs == 4 && is_output_kind(m->args[1].kind) &&
+    return completion_args_ok(m, 4) && is_output_kind(m->args[1].kind) &&
            m->args[2].kind == FILC_ASYNC_ARG_IGNORED &&
            m->args[3].kind == FILC_ASYNC_ARG_IGNORED;
 ```
 
-Argument 0, the descriptor, must be an unannotated integer. An unknown op or
+`completion_args_ok` requires the syscall's arguments and checks any trailing
+arguments are completion pointers. Argument 0, the descriptor, must be an
+unannotated integer. An unknown op or
 a wrong shape aborts the program before `main`.
 
 ### Submit

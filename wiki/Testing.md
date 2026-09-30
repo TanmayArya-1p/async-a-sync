@@ -49,6 +49,7 @@ line, run `make demo-pragma`, `make all-demos` and `make disasm` by hand.
 | `check_dependency_options.sh` | dependency metadata and the hashes of `<param>:<namespace>`, the runtime each descriptor points to, option precedence between declaration and definition, rejection of conflicting, empty-namespace, namespace-less and obsolete options, of indices and unknown parameter names, of the removed `fd=`, and of a missing, malformed or doubled `runtime=` |
 | `t_param_names.c` | the patched clang gives an annotated prototype without parameter names the definition's names; dependencies conflict only when value, parameter name and namespace all match |
 | `check_callsite_pragma.sh` | a pragma around a call is an error with `-Werror=pragma-clang-attribute` |
+| `check_wait_all.sh` | completion arguments retain five 16-byte staging cells; read and writer stubs mark tokens before submission; emitted object relocations reference framework services |
 | `t_annotate_smoke.c` | Clang emits `llvm.global.annotations` for the pragma |
 | `stage4_compiler_hook.c` | the patched compiler inserts the pending-flag test and resolves buffers on access |
 | `t_pragma_same_tu_lazy.c`, `t_pragma_repeat_read.c` | calls in the defining translation unit are redirected before inlining; identical call sites each submit |
@@ -58,6 +59,7 @@ line, run `make demo-pragma`, `make all-demos` and `make disasm` by hand.
 
 | Check | Proves |
 |---|---|
+| `check_wait_all.sh`, `t_wait_all.c` | 30 producers can make progress before a writer is handed off; out-of-order completion, failed tasks, snapshots across pointer reuse, duplicate/interior pointers, shared owners, nested groups, early resolution, ownerless marks, and concurrent waiters |
 | `check_dependencies.sh`, `t_dependency_mock.c` | dependency locks order calls against a deterministic mock runtime |
 | `t_mock_runtime.c` with `support/mock_runtime.c` | annotated calls work with another runtime linked and no io_uring symbol present |
 | `t_two_runtimes.c` with `support/mock_runtime.c` and io_uring | two runtimes in one program: a lock and a pending buffer order calls across them |
@@ -75,6 +77,7 @@ line, run `make demo-pragma`, `make all-demos` and `make disasm` by hand.
 | `check_forwarders.sh` | the forwarders patch makes Fil-C's generator emit every native bridge the runtimes call (needs Ruby and the Fil-C checkout) |
 | `check_linkage.sh` with `t_linked_async_main.c`/`_def.c` | the archives hold what they should; the framework refers to no runtime; a declaration-only annotation links an implementation in another file |
 | `t_backend_io_uring.c` | hand-built descriptors naming the io_uring runtime reach every supported operation through `filc_async_submit` |
+| `t_wait_all_uring.c` | 30 separately marked reads queue before the writer; trailing completion arguments validate, each read sees the original data, and the later write reaches disk; stock builds use explicit stubs, patched builds use annotated calls |
 | `t_pragma_io_uring.c`, `t_pragma_dependencies.c` | annotated calls dispatch end to end and honor dependency order |
 | `t_pragma_lazy_many.c` | more never-polled calls than the request table holds complete (slot reclaiming) |
 | `t_pragma_many_calls.c`, `t_pragma_reuse_lazy.c` | handles retire once delivered; reusing touched buffers does not flush the queue |
