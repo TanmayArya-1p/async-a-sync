@@ -33,6 +33,7 @@ mkdir -p "$OUT"
     -o "$OUT/demo_rpc_$DEMO" \
     "$HERE/demo_rpc_$DEMO.c" "$HERE/rpc_runtime.c" $RUNTIMES -lpizlo -lc
 
+: > "$OUT/rpc_server.port" # no stale port from an earlier run
 "$OUT/rpc_server" > "$OUT/rpc_server.port" 2> "$OUT/rpc_server.err" &
 server=$!
 trap 'kill "$server" 2>/dev/null || :' EXIT
