@@ -141,11 +141,16 @@ for it.
 | `mode` | Called when | The runtime may |
 |---|---|---|
 | `FILC_ASYNC_POLL_CHECK` | `filc_async_get_stats` refreshes its counts | only look: start nothing, never block |
-| `FILC_ASYNC_POLL_PROGRESS` | the program calls `filc_async_poll` | start deferred work (flush a queue, run a body), but not block |
+| `FILC_ASYNC_POLL_PROGRESS` | the program calls `filc_async_poll`, or a completion group progresses its producers | start deferred work (flush a queue, run a body), but not block |
 | `FILC_ASYNC_POLL_BLOCK` | something must wait for the task: `filc_async_wait`, an access to a pending buffer, a conflicting lock, re-marking an owned buffer | block until the task completes |
 
 **Requirements**
 
+- **Group progress.** A completion group checks producers with `CHECK` and
+  drives them with `PROGRESS`, even when the consumer blocks. Deferred work
+  must be able to progress through repeated `PROGRESS` calls or an independent
+  completion source. The group does not block on one producer, since its mark
+  can resolve before its whole task finishes.
 - **Return value.** Return `true` only if `filc_async_complete` has been
   called for `task`, whether by this poll or earlier.
 - **Tasks not yet submitted.** Poll can be called for a task whose submit has

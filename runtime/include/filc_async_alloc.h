@@ -1,9 +1,10 @@
 #pragma once
 #include <stddef.h>
 
-/* Allocator interface for the filc_async machinery. Every byte the runtime
- * allocates goes through here: never malloc at call sites, never in backend
- * code. Default allocator is the bump arena in filc_async_arena.c
+/* Allocator interface for framework bookkeeping and staged arguments.
+ * Completion objects returned by wait_all use separate GC allocations,
+ * since arena slices share one object's pending flag.
+ * Default allocator is the bump arena in filc_async_arena.c
  * (zgc-backed, zeroed memory).
  *
  * Contract: alloc(size, align) returns `size` zero-initialized bytes aligned

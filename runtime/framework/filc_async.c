@@ -408,6 +408,7 @@ typedef struct filc_async_mark {
     void* buf;
     uintptr_t lower;
     uintptr_t upper;
+    uint64_t generation;
     struct filc_async_task* owner;
     struct filc_async_mark* bucket_next; /* same bucket */
     struct filc_async_mark* owner_next;  /* the owner's marks, or free list */
@@ -465,6 +466,9 @@ static void mark_add(void* buf, uintptr_t lower, uintptr_t upper,
         g_free_marks = m->owner_next;
     else
         m = (filc_async_mark*)alloc_or_die(sizeof *m);
+    if (m->generation == UINT64_MAX)
+        filc_async_fatal("pending mark generation overflow");
+    ++m->generation;
     m->buf = buf;
     m->lower = lower;
     m->upper = upper;
@@ -497,6 +501,7 @@ static void mark_remove(filc_async_mark* m)
     m->owner = NULL;
     m->owner_next = g_free_marks;
     g_free_marks = m;
+    pthread_cond_broadcast(&g_changed);
 }
 
 void filc_async_mark_pending(void* task, void* buf)
@@ -615,6 +620,121 @@ bool filc_async_is_pending(const void* buf)
     bool pending = mark_find(lower, upper) != NULL;
     unlock();
     return pending;
+}
+
+struct join_entry {
+    filc_async_mark* mark;
+    uint64_t generation;
+};
+
+struct join_state {
+    size_t count;
+    struct join_entry entries[];
+};
+
+static bool join_entry_pending(const struct join_entry* e)
+{
+    return e->mark->buf && e->mark->generation == e->generation;
+}
+
+static bool join_poll(void* task, enum filc_async_poll_mode mode)
+{
+    struct filc_async_task* t = (struct filc_async_task*)task;
+    const struct join_state* s = (const struct join_state*)t->runtime_data;
+    lock();
+    while (t->state == 1) {
+        for (size_t i = 0; i < s->count; ++i) {
+            if (!join_entry_pending(&s->entries[i]))
+                continue;
+            struct filc_async_task* owner = s->entries[i].mark->owner;
+            if (!owner)
+                continue;
+            // progress every producer without waiting for any one producer
+            unlock();
+            owner->runtime->poll(owner, mode == FILC_ASYNC_POLL_CHECK ?
+                FILC_ASYNC_POLL_CHECK : FILC_ASYNC_POLL_PROGRESS);
+            lock();
+        }
+        bool pending = false;
+        for (size_t i = 0; i < s->count; ++i)
+            if (join_entry_pending(&s->entries[i])) {
+                pending = true;
+                break;
+            }
+        if (!pending) {
+            unlock();
+            filc_async_complete(t, 0);
+            return true;
+        }
+        if (mode != FILC_ASYNC_POLL_BLOCK) {
+            bool done = t->state != 1;
+            unlock();
+            return done;
+        }
+        // also wakes for early buffer resolution and ownerless marks
+        wait_changed();
+    }
+    unlock();
+    return true;
+}
+
+static const filc_async_runtime g_join_runtime = {
+    "wait_all", NULL, join_poll, NULL
+};
+
+void* filc_async_wait_all_array(const void* const* buffers, size_t count)
+{
+    if ((!buffers && count) || count > SIZE_MAX / sizeof *buffers)
+        filc_async_fatal("wait_all: invalid input array");
+    // arena slices share an object and cannot be independent pending tokens
+    void* token = zgc_aligned_alloc(16, 16);
+    if (!token)
+        filc_async_fatal("out of memory");
+    lock();
+    size_t capacity = 0;
+    const size_t max_entries =
+        (SIZE_MAX - sizeof(struct join_state)) / sizeof(struct join_entry);
+    for (size_t i = 0; i < count; ++i) {
+        if (!buffers[i])
+            continue;
+        uintptr_t lower = (uintptr_t)zgetlower((void*)buffers[i]);
+        for (filc_async_mark* m = *mark_bucket(lower); m; m = m->bucket_next)
+            if (m->lower == lower) {
+                if (capacity == max_entries)
+                    filc_async_fatal("wait_all: too many pending marks");
+                ++capacity;
+            }
+    }
+    if (!capacity) {
+        unlock();
+        return token;
+    }
+    struct join_state* s = (struct join_state*)alloc_or_die(
+        sizeof *s + capacity * sizeof s->entries[0]);
+    for (size_t i = 0; i < count; ++i) {
+        if (!buffers[i])
+            continue;
+        uintptr_t lower = (uintptr_t)zgetlower((void*)buffers[i]);
+        for (filc_async_mark* m = *mark_bucket(lower); m; m = m->bucket_next) {
+            if (m->lower != lower)
+                continue;
+            size_t j;
+            for (j = 0; j < s->count; ++j)
+                if (s->entries[j].mark == m)
+                    break;
+            if (j == s->count)
+                s->entries[s->count++] = (struct join_entry){ m, m->generation };
+        }
+    }
+    struct filc_async_task* t = (struct filc_async_task*)alloc_or_die(sizeof *t);
+    t->runtime = &g_join_runtime;
+    t->runtime_data = s;
+    t->state = 1;
+    mark_add(token, (uintptr_t)zgetlower(token), (uintptr_t)zgetupper(token), t);
+    // publish only after the snapshot and output mark are ready
+    running_add(t);
+    unlock();
+    return token;
 }
 
 /* ---- Tasks ---- */
