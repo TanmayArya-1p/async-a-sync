@@ -16,14 +16,24 @@ The script:
 Tests are **skipped**, not failed, in two cases:
 
 - the patched compiler is missing;
-- `tests/probe_io_uring.c` finds io_uring unavailable.
+- `tests/probes/probe_io_uring.c` finds io_uring unavailable.
 
 Read the skip count as well as the failure count.
 
+## Layout
+
+| Directory | What its tests check |
+|---|---|
+| `tests/compiler/` | the FilAsync pass and the access hook: options, descriptors, call rewriting, parameter names |
+| `tests/framework/` | the runtime-agnostic framework: locks, pending marks, validators, the allocator, runtimes other than io_uring |
+| `tests/io_uring/` | the io_uring runtime and its explicit `fasync_*` API, including the archives and native bridges |
+| `tests/probes/` | kernel, Fil-C and device facts the design relies on |
+| `tests/support/` | shared by the tests: the mock runtime, mock headers, `add_param_names.py` |
+
 **Stock-clang checks.** `check_dependency_options.sh` and the
-`compiler/dev/opt_annotate*.sh` scripts run the pass on IR from a stock
-clang, which records no parameter names. `tests/add_param_names.py` adds
-them the way the clang patch does.
+`opt_annotate*.sh` scripts in `tests/compiler/` run the pass on IR from a
+stock clang, which records no parameter names.
+`tests/support/add_param_names.py` adds them the way the clang patch does.
 
 **Not covered.** `run.sh` runs `demos/wordcount/run_wordcount.sh` and both
 rpc demos, but not the other Makefile demo targets,
@@ -34,7 +44,7 @@ hand.
 
 ## What each check proves
 
-### Compiler
+### Compiler (`tests/compiler/`)
 
 | Check | Proves |
 |---|---|
@@ -44,14 +54,15 @@ hand.
 | `t_annotate_smoke.c` | Clang emits `llvm.global.annotations` for the pragma |
 | `stage4_compiler_hook.c` | the patched compiler inserts the pending-flag test and resolves buffers on access |
 | `t_pragma_same_tu_lazy.c`, `t_pragma_repeat_read.c` | calls in the defining translation unit are redirected before inlining; identical call sites each submit |
+| `opt_annotate.sh`, `opt_annotate_test.sh` | the pass on its own, as an `opt` plugin: enrollment, descriptor layout, stubs, annotation erasure |
 
-### Framework (no io_uring)
+### Framework (`tests/framework/`)
 
 | Check | Proves |
 |---|---|
 | `check_dependencies.sh`, `t_dependency_mock.c` | dependency locks order calls against a deterministic mock runtime |
-| `t_mock_runtime.c` with `mock_runtime.c` | annotated calls work with another runtime linked and no io_uring symbol present |
-| `t_two_runtimes.c` with `mock_runtime.c` and io_uring | two runtimes in one program: a lock and a pending buffer order calls across them |
+| `t_mock_runtime.c` with `support/mock_runtime.c` | annotated calls work with another runtime linked and no io_uring symbol present |
+| `t_two_runtimes.c` with `support/mock_runtime.c` and io_uring | two runtimes in one program: a lock and a pending buffer order calls across them |
 | `t_unlinked_runtime.c` | naming a runtime the program does not link fails at link time |
 | `demos/rpc/run_rpc_demo.sh counter` | `runtime=rpc` (`runtime/rpc/rpc_runtime.c`) sends calls to a loopback TCP server; its results and lock ordering come back through the framework |
 | `demos/rpc/run_rpc_demo.sh upload` | io_uring reads and rpc uploads in one loop: an upload's payload waits for the read filling it, through the io_uring runtime, and the uploaded bytes are the file's |
@@ -59,7 +70,7 @@ hand.
 | `t_pragma_alloc.c` | the allocator interface |
 | `t_pragma_custom_validator.c`, `t_pragma_unknownop.c`, `t_pragma_ignore.c` | the runtime owns the op set, and a program validator replaces it |
 
-### io_uring runtime
+### io_uring runtime (`tests/io_uring/`)
 
 | Check | Proves |
 |---|---|
@@ -76,12 +87,12 @@ hand.
 
 | Check | Proves |
 |---|---|
-| `t_threads.c` | two threads issue annotated reads and read each other's buffers |
-| `t_thread_compute.c` | a thread that only computes never enters the framework |
+| `io_uring/t_threads.c` | two threads issue annotated reads and read each other's buffers |
+| `framework/t_thread_compute.c` | a thread that only computes never enters the framework |
 
 ### Explicit API and measurements
 
-The `stage*.c` programs cover the following:
+The `stage*.c` programs in `tests/io_uring/` cover the following:
 
 - lazy submission (`stage2_*`);
 - the effect-set DAG (`stage3`) and tokens (`stage5`, `stage_token_ordering`);
@@ -89,14 +100,19 @@ The `stage*.c` programs cover the following:
 - throughput (`stage7`);
 - latency (`stage8`).
 
-The `*_probe.c` programs establish kernel and Fil-C properties the design
-relies on. `stage9_device_parallelism.c` measures the device's own
-parallelism. `t_dag_submit_failure.c` covers DAG submission errors.
+The programs in `tests/probes/` establish kernel and Fil-C properties the
+design relies on (`probe_io_uring.c` and the `*_probe.c` programs), and
+`stage9_device_parallelism.c` measures the device's own parallelism.
+`io_uring/t_dag_submit_failure.c` covers DAG submission errors.
 
 ## Adding a test
 
 - **A C test** prints a `PASS`/`FAIL` line and exits non-zero on failure.
   Exit 77 when a prerequisite is missing, so the test counts as skipped.
+- **Where it goes.** Put it in the directory for what it checks (see
+  [Layout](#layout)).
 - **Registering it.** Add it to the matching list in `tests/run.sh`: stock
   Fil-C, patched compiler, or a custom build function like
-  `run_mock_runtime`.
+  `run_mock_runtime`. `run_filc_test` and `run_host_test` take its path under
+  `tests/` without the extension (`io_uring/stage7_throughput`);
+  `run_patched` takes a name and the source file.

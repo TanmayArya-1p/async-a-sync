@@ -37,13 +37,13 @@ the [Runtime API](Runtime-API.md) and [Framework API](Framework-API.md).
     to the rpc demos' TCP server, and `demos/rpc/demo_rpc_upload.c` reads
     files with io_uring and uploads them with it
     ([example](RPC-Runtime.md)). Each is a library of its own.
-  - **A program's own runtime.** `tests/mock_runtime.c`, `runtime=mock`, is
-    compiled into the tests that use it, and `tests/t_two_runtimes.c` uses it
+  - **A program's own runtime.** `tests/support/mock_runtime.c`, `runtime=mock`, is
+    compiled into the tests that use it, and `tests/framework/t_two_runtimes.c` uses it
     next to io_uring.
 
 **No runtime symbols in the framework.** The framework references no symbol
 of any runtime. It reaches a task's runtime only through the descriptor its
-function's `filc_async_meta` points to. `tests/check_linkage.sh` enforces
+function's `filc_async_meta` points to. `tests/io_uring/check_linkage.sh` enforces
 this.
 
 ## One call, end to end
@@ -79,7 +79,7 @@ c = buf[0]
 before any optimization and before FilPizlonator. Keep that order: the
 inliner and attribute inference must never see a direct call to an annotated
 function, or they could fold or inline it before it is redirected
-(`tests/t_pragma_same_tu_lazy.c`).
+(`tests/compiler/t_pragma_same_tu_lazy.c`).
 
 **What it emits.** For each annotated function `F`, the pass emits:
 
@@ -94,7 +94,7 @@ function, or they could fold or inline it before it is redirected
 **Linkage.** An annotated declaration keeps its ordinary linker name, so its
 definition can live in another translation unit. A definition in the same
 unit is renamed `__filc_async_F`. A non-static one keeps `F` as an alias, so
-other units still link (`tests/t_linked_async_*.c`).
+other units still link (`tests/io_uring/t_linked_async_*.c`).
 
 **Parameter names.** Options name parameters (`bout=buf`, `r_dep=fd:file`).
 IR declarations carry no parameter names, so a small clang patch
@@ -228,7 +228,7 @@ their buffers.
 - **Arena.** The arena has its own lock.
 - **Compute-only threads.** A thread that only computes on its own memory
   never finds a pending flag, so it never calls into the framework
-  (`tests/t_thread_compute.c`).
+  (`tests/framework/t_thread_compute.c`).
 
 **io_uring runtime.** It serializes on one recursive lock around a single
 ring. That gives safety, not I/O parallelism across threads.

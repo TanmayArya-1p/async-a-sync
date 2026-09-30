@@ -72,7 +72,7 @@ with the page cache dropped:
   implicit finish in 1.84x the time
 ```
 
-### Throughput regime (`tests/stage7_throughput.c`)
+### Throughput regime (`tests/io_uring/stage7_throughput.c`)
 
 20,000 reads of 64 bytes from a warm page cache. Blocking code pays one
 kernel entry per read. The implicit program pays 1302 for all 20,000: it
@@ -84,7 +84,7 @@ submits 200 per batch and polls the completion ring in userspace.
   entries saved: 15.4x         observed wall clock: 1.10x
 ```
 
-### Latency regime (`tests/stage8_latency.c`)
+### Latency regime (`tests/io_uring/stage8_latency.c`)
 
 512 files of 4 KiB, with the page cache dropped before each pass. Three
 versions read the same bytes:
@@ -114,4 +114,4 @@ eagerly:
 - **The device is not saturated.** The implicit path reaches about 52 kIOPS,
   where plain threads sustain about 184 kIOPS. The gap comes from io_uring's
   `io-wq` worker ceiling, which has to be tuned per workload
-  (`tests/stage9_device_parallelism.c`).
+  (`tests/probes/stage9_device_parallelism.c`).

@@ -1,4 +1,4 @@
-/* tests/t_pragma_custom_validator.c -- the startup validator is replaceable,
+/* tests/framework/t_pragma_custom_validator.c -- the startup validator is replaceable,
  * and replacing it turns the startup abort into a per-task error.
  *
  * The pass emits a constructor that calls filc_async_validate_table, which

@@ -1,6 +1,6 @@
-/* tests/t_mock_runtime.c -- annotated calls with another runtime linked.
+/* tests/framework/t_mock_runtime.c -- annotated calls with another runtime linked.
  *
- * Built with tests/mock_runtime.c instead of the io_uring runtime, which is
+ * Built with tests/support/mock_runtime.c instead of the io_uring runtime, which is
  * not linked at all. The op name means nothing to the framework, the runtime
  * runs the body and returns its result, and the body writes its own output
  * buffer, which its stub marked pending, without waiting for itself. */

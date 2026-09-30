@@ -1,4 +1,4 @@
-// tests/t_pending_registry.c -- the runtime's pending-marker contract.
+// tests/framework/t_pending_registry.c -- the runtime's pending-marker contract.
 // mark_pending puts a buffer in the pending set; mark_resolved removes it;
 // is_pending reports range coverage, so aliases of a marked buffer probe true.
 

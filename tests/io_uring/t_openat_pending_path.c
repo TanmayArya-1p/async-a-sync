@@ -1,4 +1,4 @@
-/* tests/t_openat_pending_path.c -- an openat whose path is partly produced by
+/* tests/io_uring/t_openat_pending_path.c -- an openat whose path is partly produced by
  * a pending read.
  *
  * The program writes the directory prefix of a path itself and reads the file

@@ -8,7 +8,7 @@ set -eu
 ulimit -c 0
 
 HERE=$(cd "$(dirname "$0")" && pwd)
-REPO=$(cd "$HERE/.." && pwd)
+REPO=$(cd "$HERE/../.." && pwd)
 if [ -z "${LLVM_CONFIG:-}" ]; then
     for candidate in llvm-config llvm-config-22 llvm-config-21 \
                      llvm-config-20 llvm-config-19; do
@@ -53,7 +53,7 @@ fi
 # the patched clang would record.
 emit() {
     "$CLANG" -S -emit-llvm -O0 -Werror=pragma-clang-attribute "$1" -o "$2"
-    python3 "$HERE/add_param_names.py" "$1" "$2"
+    python3 "$REPO/tests/support/add_param_names.py" "$1" "$2"
 }
 
 SRC="$HERE/t_dependency_option_placement.c"

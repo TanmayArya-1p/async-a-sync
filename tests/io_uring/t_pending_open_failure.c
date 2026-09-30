@@ -1,4 +1,4 @@
-/* tests/t_pending_open_failure.c -- closing a pending descriptor whose open
+/* tests/io_uring/t_pending_open_failure.c -- closing a pending descriptor whose open
  * failed must still free its handle.
  *
  * fasync_open_pending hands out one of 64 negative handles. fasync_close on a

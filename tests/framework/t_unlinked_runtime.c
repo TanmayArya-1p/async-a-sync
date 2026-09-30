@@ -1,4 +1,4 @@
-/* tests/t_unlinked_runtime.c -- a runtime the program does not link.
+/* tests/framework/t_unlinked_runtime.c -- a runtime the program does not link.
  *
  * run.sh builds this without any runtime named nosuch: the link must fail on
  * the undefined filc_async_runtime_nosuch descriptor, not start and fail at

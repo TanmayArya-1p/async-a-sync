@@ -1,4 +1,4 @@
-/* tests/t_pragma_markpending.c -- the buffer pending-marking contract.
+/* tests/framework/t_pragma_markpending.c -- the buffer pending-marking contract.
  *
  * markfml is annotated bout=out (out/result buffer), buf=recv (direction
  * pending, out by default), bin=const_in (const input), and extra is left

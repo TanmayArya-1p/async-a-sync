@@ -1,4 +1,4 @@
-/* tests/t_threads.c -- annotated calls from two threads.
+/* tests/io_uring/t_threads.c -- annotated calls from two threads.
  *
  * Each thread issues annotated reads into buffers of its own, with no wait,
  * then both meet and each reads the other's buffers. Every read goes through

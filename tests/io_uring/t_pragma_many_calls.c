@@ -1,4 +1,4 @@
-/* tests/t_pragma_many_calls.c -- handles are retired once their completion is
+/* tests/io_uring/t_pragma_many_calls.c -- handles are retired once their completion is
  * delivered.
  *
  * The runtime's task list and pending-mark registry must both bound work in

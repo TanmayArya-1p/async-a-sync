@@ -1,4 +1,4 @@
-/* tests/t_pragma_error_path.c -- annotated calls on a bad fd fail with
+/* tests/io_uring/t_pragma_error_path.c -- annotated calls on a bad fd fail with
  * -EBADF instead of hanging.
  *
  * The ring is set up by the first request and takes the lowest free

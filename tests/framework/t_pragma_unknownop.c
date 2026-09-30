@@ -1,4 +1,4 @@
-/* tests/t_pragma_unknownop.c -- negative control: the RUNTIME is the
+/* tests/framework/t_pragma_unknownop.c -- negative control: the RUNTIME is the
  * authority for the op set, not the compiler.
  *
  * The FilAsync pass accepts any op= value; the io_uring runtime's

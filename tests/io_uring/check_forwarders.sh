@@ -10,7 +10,7 @@ if ! command -v ruby >/dev/null 2>&1; then
   exit 77
 fi
 
-REPO=$(cd "$(dirname "$0")/.." && pwd)
+REPO=$(cd "$(dirname "$0")/../.." && pwd)
 FILC_SRC=${FILC_SRC:-$REPO/vendor/fil-c-src}
 GENERATOR=libpas/src/libpas/generate_pizlonated_forwarders.rb
 if ! git -C "$FILC_SRC" cat-file -e "HEAD:$GENERATOR" 2>/dev/null; then

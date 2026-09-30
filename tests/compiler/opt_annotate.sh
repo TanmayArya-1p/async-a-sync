@@ -12,8 +12,8 @@
 # is pizlonated, so the pre-pizlonation annotation IR has to come from the host
 # compiler. The plugin runs under the Fil-C LLVM opt.
 #
-# Usage: ./compiler/dev/opt_annotate.sh
-#        HOST_CC=/usr/bin/clang ./compiler/dev/opt_annotate.sh
+# Usage: ./tests/compiler/opt_annotate.sh
+#        HOST_CC=/usr/bin/clang ./tests/compiler/opt_annotate.sh
 
 set -e
 
@@ -39,8 +39,8 @@ if [ ! -x "$OPT" ]; then
 fi
 
 echo "### generating fixtures"
-"$HOST_CC" -S -emit-llvm -O0 -o "$GOOD" "$REPO/tests/t_annotate_smoke.c"
-python3 "$REPO/tests/add_param_names.py" "$REPO/tests/t_annotate_smoke.c" "$GOOD"
+"$HOST_CC" -S -emit-llvm -O0 -o "$GOOD" "$HERE/t_annotate_smoke.c"
+python3 "$REPO/tests/support/add_param_names.py" "$HERE/t_annotate_smoke.c" "$GOOD"
 printf '%s\n' \
   '/* unknown op=; the runtime is the authority for the op set */' \
   '#pragma clang attribute push(__attribute__((annotate("filc_async", "runtime=io_uring", "op=somefutureop", "buf=buf"))), apply_to=function)' \
@@ -48,7 +48,7 @@ printf '%s\n' \
   '#pragma clang attribute pop' \
   'int main(void) { return procread(0, 0, 0); }' > "$BAD_SRC"
 "$HOST_CC" -S -emit-llvm -O0 -o "$BAD" "$BAD_SRC"
-python3 "$REPO/tests/add_param_names.py" "$BAD_SRC" "$BAD"
+python3 "$REPO/tests/support/add_param_names.py" "$BAD_SRC" "$BAD"
 
 echo "### building the plugin"
 cmake -S "$PLUGIN_SRC" -B "$BUILD_DIR" -G Ninja \

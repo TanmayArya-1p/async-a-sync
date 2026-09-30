@@ -93,7 +93,8 @@ if [ ! -f "$BUILD_DIR/build.ninja" ]; then
     -DLLVM_ENABLE_ASSERTIONS=OFF
 fi
 
-# opt drives the FilAsync pass tests (compiler/dev) and `make cfg`.
+# opt drives the FilAsync pass tests (tests/compiler/opt_annotate*.sh) and
+# `make cfg`.
 echo "== building clang and opt (this is the long part)"
 ninja -C "$BUILD_DIR" -j "$JOBS" clang opt
 ln -sfn clang "$BUILD_DIR/bin/filcc"

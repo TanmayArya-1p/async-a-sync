@@ -186,7 +186,7 @@ free request slots. When the table is full, the request layer fails with
 - stop at the first call still running;
 - if no call could be finished, send the queue and wait for the oldest.
 
-The new request then takes a freed slot. `tests/t_pragma_lazy_many.c` issues
+The new request then takes a freed slot. `tests/io_uring/t_pragma_lazy_many.c` issues
 more calls than the table holds.
 
 ### Locking

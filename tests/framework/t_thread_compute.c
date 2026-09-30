@@ -1,4 +1,4 @@
-/* tests/t_thread_compute.c -- a thread that does no I/O stays out of the
+/* tests/framework/t_thread_compute.c -- a thread that does no I/O stays out of the
  * runtime.
  *
  * Code built by the patched compiler tests the pending flag of the object

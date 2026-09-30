@@ -1,4 +1,4 @@
-/* tests/t_dag_submit_failure.c -- fasync_run_dag reports ops it could not run.
+/* tests/io_uring/t_dag_submit_failure.c -- fasync_run_dag reports ops it could not run.
  *
  * When submit fails for an op, that op and everything ordered after it never
  * execute. Returning success there would tell the caller its writes happened.

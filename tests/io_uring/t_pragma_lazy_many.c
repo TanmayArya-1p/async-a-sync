@@ -1,4 +1,4 @@
-/* tests/t_pragma_lazy_many.c -- annotated calls that are never polled or
+/* tests/io_uring/t_pragma_lazy_many.c -- annotated calls that are never polled or
  * waited on.
  *
  * The runtime has 1024 request slots and 1024 pending marks. A program that

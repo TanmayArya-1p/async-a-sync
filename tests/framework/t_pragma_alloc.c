@@ -1,4 +1,4 @@
-/* tests/t_pragma_alloc.c -- allocator interface only.
+/* tests/framework/t_pragma_alloc.c -- allocator interface only.
  *
  * Exercises only the allocator functions (set/get_allocator), so it links
  * with the arena object alone: no annotations, no submit, no backend symbols.

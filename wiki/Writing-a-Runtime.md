@@ -21,7 +21,7 @@ reference.
 A runtime is three functions and a descriptor that names them. This one, the
 `mock` runtime, runs every call's body synchronously during submit and
 completes the call right away. It is
-[`tests/mock_runtime.c`](../tests/mock_runtime.c):
+[`tests/support/mock_runtime.c`](../tests/support/mock_runtime.c):
 
 ```c
 #include "filc_async_runtime.h"
@@ -263,11 +263,11 @@ invariants:
 - **Dependencies hold.** Two calls with a `w_dep=` on the same value run in
   call order: the second call's stub waits, polling the first with `BLOCK`.
 - **Threads work.** Calls from several threads touching each other's buffers
-  finish. `tests/t_threads.c` exercises this.
+  finish. `tests/io_uring/t_threads.c` exercises this.
 
-`tests/t_mock_runtime.c` shows the shape of such a test, and `tests/run.sh`
-builds it with `tests/mock_runtime.c` and checks that no io_uring symbol was
-linked. `tests/t_two_runtimes.c` links the mock runtime with the io_uring
+`tests/framework/t_mock_runtime.c` shows the shape of such a test, and `tests/run.sh`
+builds it with `tests/support/mock_runtime.c` and checks that no io_uring symbol was
+linked. `tests/framework/t_two_runtimes.c` links the mock runtime with the io_uring
 runtime and orders calls across them. `demos/rpc/demo_rpc_upload.c` does the
 same with a runtime that talks to a server: its uploads wait for io_uring
 reads (`make demo-rpc-upload`).

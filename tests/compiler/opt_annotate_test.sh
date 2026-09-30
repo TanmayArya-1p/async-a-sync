@@ -15,8 +15,8 @@
 #     while the opts-array .str globals stay alive;
 #   - the -filc-async-debug gate (enrolled lines print only when enabled).
 #
-# Usage: ./compiler/dev/opt_annotate_test.sh
-#        HOST_CC=/usr/bin/clang ./compiler/dev/opt_annotate_test.sh
+# Usage: ./tests/compiler/opt_annotate_test.sh
+#        HOST_CC=/usr/bin/clang ./tests/compiler/opt_annotate_test.sh
 
 set -e
 
@@ -74,7 +74,7 @@ echo "### generating fixture IR with host clang"
 "$HOST_CC" -S -emit-llvm -O0 -Werror=pragma-clang-attribute \
   -o "$IN" "$SRC"
 # The parameter names the patched clang would record.
-python3 "$REPO/tests/add_param_names.py" "$SRC" "$IN"
+python3 "$REPO/tests/support/add_param_names.py" "$SRC" "$IN"
 
 echo "### building the plugin"
 cmake -S "$REPO/compiler/plugin" -B "$BUILD_DIR" -G Ninja \
@@ -275,7 +275,7 @@ int main(void) { return use_kr() + other(); }
 EOF
 "$HOST_CC" -std=gnu17 -Wno-deprecated-non-prototype -S -emit-llvm -O0 \
   -o "$MIXED_IN" "$MIXED_SRC"
-python3 "$REPO/tests/add_param_names.py" "$MIXED_SRC" "$MIXED_IN"
+python3 "$REPO/tests/support/add_param_names.py" "$MIXED_SRC" "$MIXED_IN"
 if "$OPT" -load-pass-plugin="$PLUGIN" -passes="filc-async" "$MIXED_IN" -S \
     -o "$MIXED_OUT" 2> "$MIXED_ERR"; then
   pass 'mixed fixture: pass completes'

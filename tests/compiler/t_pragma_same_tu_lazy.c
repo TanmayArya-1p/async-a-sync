@@ -1,4 +1,4 @@
-/* tests/t_pragma_same_tu_lazy.c -- an annotated definition in the calling
+/* tests/compiler/t_pragma_same_tu_lazy.c -- an annotated definition in the calling
  * translation unit, used lazily.
  *
  * The body of lazy_pread is a side-effect-free stub, the result of the call is

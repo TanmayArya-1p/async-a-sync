@@ -96,7 +96,7 @@ descriptors before `main`. Each descriptor must pass two checks:
 
 **Overriding the validator.** A program can install its own validator from an
 earlier constructor with `filc_async_set_validator`, as
-`tests/t_pragma_custom_validator.c` does. The program's validator decides
+`tests/framework/t_pragma_custom_validator.c` does. The program's validator decides
 instead of the runtime's. It only suppresses the startup abort: a call the
 runtime cannot run still fails when it is submitted.
 

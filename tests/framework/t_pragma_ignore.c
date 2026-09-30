@@ -1,4 +1,4 @@
-/* tests/t_pragma_ignore.c -- link+run proof for the unsupported-op path.
+/* tests/framework/t_pragma_ignore.c -- link+run proof for the unsupported-op path.
  *
  * `somesuch` is annotated op=ignore (valid, never executed, resolves instantly
  * with -EOPNOTSUPP). The patched compiler rewrites the call in main into

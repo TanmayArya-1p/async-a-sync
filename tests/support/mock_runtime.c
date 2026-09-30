@@ -1,4 +1,4 @@
-/* tests/mock_runtime.c -- the smallest runtime behind the framework,
+/* tests/support/mock_runtime.c -- the smallest runtime behind the framework,
  * runtime=mock.
  *
  * It implements the three functions of a filc_async_runtime and nothing

@@ -1,4 +1,4 @@
-/* tests/t_pragma_reuse_lazy.c -- reusing buffers whose reads were only
+/* tests/io_uring/t_pragma_reuse_lazy.c -- reusing buffers whose reads were only
  * resolved by touching them must not flush the submission queue.
  *
  * A task whose buffer the compiler's hook resolved stays in flight for

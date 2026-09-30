@@ -1,4 +1,4 @@
-/* tests/t_pragma_repeat_read.c -- every annotated call site submits, even
+/* tests/compiler/t_pragma_repeat_read.c -- every annotated call site submits, even
  * when several are identical.
  *
  * The annotated body below is pure, so if the optimizer ran before the

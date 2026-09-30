@@ -1,6 +1,6 @@
-/* tests/t_two_runtimes.c -- one program, two runtimes.
+/* tests/framework/t_two_runtimes.c -- one program, two runtimes.
  *
- * Linked with the io_uring runtime and tests/mock_runtime.c. write_at and
+ * Linked with the io_uring runtime and tests/support/mock_runtime.c. write_at and
  * read_at name runtime=io_uring; check_file and sum_bytes name runtime=mock,
  * whose submit runs the body at once. The runtimes know nothing of each
  * other; what connects their calls is the framework:
