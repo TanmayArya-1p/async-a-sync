@@ -682,7 +682,7 @@ static const filc_async_runtime g_join_runtime = {
     "wait_all", NULL, join_poll, NULL
 };
 
-void* filc_async_wait_all_array(const void* const* buffers, size_t count)
+void* filc_async_wait_all(const prov_tag* buffers, size_t count)
 {
     if ((!buffers && count) || count > SIZE_MAX / sizeof *buffers)
         filc_async_fatal("wait_all: invalid input array");
