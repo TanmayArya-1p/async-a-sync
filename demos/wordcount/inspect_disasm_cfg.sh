@@ -20,7 +20,7 @@ fi
 
 "$REPO/runtime/build.sh" >/dev/null
 "$PATCHED_CC" -O2 -static -DFASYNC_IMPLICIT -DFASYNC_COMPILER_INSERTS_CHECKS \
-  -I "$REPO/runtime/src" -L "$REPO/runtime/build/lib" \
+  -I "$REPO/runtime/include" -L "$REPO/runtime/build/lib" \
   -o "$BUILD_DIR/wc_filc_implicit" "$REPO/demos/wordcount/demo_wordcount.c" -lfilc_async_uring -lpizlo -lc
 
 echo "Done building binaries."
@@ -64,7 +64,7 @@ echo
 # Generate Clang / Fil-C AST CFG Dump
 echo "Generating Clang / Fil-C AST CFG dump..."
 "$PATCHED_CC" -fsyntax-only -DFASYNC_IMPLICIT -DFASYNC_COMPILER_INSERTS_CHECKS \
-  -I "$REPO/runtime/src" \
+  -I "$REPO/runtime/include" \
   -Xclang -analyze -Xclang -analyzer-checker=debug.DumpCFG \
   "$REPO/demos/wordcount/demo_wordcount.c" > "$BUILD_DIR/cfg_filc_wordcount.txt" 2>&1
 echo "Generated Fil-C AST CFG dump: $BUILD_DIR/cfg_filc_wordcount.txt"

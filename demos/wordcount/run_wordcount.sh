@@ -24,7 +24,7 @@ mkdir -p "$OUT" "$DIR"
 
 echo "== building the two backends of the same source"
 "$PATCHED_CC" -O2 -static -DFASYNC_IMPLICIT -DFASYNC_COMPILER_INSERTS_CHECKS \
-  -I"$REPO/runtime/src" -L"$REPO/runtime/build/lib" \
+  -I"$REPO/runtime/include" -L"$REPO/runtime/build/lib" \
   -o "$OUT/wc_implicit" "$HERE/demo_wordcount.c" -lfilc_async_uring -lpizlo -lc
 
 if [ -x "$FILCC" ]; then

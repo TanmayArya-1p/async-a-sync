@@ -13,7 +13,7 @@ TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT HUP INT TERM
 
 "$HOST_CC" -std=gnu11 -Wall -Wextra -Werror -pthread \
-  -I"$REPO/tests/mock_include" -I"$REPO/runtime/src" \
-  "$REPO/runtime/src/filc_async.c" "$REPO/tests/t_dependency_mock.c" \
+  -I"$REPO/tests/mock_include" -I"$REPO/runtime/include" \
+  "$REPO/runtime/framework/filc_async.c" "$REPO/tests/t_dependency_mock.c" \
   -o "$TMP/check_dependencies"
 "$TMP/check_dependencies"

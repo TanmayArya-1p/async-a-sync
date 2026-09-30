@@ -53,7 +53,7 @@ hand.
 | `t_mock_runtime.c` with `mock_runtime.c` | annotated calls work with another runtime linked and no io_uring symbol present |
 | `t_two_runtimes.c` with `mock_runtime.c` and io_uring | two runtimes in one program: a lock and a pending buffer order calls across them |
 | `t_unlinked_runtime.c` | naming a runtime the program does not link fails at link time |
-| `demos/rpc/run_rpc_demo.sh counter` | a runtime in the program's own source (`demos/rpc/rpc_runtime.c`) sends calls to a loopback TCP server; its results and lock ordering come back through the framework |
+| `demos/rpc/run_rpc_demo.sh counter` | `runtime=rpc` (`runtime/rpc/rpc_runtime.c`) sends calls to a loopback TCP server; its results and lock ordering come back through the framework |
 | `demos/rpc/run_rpc_demo.sh upload` | io_uring reads and rpc uploads in one loop: an upload's payload waits for the read filling it, through the io_uring runtime, and the uploaded bytes are the file's |
 | `t_pending_registry.c`, `t_pragma_markpending.c` | the pending-mark contract: which arguments are marked, aliasing, ownerless marks |
 | `t_pragma_alloc.c` | the allocator interface |

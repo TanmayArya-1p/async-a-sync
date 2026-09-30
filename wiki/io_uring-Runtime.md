@@ -1,7 +1,7 @@
 # The io_uring runtime
 
-**Source:** [`runtime/src/filc_async_uring.c`](../runtime/src/filc_async_uring.c),
-on top of the request layer in `runtime/src/fasync*.c`
+**Source:** [`runtime/io_uring/filc_async_uring.c`](../runtime/io_uring/filc_async_uring.c),
+on top of the request layer in `runtime/io_uring/fasync*.c`
 **Library:** `runtime/build/lib/libfilc_async_uring.a`
 
 This is the runtime shipped with the repository, `runtime=io_uring`. It turns

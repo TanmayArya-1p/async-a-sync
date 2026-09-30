@@ -1,4 +1,5 @@
-/* rpc_runtime.c: runtime=rpc, one TCP request per annotated call.
+/* rpc_runtime.c: runtime=rpc, one TCP request per annotated call, to the
+ * server in demos/rpc/rpc_server.c. Built into libfilc_async_rpc.a.
  *
  * submit: run the body, connect, send STEP, GET or PUT and its payload.
  * poll:   read "VALUE <n>\n", store n in *value if the call has one,
@@ -90,7 +91,8 @@ static void finish(void* task, struct request* r, long result) {
   if (r->fd >= 0)
     close(r->fd);
   r->result = result;
-  // store inside filc_async_run, or the hook waits on this very call
+  // store inside filc_async_run: were this file built with the access hook,
+  // a plain store would wait on this very call
   if (r->value)
     filc_async_run(task, store_reply, r);
   r->done = 1;

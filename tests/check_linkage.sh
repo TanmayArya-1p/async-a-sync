@@ -1,8 +1,9 @@
 #!/bin/sh
-# Check the two archives and the actual statically linked annotated binary:
+# Check the three archives and the actual statically linked annotated binary:
 # the framework and the native bridges are in libpizlo.a, the io_uring runtime
-# and its descriptor in libfilc_async_uring.a, and the framework neither
-# defines nor refers to anything of a runtime.
+# and its descriptor in libfilc_async_uring.a, the rpc runtime and its
+# descriptor alone in libfilc_async_rpc.a, and the framework neither defines
+# nor refers to anything of a runtime.
 # Usage: check_linkage.sh runtime/build/lib build/tests/t_linked_async
 set -eu
 
@@ -15,6 +16,8 @@ ar t "$LIB/libpizlo.a" > "$TMP/framework_members"
 ar t "$LIB/libfilc_async_uring.a" > "$TMP/runtime_members"
 nm -g --defined-only "$LIB/libpizlo.a" | awk 'NF >= 2 { print $NF }' > "$TMP/framework_symbols"
 nm -g --defined-only "$LIB/libfilc_async_uring.a" | awk 'NF >= 2 { print $NF }' > "$TMP/runtime_symbols"
+ar t "$LIB/libfilc_async_rpc.a" > "$TMP/rpc_members"
+nm -g --defined-only "$LIB/libfilc_async_rpc.a" | awk 'NF >= 2 { print $NF }' > "$TMP/rpc_symbols"
 nm -g --defined-only "$BINARY" | awk 'NF >= 2 { print $NF }' > "$TMP/binary_symbols"
 nm -u "$BINARY" | awk 'NF >= 1 { print $NF }' > "$TMP/undefined_symbols"
 (cd "$TMP" && ar x "$LIB/libpizlo.a" fil-pizlo-async.o)
@@ -61,6 +64,19 @@ for symbol in filc_async_runtime_io_uring fasync_pread; do
     exit 1
   fi
 done
+# The rpc runtime is one object that defines its descriptor and nothing of
+# the io_uring runtime's.
+expect_exact 'rpc archive member' "$TMP/rpc_members" fil-rpc-runtime.o
+expect_compiled "$TMP/rpc_symbols" filc_async_runtime_rpc
+if grep -Eq "(fasync_|uring)" "$TMP/rpc_symbols"; then
+  echo "the rpc archive defines io_uring runtime symbols" >&2
+  exit 1
+fi
+if grep -Eq "(^|_)filc_async_runtime_rpc$" "$TMP/framework_symbols"; then
+  echo "the framework archive defines the rpc runtime's descriptor" >&2
+  exit 1
+fi
+
 # The framework reaches a runtime only through the descriptor a task's
 # function names, so its object refers to no runtime at all.
 if grep -Eq "(filc_async_runtime_|fasync_|uring)" "$TMP/framework_undefined"; then

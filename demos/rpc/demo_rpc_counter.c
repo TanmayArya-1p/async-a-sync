@@ -3,7 +3,7 @@
  * Each call returns before the server replies.
  * No handles, no waits: reading a value waits for its reply.
  *
- *   runtime=rpc         sent to the server by rpc_runtime.c
+ *   runtime=rpc         sent to the server by runtime/rpc/rpc_runtime.c
  *   op=step             add one to the counter
  *   op=get              read the counter
  *   w_dep=port:counter  writes the counter behind the port

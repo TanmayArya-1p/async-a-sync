@@ -1,6 +1,7 @@
 # The RPC runtime example
 
-**Source:** [`demos/rpc/rpc_runtime.c`](../demos/rpc/rpc_runtime.c)
+**Source:** [`runtime/rpc/rpc_runtime.c`](../runtime/rpc/rpc_runtime.c)
+**Library:** `runtime/build/lib/libfilc_async_rpc.a`, built by `runtime/build.sh`
 **Programs:** [`demos/rpc/demo_rpc_counter.c`](../demos/rpc/demo_rpc_counter.c), which
 holds its annotated functions and their calls, and
 [`demos/rpc/demo_rpc_upload.c`](../demos/rpc/demo_rpc_upload.c); their logging and
@@ -9,8 +10,8 @@ server is [`demos/rpc/rpc_server.c`](../demos/rpc/rpc_server.c)
 **Run:** `make demo-rpc` (both), `make demo-rpc-counter`, `make demo-rpc-upload`,
 or `demos/rpc/run_rpc_demo.sh counter|upload [OUT_DIR]`
 
-`runtime=rpc` is a runtime that belongs to a program, not to the repository's
-libraries. It turns annotated calls into requests to a TCP server. An
+`runtime=rpc` is the repository's second runtime. It turns annotated calls
+into requests to the rpc demos' TCP server. An
 ordinary-looking `get(port, &value)` returns before the server replies, and
 the first read of `value` waits for the reply: the program never holds a
 handle or calls a wait. It is a complete example of the [Runtime API](Runtime-API.md) for a
@@ -62,7 +63,7 @@ DEMO OK
   last get was sent: reading `after` waited for the server.
 
 The program links only this runtime: its link line is
-`demo_rpc_counter.c rpc_runtime.c -lpizlo -lc`, with no
+`demo_rpc_counter.c -lfilc_async_rpc -lpizlo -lc`, with no
 `-lfilc_async_uring`.
 
 ## Run the upload demo
@@ -92,7 +93,7 @@ DEMO OK
 ```
 
 This program links both runtimes:
-`demo_rpc_upload.c rpc_runtime.c -lfilc_async_uring -lpizlo -lc`.
+`demo_rpc_upload.c -lfilc_async_rpc -lfilc_async_uring -lpizlo -lc`.
 
 ## The protocol
 
@@ -261,9 +262,12 @@ an rpc call drives an io_uring read without knowing that io_uring exists.
 
 ### Storing the reply
 
-`*value` is the call's own pending buffer, and `rpc_runtime.c` is built with
-the access hook, so a plain `*value = n` in the runtime would wait for the
-call itself and never return. The runtime makes the store inside
+`*value` is the call's own pending buffer. Code built with the access hook
+(the patched compiler) that did a plain `*value = n` would wait for the call
+itself and never return. `runtime/build.sh` builds the runtime with the stock
+`filcc`, which has no hook, but the store is written to be correct either
+way, so the file can also be compiled into a program. The runtime makes the
+store inside
 `filc_async_run(task, store_reply, r)`: while `filc_async_run` runs, the
 task may use its own pending buffers without waiting. It then calls
 `filc_async_complete`, which resolves the buffer for everyone else. The value

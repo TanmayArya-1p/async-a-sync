@@ -11,7 +11,7 @@
 - **Namespace**: The required `:<namespace>` part of a dependency option, `r_dep=<param>:<namespace>`. With the parameter name, it says which resource a value refers to.
 - **Pending**: A buffer owned by a call that has not completed. The first access waits.
 - **Run thunk**: `__filc_async_run_<name>`, emitted by the pass. It unpacks the staged arguments and calls the function's body. Runtimes call it through `filc_async_run`.
-- **Runtime**: The code that executes calls, exported as a `filc_async_runtime` descriptor named `filc_async_runtime_<name>`. Each annotated function names one with `runtime=<name>`, and a program may link several. This repository ships `runtime=io_uring`.
+- **Runtime**: The code that executes calls, exported as a `filc_async_runtime` descriptor named `filc_async_runtime_<name>`. Each annotated function names one with `runtime=<name>`, and a program may link several. This repository ships `runtime=io_uring` and `runtime=rpc`.
 - **Staged arguments**: The call's arguments, copied by the stub into 16-byte cells.
 - **Stub**: `__filc_async_stub_<name>`, emitted by the pass. It stages arguments, starts the task, takes locks, marks buffers, and submits to the runtime.
 - **Task**: The framework's record of one call. An annotated call returns it as a handle for `filc_async_poll`/`filc_async_wait`.

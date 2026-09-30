@@ -1,7 +1,7 @@
 # Framework API
 
-**Header:** [`runtime/src/filc_async.h`](../runtime/src/filc_async.h)
-**Implementation:** [`runtime/src/filc_async.c`](../runtime/src/filc_async.c), in `libpizlo.a`
+**Header:** [`runtime/include/filc_async.h`](../runtime/include/filc_async.h)
+**Implementation:** [`runtime/framework/filc_async.c`](../runtime/framework/filc_async.c), in `libpizlo.a`
 
 The framework sits between annotated calls and the runtime. It owns tasks,
 pending buffer marks, and dependency locks. It never interprets `op=`. This
@@ -104,7 +104,7 @@ runtime cannot run still fails when it is submitted.
 
 ### Allocator
 
-**Header:** [`runtime/src/filc_async_alloc.h`](../runtime/src/filc_async_alloc.h)
+**Header:** [`runtime/include/filc_async_alloc.h`](../runtime/include/filc_async_alloc.h)
 
 ```c
 typedef struct {

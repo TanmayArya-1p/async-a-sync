@@ -34,12 +34,20 @@ The script:
   io_uring syscalls and the framework's native helpers;
 - copies the distribution's `libpizlo.a` into
   `runtime/build/lib/libpizlo.a`, adding the framework and native bridges;
-- archives the io_uring runtime as `runtime/build/lib/libfilc_async_uring.a`.
+- archives each runtime as a library of its own.
 
-| Archive | Contents |
-|---|---|
-| `libpizlo.a` | Fil-C's runtime; the framework (`filc_async.c`, `filc_async_arena.c`); the pending-flag native helper (`filc_async_native.c`); the io_uring syscall bridge (`fasync_native.c`) |
-| `libfilc_async_uring.a` | the io_uring runtime (`filc_async_uring.c`) and its request layer (`fasync*.c`) |
+| Archive | Built from | Contents |
+|---|---|---|
+| `libpizlo.a` | `runtime/framework/`, `runtime/io_uring/fasync_native.c` | Fil-C's runtime; the framework (`filc_async.c`, `filc_async_arena.c`); the pending-flag native helper (`filc_async_native.c`); the io_uring syscall bridge (`fasync_native.c`) |
+| `libfilc_async_uring.a` | `runtime/io_uring/` | `runtime=io_uring` (`filc_async_uring.c`) and its request layer (`fasync*.c`) |
+| `libfilc_async_rpc.a` | `runtime/rpc/` | `runtime=rpc` (`rpc_runtime.c`) |
+
+**Why io_uring's native half is in `libpizlo.a`.** Fil-C's generated
+forwarders, which live in `libpizlo.a`, call every native entry point, so the
+natives have to be there too. A program that links no io_uring runtime still
+carries them, unused.
+
+Programs include the public headers with `-I runtime/include`.
 
 ## Build the compiler
 
@@ -91,7 +99,7 @@ Put the libraries after the program's sources or objects:
 
 ```sh
 vendor/fil-c-src/build/bin/filcc -O2 -static \
-  -Werror=pragma-clang-attribute -Iruntime/src -Lruntime/build/lib \
+  -Werror=pragma-clang-attribute -Iruntime/include -Lruntime/build/lib \
   -o app app.c -lfilc_async_uring -lpizlo -lc
 ```
 

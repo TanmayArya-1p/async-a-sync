@@ -1,6 +1,6 @@
 # Runtime API
 
-**Header:** [`runtime/src/filc_async_runtime.h`](../runtime/src/filc_async_runtime.h)
+**Header:** [`runtime/include/filc_async_runtime.h`](../runtime/include/filc_async_runtime.h)
 
 This is the whole contract between the generic framework and a runtime.
 

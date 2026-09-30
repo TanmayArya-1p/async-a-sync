@@ -49,7 +49,7 @@ git -C vendor/fil-c-src checkout FETCH_HEAD
 ## 2. Build
 
 ```sh
-./runtime/build.sh           # the framework and the io_uring runtime
+./runtime/build.sh           # the framework and the runtimes
 JOBS=8 ./compiler/build.sh   # the patched clang: the long step
 ```
 
@@ -127,7 +127,7 @@ Build and run it:
 ```sh
 echo hello > hello.txt
 vendor/fil-c-src/build/bin/filcc -O2 -static -Werror=pragma-clang-attribute \
-  -Iruntime/src -Lruntime/build/lib -o first first.c \
+  -Iruntime/include -Lruntime/build/lib -o first first.c \
   -lfilc_async_uring -lpizlo -lc
 ./first hello.txt
 ```

@@ -91,7 +91,7 @@ run_filc_test() {
   echo
   echo "### $name (Fil-C)"
   # shellcheck disable=SC2086
-  if "$FILCC" -O2 -static $WARN -I"$REPO/runtime/src" -L"$REPO/runtime/build/lib" \
+  if "$FILCC" -O2 -static $WARN -I"$REPO/runtime/include" -L"$REPO/runtime/build/lib" \
        -o "$OUT/$name" "$HERE/$name.c" -lfilc_async_uring -lpizlo -lc; then
     if "$OUT/$name" "$@"; then
       PASSED=$((PASSED + 1))
@@ -195,7 +195,7 @@ run_patched() {
   if "$PATCHED_CC" -O2 -static $WARN -Werror=pragma-clang-attribute \
        -DFASYNC_COMPILER_INSERTS_CHECKS \
        $RUN_PATCHED_FLAGS \
-       -I"$REPO/runtime/src" -L"$REPO/runtime/build/lib" \
+       -I"$REPO/runtime/include" -L"$REPO/runtime/build/lib" \
        -o "$OUT/$name" "$src" -lfilc_async_uring -lpizlo -lc; then
     if "$OUT/$name" "$@"; then
       PASSED=$((PASSED + 1))
@@ -220,7 +220,7 @@ run_patched_linked() {
   # shellcheck disable=SC2086
   if "$PATCHED_CC" -O2 -static $WARN -Werror=pragma-clang-attribute \
        -DFASYNC_COMPILER_INSERTS_CHECKS "$@" \
-       -I"$REPO/runtime/src" -L"$REPO/runtime/build/lib" \
+       -I"$REPO/runtime/include" -L"$REPO/runtime/build/lib" \
        -o "$OUT/$name" \
        "$HERE/t_linked_async_main.c" "$HERE/t_linked_async_def.c" \
        -lfilc_async_uring -lpizlo -lc; then
@@ -247,7 +247,7 @@ run_mock_runtime() {
   # shellcheck disable=SC2086
   if "$PATCHED_CC" -O2 -static $WARN -Werror=pragma-clang-attribute \
        -DFASYNC_COMPILER_INSERTS_CHECKS \
-       -I"$REPO/runtime/src" -L"$REPO/runtime/build/lib" \
+       -I"$REPO/runtime/include" -L"$REPO/runtime/build/lib" \
        -o "$OUT/$name" "$HERE/$name.c" "$HERE/mock_runtime.c" -lpizlo -lc; then
     if nm "$OUT/$name" | grep -Eq "(fasync_(pread|submit|result)|filc_async_uring)"; then
       echo "!!! $name linked parts of the io_uring runtime"
@@ -274,7 +274,7 @@ run_two_runtimes() {
   # shellcheck disable=SC2086
   if "$PATCHED_CC" -O2 -static $WARN -Werror=pragma-clang-attribute \
        -DFASYNC_COMPILER_INSERTS_CHECKS \
-       -I"$REPO/runtime/src" -L"$REPO/runtime/build/lib" \
+       -I"$REPO/runtime/include" -L"$REPO/runtime/build/lib" \
        -o "$OUT/$name" "$HERE/$name.c" "$HERE/mock_runtime.c" \
        -lfilc_async_uring -lpizlo -lc; then
     if ! nm "$OUT/$name" | grep -q 'filc_async_runtime_io_uring$' ||
@@ -301,7 +301,7 @@ run_unlinked_runtime() {
   echo "### $name (patched compiler, expects a link failure)"
   # shellcheck disable=SC2086
   if err_out=$("$PATCHED_CC" -O2 -static $WARN -Werror=pragma-clang-attribute \
-       -I"$REPO/runtime/src" -L"$REPO/runtime/build/lib" \
+       -I"$REPO/runtime/include" -L"$REPO/runtime/build/lib" \
        -o "$OUT/$name" "$HERE/$name.c" -lfilc_async_uring -lpizlo -lc 2>&1); then
     echo "!!! $name linked without the runtime it names"
     FAILED=$((FAILED + 1))
@@ -339,7 +339,7 @@ run_patched_neg() {
   if "$PATCHED_CC" -O2 -static $WARN -Werror=pragma-clang-attribute \
        -DFASYNC_COMPILER_INSERTS_CHECKS \
        $RUN_PATCHED_FLAGS \
-       -I"$REPO/runtime/src" -L"$REPO/runtime/build/lib" \
+       -I"$REPO/runtime/include" -L"$REPO/runtime/build/lib" \
        -o "$OUT/$name" "$src" -lfilc_async_uring -lpizlo -lc; then
     if err_out=$("$OUT/$name" 2>&1); then
       echo "!!! $name exited 0; runtime should have rejected the op"
@@ -393,9 +393,8 @@ if [ "$PATCHED_READY" -eq 1 ]; then
   run_mock_runtime
   needs_io_uring run_two_runtimes
   run_unlinked_runtime
-  # A runtime of the program's own, demos/rpc/rpc_runtime.c, which sends
-  # annotated calls to a loopback TCP server: alone (counter), and next to
-  # io_uring (upload).
+  # runtime=rpc (runtime/rpc), which sends annotated calls to the rpc demos'
+  # loopback TCP server: alone (counter), and next to io_uring (upload).
   run_rpc_demo counter
   needs_io_uring run_rpc_demo upload
   # Negative control: an unknown op= is accepted by the pass and rejected by

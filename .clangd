@@ -1,6 +1,6 @@
 CompileFlags:
   Add:
-    - -I/home/tanmay/Documents/CodingRepos/segfault/runtime/src
+    - -I/home/tanmay/Documents/CodingRepos/segfault/runtime/include
     - -I/home/tanmay/Documents/CodingRepos/segfault/demos
     - -I/home/tanmay/Documents/CodingRepos/segfault/runtime/os-include
     - -DFASYNC_IMPLICIT

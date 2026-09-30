@@ -1,7 +1,7 @@
 # Explicit API
 
-**Headers:** [`runtime/src/fasync.h`](../runtime/src/fasync.h),
-[`runtime/src/fasync_dep.h`](../runtime/src/fasync_dep.h)
+**Headers:** [`runtime/include/fasync.h`](../runtime/include/fasync.h),
+[`runtime/include/fasync_dep.h`](../runtime/include/fasync_dep.h)
 **Library:** `libfilc_async_uring.a`
 
 The explicit API issues io_uring requests by hand, with no annotation. It is

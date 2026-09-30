@@ -237,12 +237,12 @@ runtime the program's annotations name:
 ```sh
 # only your runtime
 vendor/fil-c-src/build/bin/filcc -O2 -static -Werror=pragma-clang-attribute \
-  -Iruntime/src -Lruntime/build/lib \
+  -Iruntime/include -Lruntime/build/lib \
   -o app app.c my_runtime.c -lpizlo -lc
 
 # your runtime and the io_uring runtime in one program
 vendor/fil-c-src/build/bin/filcc -O2 -static -Werror=pragma-clang-attribute \
-  -Iruntime/src -Lruntime/build/lib \
+  -Iruntime/include -Lruntime/build/lib \
   -o app app.c my_runtime.c -lfilc_async_uring -lpizlo -lc
 ```
 
@@ -277,6 +277,6 @@ reads (`make demo-rpc-upload`).
 - [Runtime API](Runtime-API.md): the full contract.
 - [The io_uring runtime](io_uring-Runtime.md): a runtime that turns calls into
   kernel requests, batches them, and reclaims request slots.
-- [The RPC runtime example](RPC-Runtime.md): a runtime in the program's own
-  source that sends calls to a TCP server and returns its replies as results.
+- [The RPC runtime example](RPC-Runtime.md): a runtime that sends calls to a
+  TCP server and returns its replies as results.
 - [Architecture](Architecture.md): where the stub, framework and runtime meet.

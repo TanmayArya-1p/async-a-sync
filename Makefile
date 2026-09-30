@@ -46,28 +46,28 @@ demo-wordcount: runtime
 demo-plain: runtime
 	@mkdir -p $(OUT_DIR)
 	@$(PATCHED_CC) -O2 -static -DFASYNC_IMPLICIT -DFASYNC_COMPILER_INSERTS_CHECKS \
-		-I$(REPO_DIR)/runtime/src -L$(REPO_DIR)/runtime/build/lib \
+		-I$(REPO_DIR)/runtime/include -L$(REPO_DIR)/runtime/build/lib \
 		-o $(OUT_DIR)/demo_plain_io $(REPO_DIR)/demos/explicit/demo_plain_io.c -lfilc_async_uring -lpizlo -lc
 	@$(OUT_DIR)/demo_plain_io $(OUT_DIR)
 
 demo-async: runtime
 	@mkdir -p $(OUT_DIR)
 	@$(PATCHED_CC) -O2 -static -DFASYNC_IMPLICIT -DFASYNC_COMPILER_INSERTS_CHECKS \
-		-I$(REPO_DIR)/runtime/src -L$(REPO_DIR)/runtime/build/lib \
+		-I$(REPO_DIR)/runtime/include -L$(REPO_DIR)/runtime/build/lib \
 		-o $(OUT_DIR)/demo_async_io $(REPO_DIR)/demos/explicit/demo_async_io.c -lfilc_async_uring -lpizlo -lc
 	@$(OUT_DIR)/demo_async_io $(OUT_DIR)
 
 demo-provenance: runtime
 	@mkdir -p $(OUT_DIR)
 	@$(PATCHED_CC) -O2 -static -DFASYNC_IMPLICIT -DFASYNC_COMPILER_INSERTS_CHECKS \
-		-I$(REPO_DIR)/runtime/src -L$(REPO_DIR)/runtime/build/lib \
+		-I$(REPO_DIR)/runtime/include -L$(REPO_DIR)/runtime/build/lib \
 		-o $(OUT_DIR)/demo_provenance $(REPO_DIR)/demos/explicit/demo_provenance.c -lfilc_async_uring -lpizlo -lc
 	@$(OUT_DIR)/demo_provenance $(OUT_DIR)
 
 all-demos: demo-wordcount demo-plain demo-async demo-provenance
 
 PRAGMA_FLAGS := -O2 -static -Werror=pragma-clang-attribute -DFASYNC_IMPLICIT \
-	-DFASYNC_COMPILER_INSERTS_CHECKS -I$(REPO_DIR)/runtime/src \
+	-DFASYNC_COMPILER_INSERTS_CHECKS -I$(REPO_DIR)/runtime/include \
 	-L$(REPO_DIR)/runtime/build/lib
 
 PRAGMA_DEMOS := hello lifecycle ordering coldread scaling overlap
@@ -101,7 +101,7 @@ cfg:
 	fi
 	@echo "2. Generating Fil-C post-instrumentation CFG (.dot and .png)..."
 	@$(PATCHED_CC) -O2 -DFASYNC_IMPLICIT -DFASYNC_COMPILER_INSERTS_CHECKS \
-		-I$(REPO_DIR)/runtime/src \
+		-I$(REPO_DIR)/runtime/include \
 		-emit-llvm -S $(REPO_DIR)/demos/wordcount/demo_wordcount.c -o $(BUILD_DIR)/wc_implicit.ll
 	@$(REPO_DIR)/vendor/fil-c-src/build/bin/opt -passes=dot-cfg -disable-output $(BUILD_DIR)/wc_implicit.ll >/dev/null 2>&1
 	@if [ -f ".pizlonatedFIP1066_wordcount.dot" ] && command -v dot >/dev/null 2>&1; then \

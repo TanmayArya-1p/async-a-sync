@@ -32,12 +32,14 @@ the [Runtime API](Runtime-API.md) and [Framework API](Framework-API.md).
     `runtime=<name>`, and the program links every runtime it names.
   - **What a runtime is.** A `filc_async_runtime` descriptor with submit, poll
     and validate functions, exported as `filc_async_runtime_<name>`.
-  - **The shipped runtime.** `runtime=io_uring` turns calls into io_uring
-    requests. `tests/mock_runtime.c` is a second runtime, `runtime=mock`, and
-    `tests/t_two_runtimes.c` uses both in one program. `demos/rpc/rpc_runtime.c`,
-    `runtime=rpc`, sends calls to a TCP server, and
-    `demos/rpc/demo_rpc_upload.c` reads files with io_uring and uploads them
-    with it ([example](RPC-Runtime.md)).
+  - **The shipped runtimes.** `runtime=io_uring` (`runtime/io_uring/`) turns
+    calls into io_uring requests. `runtime=rpc` (`runtime/rpc/`) sends calls
+    to the rpc demos' TCP server, and `demos/rpc/demo_rpc_upload.c` reads
+    files with io_uring and uploads them with it
+    ([example](RPC-Runtime.md)). Each is a library of its own.
+  - **A program's own runtime.** `tests/mock_runtime.c`, `runtime=mock`, is
+    compiled into the tests that use it, and `tests/t_two_runtimes.c` uses it
+    next to io_uring.
 
 **No runtime symbols in the framework.** The framework references no symbol
 of any runtime. It reaches a task's runtime only through the descriptor its
@@ -130,7 +132,7 @@ original buffer, so the access proceeds on the same pointer.
 
 ## Framework
 
-`runtime/src/filc_async.c`, `filc_async_native.c`, `filc_async_arena.c`
+`runtime/framework/filc_async.c`, `filc_async_native.c`, `filc_async_arena.c`
 
 **Tasks.** One per call. Running tasks are kept in a list, oldest first, and
 tasks whose result has not been delivered are kept in a hash table of
@@ -238,8 +240,10 @@ ring. That gives safety, not I/O parallelism across threads.
 | Call rewriting, descriptors, stubs, run thunks | `compiler/pass/FilAsync.cpp` |
 | Pending-flag test at access sites | `compiler/patches/filpizlonator-pending-hook.patch` |
 | Pass order | `compiler/patches/backend-util-run-filasync.patch` |
-| Framework | `runtime/src/filc_async.c`, `filc_async.h`, `filc_async_runtime.h` |
-| Header flag and resolver bridge | `runtime/src/filc_async_native.c` |
-| Allocator | `runtime/src/filc_async_arena.c`, `filc_async_alloc.h` |
-| io_uring runtime | `runtime/src/filc_async_uring.c`, `fasync*.c` |
+| Public headers | `runtime/include/`: `filc_async.h`, `filc_async_runtime.h`, `filc_async_alloc.h`, and io_uring's `fasync.h`, `fasync_dep.h` |
+| Framework | `runtime/framework/filc_async.c` |
+| Header flag and resolver bridge | `runtime/framework/filc_async_native.c` |
+| Allocator | `runtime/framework/filc_async_arena.c` |
+| io_uring runtime | `runtime/io_uring/`: `filc_async_uring.c`, the request layer `fasync*.c`, and its native half `fasync_native.c` |
+| rpc runtime | `runtime/rpc/rpc_runtime.c` |
 | Native forwarders | `runtime/patches/libpas-forwarders.patch` |

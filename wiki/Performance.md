@@ -25,10 +25,10 @@ checks are in `demos/pragma/pragma_report.hh`.
 | `scaling` | that comparison for 1 to 2048 files, with the time spent inside each annotated call |
 | `overlap` | reading and hashing 256 files, with the reads and the hashing also timed alone |
 
-### A runtime of the program's own (`make demo-rpc`)
+### The rpc runtime (`make demo-rpc`)
 
-Both demos send calls to a loopback TCP server through `runtime=rpc`, a
-runtime in the demos' own source. See
+Both demos send calls to a loopback TCP server through `runtime=rpc`
+(`runtime/rpc/`). See
 [The RPC runtime example](RPC-Runtime.md).
 
 | Demo | Shows |

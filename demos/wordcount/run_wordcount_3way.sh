@@ -23,7 +23,7 @@ echo "=================================================================="
 # 2. Build 3 versions from the exact same source file: demos/wordcount/demo_wordcount.c
 gcc -O2 -o "$OUT/wc_gcc" "$REPO/demos/wordcount/demo_wordcount.c"
 "$PATCHED_CC" -O2 -static -DFASYNC_IMPLICIT -DFASYNC_COMPILER_INSERTS_CHECKS \
-  -I "$REPO/runtime/src" -L "$REPO/runtime/build/lib" \
+  -I "$REPO/runtime/include" -L "$REPO/runtime/build/lib" \
   -o "$OUT/wc_implicit" "$REPO/demos/wordcount/demo_wordcount.c" -lfilc_async_uring -lpizlo -lc
 
 HAVE_FILC_SYNC=0

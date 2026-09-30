@@ -5,6 +5,7 @@
 # Usage: demos/rpc/run_rpc_demo.sh counter|upload [OUT_DIR]
 #   counter  demo_rpc_counter: runtime=rpc only, no io_uring linked
 #   upload   demo_rpc_upload: runtime=io_uring and runtime=rpc together
+# runtime=rpc is runtime/rpc/rpc_runtime.c, linked as -lfilc_async_rpc.
 # Needs the patched compiler (PATCHED_CC) and the libraries built by
 # runtime/build.sh; the server is built with the host compiler (CC).
 set -eu
@@ -16,8 +17,8 @@ OUT=${2:-$REPO/build/tests}
 PATCHED_CC=${PATCHED_CC:-$REPO/vendor/fil-c-src/build/bin/filcc}
 
 case $DEMO in
-    counter) RUNTIMES= ;;
-    upload) RUNTIMES=-lfilc_async_uring ;;
+    counter) RUNTIMES=-lfilc_async_rpc ;;
+    upload) RUNTIMES="-lfilc_async_rpc -lfilc_async_uring" ;;
     *) echo "usage: run_rpc_demo.sh counter|upload [OUT_DIR]" >&2; exit 2 ;;
 esac
 if [ ! -x "$PATCHED_CC" ]; then
@@ -29,9 +30,9 @@ mkdir -p "$OUT"
 # shellcheck disable=SC2086
 "$PATCHED_CC" -O2 -static -Werror=pragma-clang-attribute \
     -DFASYNC_COMPILER_INSERTS_CHECKS \
-    -I"$REPO/runtime/src" -L"$REPO/runtime/build/lib" \
+    -I"$REPO/runtime/include" -L"$REPO/runtime/build/lib" \
     -o "$OUT/demo_rpc_$DEMO" \
-    "$HERE/demo_rpc_$DEMO.c" "$HERE/rpc_runtime.c" $RUNTIMES -lpizlo -lc
+    "$HERE/demo_rpc_$DEMO.c" $RUNTIMES -lpizlo -lc
 
 : > "$OUT/rpc_server.port" # no stale port from an earlier run
 "$OUT/rpc_server" > "$OUT/rpc_server.port" 2> "$OUT/rpc_server.err" &
