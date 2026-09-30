@@ -33,7 +33,7 @@ runtime in the demos' own source. See
 
 | Demo | Shows |
 |---|---|
-| `counter` | `step` and `get` calls on `runtime=rpc` alone: two `get` calls are in flight together, and only the `step` and the `get` after it wait for a lock |
+| `counter` | `step` and `get` calls on `runtime=rpc` alone. Each reply lands in a `bout=` value, and reading the value is the only wait. Two `get` calls are in flight together and only the `step` and the `get` after it wait for a lock: four 50 ms calls finish in about 150 ms instead of 200 |
 | `upload` | two runtimes in one loop: each file is read with io_uring and its buffer uploaded over rpc. Each upload waits for its own read, the reads still reach the kernel in one submit, and the server's checksums match the files |
 
 ### Explicit API (`make all-demos`)

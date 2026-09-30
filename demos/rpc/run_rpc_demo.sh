@@ -25,7 +25,7 @@ if [ ! -x "$PATCHED_CC" ]; then
     exit 1
 fi
 mkdir -p "$OUT"
-"${CC:-cc}" -O2 -Wall -o "$OUT/rpc_server" "$HERE/rpc_server.c"
+"${CC:-cc}" -O2 -Wall -pthread -o "$OUT/rpc_server" "$HERE/rpc_server.c"
 # shellcheck disable=SC2086
 "$PATCHED_CC" -O2 -static -Werror=pragma-clang-attribute \
     -DFASYNC_COMPILER_INSERTS_CHECKS \

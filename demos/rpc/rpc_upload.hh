@@ -13,7 +13,8 @@
  *                If a read is still filling it, the runtime holds the bytes
  *                back until that read lands.
  *
- * The runtime never runs the body; the server does the work. */
+ * The runtime runs the body just before it sends the call; here it does
+ * nothing, and the server does the work. */
 
 #include "../pragma/pragma_io.hh"
 

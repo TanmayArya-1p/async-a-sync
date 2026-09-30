@@ -1,18 +1,10 @@
-/* rpc_runtime.c: runtime=rpc, a runtime that turns each annotated call into
- * one request to the server in rpc_server.c.
+/* rpc_runtime.c: runtime=rpc, one TCP request per annotated call.
  *
- * submit connects to the server and sends the call's command: STEP, GET, or
- * PUT followed by a payload. poll reads the reply, "VALUE <n>\n", and
- * completes the call with n. The server closes the connection after its
- * reply, so the end of the stream is the end of the reply. Nothing blocks
- * except poll in BLOCK mode, which waits for the socket, or for the payload.
- *
- * A PUT's payload is a bin= argument: the call only reads it, but another
- * call, on this runtime or another, may still be filling it. The runtime
- * sends it only once no call owns it any more.
- *
- * The framework has already taken the call's locks before submit, so the
- * runtime never looks at r_dep or w_dep. */
+ * submit: run the body, connect, send STEP, GET or PUT and its payload.
+ * poll:   read "VALUE <n>\n", store n in *value if the call has one,
+ *         complete with n.
+ * Only BLOCK mode blocks: on the socket, or on a PUT's pending payload.
+ * Locks and pending marks are the framework's, taken before submit. */
 
 #include <arpa/inet.h>
 #include <errno.h>
@@ -27,8 +19,7 @@
 
 #include "filc_async_runtime.h"
 
-/* One 16-byte cell per staged argument: a scalar in the low word, or a
- * pointer (its capability travels with it). */
+// One 16-byte staged cell per argument: scalar in the low word, or a pointer.
 typedef struct {
   union {
     void* ptr;
@@ -39,19 +30,21 @@ typedef struct {
 
 enum op { OP_NONE, OP_STEP, OP_GET, OP_PUT };
 
-/* Not a poll(2) event: the payload is still pending. */
+// Not a poll(2) event: the payload is still pending.
 #define WAIT_PAYLOAD 0x4000
 
 struct request {
-  pthread_mutex_t lock; /* held by the thread advancing the request */
+  pthread_mutex_t lock; // held while advancing
   int fd;
   char command[32];
   size_t command_sent;
-  const char* payload; /* PUT only */
+  const char* payload; // PUT only
   size_t payload_len;
   size_t payload_sent;
   char reply[32];
   size_t received;
+  long* value; // the bout= argument of STEP and GET
+  long result;
   int done;
 };
 
@@ -67,16 +60,16 @@ static enum op op_of(const filc_async_meta* meta) {
   return OP_NONE;
 }
 
-/* Every function on this runtime takes the server's port first, an integer.
- * op=step and op=get take nothing else; op=put takes the payload, bin=, and
- * its length. */
+// Shape: the port first, then
+//   step, get: a bout= reply pointer;
+//   put:       a bin= payload and its length.
 static bool rpc_validate(const filc_async_meta* meta) {
   if (meta->nargs < 1 || meta->args[0].kind != FILC_ASYNC_ARG_IGNORED)
     return false;
   switch (op_of(meta)) {
   case OP_STEP:
   case OP_GET:
-    return meta->nargs == 1;
+    return meta->nargs == 2 && meta->args[1].kind == FILC_ASYNC_ARG_BUFFER_OUT;
   case OP_PUT:
     return meta->nargs == 3 &&
            meta->args[1].kind == FILC_ASYNC_ARG_BUFFER_IN &&
@@ -86,8 +79,20 @@ static bool rpc_validate(const filc_async_meta* meta) {
   }
 }
 
+static long store_reply(void* request) {
+  struct request* r = request;
+  *r->value = r->result;
+  return 0;
+}
+
+// Never freed: rpc_poll on another thread may still hold it.
 static void finish(void* task, struct request* r, long result) {
-  close(r->fd);
+  if (r->fd >= 0)
+    close(r->fd);
+  r->result = result;
+  // store inside filc_async_run, or the hook waits on this very call
+  if (r->value)
+    filc_async_run(task, store_reply, r);
   r->done = 1;
   filc_async_complete(task, result);
 }
@@ -100,8 +105,8 @@ static long parse_reply(const struct request* r) {
   return value;
 }
 
-/* Sends data[*sent..len). Returns 0 once it is all sent, POLLOUT while the
- * socket is still connecting or full, or -errno. */
+// Send data[*sent..len): 0 when all sent, POLLOUT if the socket is still
+// connecting or full, or -errno.
 static int send_rest(int fd, const char* data, size_t len, size_t* sent) {
   while (*sent < len) {
     ssize_t n = send(fd, data + *sent, len - *sent, MSG_DONTWAIT | MSG_NOSIGNAL);
@@ -112,12 +117,11 @@ static int send_rest(int fd, const char* data, size_t len, size_t* sent) {
   return 0;
 }
 
-/* Sends what is left of the command and the payload, and reads what has
- * arrived of the reply. Returns what to wait for, or 0 once the call has
- * completed. */
+// Move the request on; returns what to wait for, or 0 when done.
 static int advance(void* task, struct request* r) {
   int rc = send_rest(r->fd, r->command, strlen(r->command), &r->command_sent);
   if (rc == 0 && r->payload_sent < r->payload_len) {
+    // the payload is a bin= input another call may still be filling
     if (filc_async_is_pending(r->payload))
       return WAIT_PAYLOAD;
     rc = send_rest(r->fd, r->payload, r->payload_len, &r->payload_sent);
@@ -143,15 +147,24 @@ static int advance(void* task, struct request* r) {
 
 static void rpc_submit(void* task, const filc_async_meta* meta,
                        filc_async_run_fn run, void* staged_args, size_t nargs) {
+  (void)nargs; // validated
   const staged_arg* args = staged_args;
+
+  // the body runs before the call is sent; the server does the work
+  filc_async_run(task, run, staged_args);
+
   struct request* r = calloc(1, sizeof(*r));
+  if (!r)
+    filc_async_fatal("rpc: out of memory");
   pthread_mutex_init(&r->lock, NULL);
   switch (op_of(meta)) {
   case OP_STEP:
     strcpy(r->command, "STEP\n");
+    r->value = args[1].value.ptr;
     break;
   case OP_GET:
     strcpy(r->command, "GET\n");
+    r->value = args[1].value.ptr;
     break;
   default:
     r->payload = args[1].value.ptr;
@@ -160,38 +173,37 @@ static void rpc_submit(void* task, const filc_async_meta* meta,
     break;
   }
 
-  r->fd = socket(AF_INET, SOCK_STREAM | SOCK_NONBLOCK, 0);
+  // publish first; poll waits on the lock until submit is done
+  pthread_mutex_lock(&r->lock);
+  __atomic_store_n(filc_async_task_runtime_data(task), r, __ATOMIC_RELEASE);
+
   struct sockaddr_in addr = {0};
   addr.sin_family = AF_INET;
   addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
   addr.sin_port = htons((uint16_t)args[0].value.word);
-  if (connect(r->fd, (struct sockaddr*)&addr, sizeof(addr)) < 0 &&
-      errno != EINPROGRESS) {
+  r->fd = socket(AF_INET, SOCK_STREAM | SOCK_NONBLOCK, 0);
+  if (r->fd < 0 || (connect(r->fd, (struct sockaddr*)&addr, sizeof(addr)) < 0 &&
+                    errno != EINPROGRESS))
     finish(task, r, -errno);
-    return;
-  }
-
-  /* Publish the request to poll, then send what the socket already takes. */
-  pthread_mutex_lock(&r->lock);
-  __atomic_store_n(filc_async_task_runtime_data(task), r, __ATOMIC_RELEASE);
-  advance(task, r);
+  else
+    advance(task, r); // send now if the socket is ready
   pthread_mutex_unlock(&r->lock);
 }
 
 static bool rpc_poll(void* task, enum filc_async_poll_mode mode) {
   struct request* r =
       __atomic_load_n(filc_async_task_runtime_data(task), __ATOMIC_ACQUIRE);
-  if (!r) /* submit has not got that far yet */
+  if (!r) // submit not there yet
     return false;
   if (mode == FILC_ASYNC_POLL_BLOCK)
     pthread_mutex_lock(&r->lock);
   else if (pthread_mutex_trylock(&r->lock) != 0)
-    return false; /* another thread is advancing it */
+    return false; // another thread is advancing it
 
   int wait = r->done || mode == FILC_ASYNC_POLL_CHECK ? 0 : advance(task, r);
   while (wait && mode == FILC_ASYNC_POLL_BLOCK) {
     if (wait == WAIT_PAYLOAD) {
-      /* Waits for the call filling the payload, through its own runtime. */
+      // wait for the call filling the payload, through its own runtime
       filc_async_wait_buffer(task, r->payload);
     } else {
       struct pollfd p = {r->fd, (short)wait, 0};
