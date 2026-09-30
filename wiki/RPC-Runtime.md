@@ -5,8 +5,8 @@
 **Programs:** [`demos/rpc/demo_rpc_counter.c`](../demos/rpc/demo_rpc_counter.c), which
 holds its annotated functions and their calls, and
 [`demos/rpc/demo_rpc_upload.c`](../demos/rpc/demo_rpc_upload.c); their logging and
-checks are in `rpc_counter_report.hh` and `rpc_upload_report.hh`, and the
-server is [`demos/rpc/rpc_server.c`](../demos/rpc/rpc_server.c)
+checks are in `rpc_utils.hh`, and the server is
+[`demos/rpc/rpc_server.c`](../demos/rpc/rpc_server.c)
 **Run:** `make demo-rpc` (both), `make demo-rpc-counter`, `make demo-rpc-upload`,
 or `demos/rpc/run_rpc_demo.sh counter|upload [OUT_DIR]`
 
@@ -83,7 +83,7 @@ upload: read files with io_uring, upload them with rpc
   2      4096   0x9dfe3c82         0x9dfe3c82
   3      4096   0xfce16725         0xfce16725
 
-  the loop returned in 1.00 ms; the last upload was answered after 202.5 ms
+  the loop's last call ran at 0.90 ms; the last upload was answered after 202.4 ms
   the 4 reads reached the kernel in 1 submit
 
   => each upload waited for its own read, and the reads still went out as one batch
@@ -119,13 +119,13 @@ The annotated functions, from `demo_rpc_counter.c`:
 ```c
 #pragma clang attribute push(__attribute__((annotate("filc_async", "runtime=rpc", "op=step", "w_dep=port:counter", "bout=value"))), apply_to=function)
 void step(unsigned port, long* value) {
-  rpc_log_sent("step");
+  log_call("step");
 }
 #pragma clang attribute pop
 
 #pragma clang attribute push(__attribute__((annotate("filc_async", "runtime=rpc", "op=get", "r_dep=port:counter", "bout=value"))), apply_to=function)
 void get(unsigned port, long* value) {
-  rpc_log_sent("get");
+  log_call("get");
 }
 #pragma clang attribute pop
 ```
@@ -141,7 +141,7 @@ step(port, &stepped); // waits here for both gets
 get(port, &after);    // waits here for the step
 
 // reading the values is the only wait
-return rpc_report(first, second, stepped, after);
+return counter_report(first, second, stepped, after);
 ```
 
 - **Results.** The server's number lands in `*value`. `bout=value` marks
@@ -160,21 +160,32 @@ return rpc_report(first, second, stepped, after);
 
 ## The upload program
 
-`upload()`, from `rpc_upload.hh`, sends a buffer and returns its checksum:
+`demo_rpc_upload.c` defines one annotated function on each runtime:
 
 ```c
+// pread on io_uring: the kernel fills buf.
+#pragma clang attribute push(__attribute__((annotate("filc_async", "runtime=io_uring", "op=pread", "bout=buf"))), apply_to=function)
+void* async_pread(int fd, void* buf, size_t len, unsigned long offset) {
+  log_call("async_pread");
+  return 0;
+}
+#pragma clang attribute pop
+
+// put on rpc: sends len bytes of data; the reply is their checksum.
 #pragma clang attribute push(__attribute__((annotate("filc_async", "runtime=rpc", "op=put", "bin=data"))), apply_to=function)
-void* upload(unsigned port, const void* data, size_t len) { return 0; }
+void* upload(unsigned port, const void* data, size_t len) {
+  log_call("upload");
+  return 0;
+}
 #pragma clang attribute pop
 ```
 
-The loop, from `demo_rpc_upload.c`. `async_pread` is the io_uring read from
-the pragma demos:
+And the loop that calls them:
 
 ```c
 for (int i = 0; i < UPLOAD_FILES; i++) {
-  async_pread(u.fd[i], u.buf[i], UPLOAD_BYTES, 0);
-  sent[i] = upload(u.port, u.buf[i], UPLOAD_BYTES);
+  async_pread(u.fd[i], u.buf[i], UPLOAD_BYTES, 0);  // queues the read
+  sent[i] = upload(u.port, u.buf[i], UPLOAD_BYTES); // sends once the read lands
 }
 ```
 

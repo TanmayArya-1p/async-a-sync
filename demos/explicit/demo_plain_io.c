@@ -1,22 +1,19 @@
-#include <stdio.h>
+/* plain_io: ask for every file, then count every file.
+ *
+ * fasync_pread only queues a read. Counting a buffer waits for its read.
+ * No submit, no wait. */
 
-#include "demo_plain_io.hh"
-
-#define FILES 4
-#define BYTES (512 * 1024)
+#include "explicit_utils.hh"
 
 int main(int argc, char** argv) {
-  const char* dir = argc > 1 ? argv[1] : "/tmp";
+  plain_io_setup(argc, argv);
 
-  if (demo_files(dir, FILES, BYTES) < 0)
-    return 1;
-  demo_cold();
+  for (int i = 0; i < files.n; i++)
+    fasync_pread(files.fd[i], files.buf[i], files.bytes, 0); // queues the read
 
-  printf("  plain_io: %d files, %d KiB each, on %s\n", FILES, BYTES / 1024, dir);
-  int correct = demo_plain_io();
-  demo_show_submit("result");
-  printf("  %d/%d files correct\n", correct, FILES);
+  int correct = 0;
+  for (int i = 0; i < files.n; i++)
+    correct += count_words(files.buf[i]) == files.words[i]; // waits for that file
 
-  demo_finish();
-  return correct == FILES ? 0 : 1;
+  return plain_io_report(correct);
 }

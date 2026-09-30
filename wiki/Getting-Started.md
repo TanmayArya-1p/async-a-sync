@@ -69,8 +69,8 @@ make demo-pragma-hello
 
 `tests/run.sh` ends with a summary of passed, failed and skipped tests. With
 io_uring available and both builds present, nothing should fail or be
-skipped. The hello demo walks through one annotated call step by step and
-ends with `DEMO OK`.
+skipped. The hello demo makes one annotated call, shows where the program
+waits for it, and ends with `DEMO OK`.
 
 ## 4. Write an annotated call
 

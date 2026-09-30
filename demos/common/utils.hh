@@ -1,9 +1,13 @@
 #pragma once
 
+// Shared by every demo: test files, the clock, word counting, and the
+// title, checks and verdict each demo prints.
+
 #include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/resource.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -15,67 +19,134 @@ build with -DFASYNC_COMPILER_INSERTS_CHECKS"
 #endif
 #endif
 
-#define DEMO_PATH_MAX 128
-#define DEMO_MAX_FILES 2048
+// ---- test files ----
 
-static char demo_paths[DEMO_MAX_FILES][DEMO_PATH_MAX];
-static int demo_fd[DEMO_MAX_FILES];
-static unsigned char* demo_buf[DEMO_MAX_FILES];
-static size_t demo_expect[DEMO_MAX_FILES];
-static int demo_n;
-static size_t demo_bytes;
+#define MAX_FILES 2048
 
-static inline double demo_now_ms(void) {
+// Files of random words, each open for reading, each with its own buffer.
+static struct {
+  int n;
+  size_t bytes;
+  int fd[MAX_FILES];
+  unsigned char* buf[MAX_FILES];
+  size_t words[MAX_FILES]; // words written to each file
+  char path[MAX_FILES][128];
+} files __attribute__((unused));
+
+static inline unsigned next_random(unsigned* state) {
+  *state = *state * 1103515245u + 12345u;
+  return *state >> 16;
+}
+
+// Fills p with random words; returns how many.
+static inline size_t fill_words(unsigned char* p, size_t cap, unsigned* state) {
+  static const char* const words[] = {"alpha", "beta", "gamma", "delta",
+                                      "epsilon"};
+  size_t n = 0, count = 0;
+  while (n < cap) {
+    const char* w = words[next_random(state) % 5];
+    size_t len = strlen(w);
+    if (n + len + (count ? 1 : 0) > cap)
+      break;
+    if (count)
+      p[n++] = (next_random(state) & 8) ? '\n' : ' ';
+    memcpy(p + n, w, len);
+    n += len;
+    count++;
+  }
+  memset(p + n, ' ', cap - n);
+  return count;
+}
+
+// Keeping every file open needs more than the usual 1024 fds.
+static inline void raise_fd_limit(void) {
+  struct rlimit rl;
+  if (getrlimit(RLIMIT_NOFILE, &rl) == 0 && rl.rlim_cur < rl.rlim_max) {
+    rl.rlim_cur = rl.rlim_max;
+    setrlimit(RLIMIT_NOFILE, &rl);
+  }
+}
+
+// Writes n files of `bytes` random words into dir. Exits on failure.
+static inline void make_files(const char* dir, int n, size_t bytes) {
+  if (n < 1 || n > MAX_FILES) {
+    fprintf(stderr, "make_files: %d files, at most %d\n", n, MAX_FILES);
+    exit(2);
+  }
+  raise_fd_limit();
+  files.n = n;
+  files.bytes = bytes;
+  unsigned state = 7;
+  unsigned char* text = (unsigned char*)malloc(bytes);
+  for (int i = 0; i < n; i++) {
+    files.words[i] = fill_words(text, bytes, &state);
+    snprintf(files.path[i], sizeof(files.path[i]), "%s/demo_%04d.txt", dir, i);
+    int w = open(files.path[i], O_CREAT | O_TRUNC | O_WRONLY, 0644);
+    if (w < 0 || pwrite(w, text, bytes, 0) != (ssize_t)bytes || fsync(w) != 0) {
+      perror(files.path[i]);
+      exit(1);
+    }
+    close(w);
+    files.buf[i] = (unsigned char*)calloc(1, bytes);
+    files.fd[i] = open(files.path[i], O_RDONLY);
+    if (!files.buf[i] || files.fd[i] < 0) {
+      perror(files.path[i]);
+      exit(1);
+    }
+  }
+  free(text);
+}
+
+// Drops the files from the page cache, so each read goes to the device.
+static inline void drop_cache(void) {
+  for (int i = 0; i < files.n; i++)
+    posix_fadvise(files.fd[i], 0, files.bytes, POSIX_FADV_DONTNEED);
+}
+
+// Words written to the first n files.
+static inline size_t words_in_files(int n) {
+  size_t words = 0;
+  for (int i = 0; i < n; i++)
+    words += files.words[i];
+  return words;
+}
+
+static inline void remove_files(void) {
+  for (int i = 0; i < files.n; i++) {
+    close(files.fd[i]);
+    unlink(files.path[i]);
+    free(files.buf[i]);
+  }
+}
+
+// ---- clock ----
+
+static inline double now_ms(void) {
   struct timespec ts;
   clock_gettime(CLOCK_MONOTONIC, &ts);
   return (double)ts.tv_sec * 1000.0 + (double)ts.tv_nsec / 1e6;
 }
 
-static double demo_t0;
-
-static inline void demo_start(void) {
-  demo_t0 = demo_now_ms();
+static inline int compare_doubles(const void* a, const void* b) {
+  double x = *(const double*)a, y = *(const double*)b;
+  return (x > y) - (x < y);
 }
 
-static inline double demo_elapsed(void) {
-  return demo_now_ms() - demo_t0;
+static inline double median(double* v, int n) {
+  qsort(v, (size_t)n, sizeof(double), compare_doubles);
+  return n % 2 ? v[n / 2] : (v[n / 2 - 1] + v[n / 2]) / 2.0;
 }
 
-static inline unsigned int demo_rand(unsigned int* state) {
-  *state = *state * 1103515245u + 12345u;
-  return *state >> 16;
-}
+// ---- reading the buffers ----
+// Compiled code, so with the patched compiler each read of a pending
+// buffer waits for it. libc's memcmp or strlen would not.
 
-static const char* const demo_words[] = {
-    "alpha", "beta", "gamma", "delta", "epsilon"};
-#define DEMO_NWORDS ((int)(sizeof(demo_words) / sizeof(demo_words[0])))
-
-static inline size_t demo_fill_words(unsigned char* p, size_t cap,
-                                     unsigned int* state) {
-  size_t n = 0;
-  size_t words = 0;
-  while (n < cap) {
-    const char* w = demo_words[demo_rand(state) % DEMO_NWORDS];
-    size_t wl = strlen(w);
-    if (n + wl + (words ? 1 : 0) > cap)
-      break;
-    if (words)
-      p[n++] = (demo_rand(state) & 8) ? '\n' : ' ';
-    memcpy(p + n, w, wl);
-    n += wl;
-    words++;
-  }
-  memset(p + n, ' ', cap - n);
-  return words;
-}
-
-/* noinline keeps it a separate symbol for inspect_disasm.sh; unused
- * because not every demo counts words */
+// Words in one file's buffer. noinline: inspect_disasm.sh disassembles it.
 __attribute__((noinline, unused))
-static size_t wordcount(const char* p) {
+static size_t count_words(const unsigned char* p) {
   size_t words = 0;
   int in_word = 0;
-  for (size_t i = 0; i < demo_bytes; i++) {
+  for (size_t i = 0; i < files.bytes; i++) {
     int separator = (p[i] == ' ' || p[i] == '\n');
     if (!separator && !in_word)
       words++;
@@ -84,153 +155,50 @@ static size_t wordcount(const char* p) {
   return words;
 }
 
-static inline int demo_files(const char* dir, int n, size_t bytes) {
-  if (n > DEMO_MAX_FILES)
-    return -1;
-  demo_n = n;
-  demo_bytes = bytes;
-
-  unsigned int state = 7;
-  unsigned char* b = (unsigned char*)malloc(bytes);
-  if (!b)
-    return -1;
-
-  for (int i = 0; i < n; i++) {
-    demo_expect[i] = demo_fill_words(b, bytes, &state);
-    snprintf(demo_paths[i], DEMO_PATH_MAX, "%s/demo_%04d.txt", dir, i);
-    int w = open(demo_paths[i], O_CREAT | O_TRUNC | O_WRONLY, 0644);
-    if (w < 0 || pwrite(w, b, bytes, 0) != (ssize_t)bytes || fsync(w) != 0) {
-      perror(demo_paths[i]);
-      if (w >= 0)
-        close(w);
-      free(b);
-      return -1;
-    }
-    close(w);
-
-    demo_buf[i] = (unsigned char*)calloc(1, bytes);
-    demo_fd[i] = open(demo_paths[i], O_RDONLY);
-    if (!demo_buf[i] || demo_fd[i] < 0) {
-      perror(demo_paths[i]);
-      free(b);
-      return -1;
-    }
-  }
-  free(b);
-  return 0;
-}
-
-static inline void demo_cold(void) {
-  for (int i = 0; i < demo_n; i++)
-    posix_fadvise(demo_fd[i], 0, demo_bytes, POSIX_FADV_DONTNEED);
-}
-
-static inline void read_all_files(void) {
-  for (int i = 0; i < demo_n; i++) {
-#ifdef FASYNC_IMPLICIT
-    memset(demo_buf[i], 0, demo_bytes);
-    if (!fasync_pread(demo_fd[i], demo_buf[i], demo_bytes, 0)) {
-      fprintf(stderr, "fasync_pread %s: %s\n", demo_paths[i],
-              fasync_last_error());
-      exit(1);
-    }
-#else
-    if (pread(demo_fd[i], demo_buf[i], demo_bytes, 0) != (ssize_t)demo_bytes) {
-      perror(demo_paths[i]);
-      exit(1);
-    }
-#endif
-  }
-}
-
-static inline const char* file_data(int i) {
-  return (const char*)demo_buf[i];
-}
-
-static inline void demo_finish(void) {
-  for (int i = 0; i < demo_n; i++) {
-    close(demo_fd[i]);
-    unlink(demo_paths[i]);
-    free(demo_buf[i]);
-  }
-}
-
-static inline int demo_seed_file(const char* path, int blocks, size_t block_size) {
-  unsigned char* block = (unsigned char*)malloc(block_size);
-  if (!block)
-    return -1;
-
-  int fd = open(path, O_CREAT | O_TRUNC | O_RDWR, 0644);
-  if (fd < 0) {
-    free(block);
-    return -1;
-  }
-
-  for (int i = 0; i < blocks; i++) {
-    memset(block, (i + 1) & 0xFF, block_size);
-    if (pwrite(fd, block, block_size, (off_t)i * block_size) != (ssize_t)block_size) {
-      close(fd);
-      free(block);
-      return -1;
-    }
-  }
-  close(fd);
-  free(block);
-  return 0;
-}
-
-static inline int demo_block_ok(const unsigned char* buf, size_t block_size,
-                                int index) {
-  unsigned char expected = (unsigned char)((index + 1) & 0xFF);
-  for (size_t i = 0; i < block_size; i += 512)
-    if (buf[i] != expected)
+static inline int equal(const void* a, const void* b, size_t n) {
+  const unsigned char* x = (const unsigned char*)a;
+  const unsigned char* y = (const unsigned char*)b;
+  for (size_t i = 0; i < n; i++)
+    if (x[i] != y[i])
       return 0;
   return 1;
 }
 
+// ---- title, checks, verdict ----
+// Checks are recorded as a demo runs. finish() prints one line for all of
+// them and names only the ones that failed.
 
-static unsigned char* demo_prov_author;       /* what the author writes       */
-static unsigned char* demo_prov_plain_reader; /* an untagged read lands here  */
-static unsigned char* demo_prov_tagged_reader; /* a tagged read lands here     */
-static unsigned char* demo_prov_stale;        /* the "on disk" old bytes      */
-static size_t demo_prov_len;
+#define MAX_CHECKS 32
+static struct {
+  int n, failed;
+  const char* what[MAX_CHECKS];
+  int ok[MAX_CHECKS];
+} checks __attribute__((unused));
 
-static inline int demo_prov_setup(size_t len) {
-  demo_prov_author = (unsigned char*)malloc(len);
-  demo_prov_plain_reader = (unsigned char*)malloc(len);
-  demo_prov_tagged_reader = (unsigned char*)malloc(len);
-  demo_prov_stale = (unsigned char*)malloc(len);
-  if (!demo_prov_author || !demo_prov_plain_reader ||
-      !demo_prov_tagged_reader || !demo_prov_stale)
-    return -1;
-  memset(demo_prov_author, 0x5E, len);
-  memset(demo_prov_plain_reader, 0, len);
-  memset(demo_prov_tagged_reader, 0, len);
-  memset(demo_prov_stale, 0xA7, len);
-  demo_prov_len = len;
-  return 0;
+static inline void check(const char* what, int ok) {
+  if (checks.n < MAX_CHECKS) {
+    checks.what[checks.n] = what;
+    checks.ok[checks.n] = ok;
+    checks.n++;
+  }
+  if (!ok)
+    checks.failed++;
 }
 
-static inline int demo_prov_resterile(int fd) {
-  return pwrite(fd, demo_prov_stale, demo_prov_len, 0) == (ssize_t)demo_prov_len
-             ? 0
-             : -1;
+static inline void title(const char* name, const char* subtitle) {
+  printf("\n%s\n", name);
+  for (size_t i = 0; i < strlen(name); i++)
+    putchar('-');
+  printf("\n");
+  if (subtitle)
+    printf("%s\n\n", subtitle);
 }
 
-static inline void demo_prov_teardown(void) {
-  free(demo_prov_author);
-  free(demo_prov_plain_reader);
-  free(demo_prov_tagged_reader);
-  free(demo_prov_stale);
+static inline int finish(void) {
+  printf("  checks: %d/%d passed\n", checks.n - checks.failed, checks.n);
+  for (int i = 0; i < checks.n; i++)
+    if (!checks.ok[i])
+      printf("    FAILED: %s\n", checks.what[i]);
+  printf("\n%s\n", checks.failed ? "DEMO FAILED" : "DEMO OK");
+  return checks.failed ? 1 : 0;
 }
-
-#ifdef FASYNC_IMPLICIT
-
-static inline void demo_show_submit(const char* note) {
-  struct fasync_stats s;
-  fasync_get_stats(&s);
-  printf("  %s: %lu SQEs queued, %lu kernel entries, %lu blocking entries\n",
-         note, s.sqes_queued, s.kernel_submit_entries, s.kernel_wait_entries);
-}
-
-#endif /* FASYNC_IMPLICIT */

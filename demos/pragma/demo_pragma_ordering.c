@@ -1,82 +1,62 @@
-/* demo_pragma_ordering: what the r_dep= and w_dep= options buy.
+/* ordering: what r_dep= and w_dep= buy.
  *
- * In pragma_io.hh async_pwrite has `w_dep=fd:file` (it writes its fd) and
- * async_pread has `r_dep=fd:file` (it reads its fd). Two calls on the same key
- * conflict unless both only read it, and a conflicting call waits, inside the
- * call, for the one before it. Everything else only queues, and the whole
- * queue goes to the kernel in one submit the first time a result is needed.
- *
- * pragma_report.hh counts the kernel entries of each scenario and prints them
- * as a table. */
+ * async_pwrite writes its fd (w_dep=fd:file); async_pread reads it
+ * (r_dep=fd:file). Calls on the same fd conflict unless both only read.
+ * A conflicting call waits, inside the call, for the one before it.
+ * Other calls only queue, and go to the kernel together. */
 
-#include "pragma_report.hh"
+#include "pragma_utils.hh"
 
-#define FILES ORDERING_FILES
-#define RECORD ORDERING_RECORD
+#pragma clang attribute push(__attribute__((annotate("filc_async", "runtime=io_uring", "op=pwrite", "bin=buf", "w_dep=fd:file"))), apply_to=function)
+void* async_pwrite(int fd, const void* buf, size_t len, unsigned long offset) {
+  log_call("async_pwrite");
+  return 0;
+}
+#pragma clang attribute pop
 
-/* Two writes and a read of the same bytes, all issued before any wait. */
-static void same_file(int fd) {
+#pragma clang attribute push(__attribute__((annotate("filc_async", "runtime=io_uring", "op=pread", "bout=buf", "r_dep=fd:file"))), apply_to=function)
+void* async_pread(int fd, void* buf, size_t len, unsigned long offset) {
+  log_call("async_pread");
+  return 0;
+}
+#pragma clang attribute pop
+
+// Two writes and a read of the same bytes.
+static int same_file(int fd) {
   char buf[8] = {0};
-
-  scenario_start("write, write, read, one file", CONFLICTING);
-  void* first = async_pwrite(fd, "first", 5, 0);
-  void* second = async_pwrite(fd, "last!", 5, 0);
-  void* read_back = async_pread(fd, buf, 5, 0);
-  scenario_issued();
-
-  /* Waited on in reverse order: the read still sees the last write. */
-  pragma_wait(read_back);
-  pragma_wait(second);
-  pragma_wait(first);
-  scenario_done(memcmp(buf, "last!", 5) == 0, "read saw \"last!\"");
+  async_pwrite(fd, "first", 5, 0);
+  async_pwrite(fd, "last!", 5, 0); // waits for the first write
+  async_pread(fd, buf, 5, 0);      // waits for both writes
+  return equal(buf, "last!", 5);   // waits for the read
 }
 
-/* One write to each file: no two calls share a key. */
-static void many_files(const int* fd) {
-  static const char msg[] = "independent";
+// One write to each file: no two calls conflict.
+static int many_files(const int* fd) {
   void* task[FILES];
-
-  scenario_start("8 writes to 8 different files", INDEPENDENT);
   for (int i = 0; i < FILES; i++)
-    task[i] = async_pwrite(fd[i], msg, sizeof(msg) - 1, 0);
-  scenario_issued();
-
+    task[i] = async_pwrite(fd[i], "independent", 11, 0);
   int landed = 0;
   for (int i = 0; i < FILES; i++)
-    landed += pragma_wait(task[i]) == (long)(sizeof(msg) - 1);
-  scenario_done(landed == FILES, "all 8 landed");
+    landed += wait_for(task[i]) == 11;
+  return landed == FILES;
 }
 
-/* Eight reads of one file. Reads of one fd do not conflict. Each read gets
- * its own buffer, because a pending mark covers a whole object. */
-static void many_reads(int fd) {
-  char* buf[FILES];
+// Eight reads of one file: readers do not conflict.
+static int many_reads(int fd, char** record) {
   for (int i = 0; i < FILES; i++)
-    buf[i] = calloc(1, RECORD + 1);
-  write_records(fd);
-
-  scenario_start("8 reads of one file", INDEPENDENT);
-  for (int i = 0; i < FILES; i++)
-    async_pread(fd, buf[i], RECORD, (unsigned long)i * RECORD);
-  scenario_issued();
-
-  /* No handles and no waits: reading a buffer is enough. */
+    async_pread(fd, record[i], RECORD, i * RECORD);
   int ok = 1;
   for (int i = 0; i < FILES; i++)
-    ok &= holds_record(buf[i], i);
-  scenario_done(ok, "all 8 correct");
-
-  for (int i = 0; i < FILES; i++)
-    free(buf[i]);
+    ok &= is_record(record[i], i); // waits for that read
+  return ok;
 }
 
 int main(int argc, char** argv) {
-  int fd[FILES];
-  ordering_setup(argc, argv, fd);
+  struct ordering o = ordering_setup(argc, argv);
 
-  same_file(fd[0]);
-  many_files(fd);
-  many_reads(fd[1]);
+  scenario("write, write, read, one file", same_file(o.fd[0]), WAITS);
+  scenario("8 writes to 8 different files", many_files(o.fd), BATCHES);
+  scenario("8 reads of one file", many_reads(o.records, o.record), BATCHES);
 
-  return ordering_report(fd);
+  return ordering_report(&o);
 }

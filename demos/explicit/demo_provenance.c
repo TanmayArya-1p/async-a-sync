@@ -1,37 +1,33 @@
-/* demo_provenance run file: seed one file, open it twice, run the crux, report. */
+/* provenance: a write and a read of one file, through two fds.
+ *
+ * The two fds hide that the calls touch the same bytes, so nothing orders
+ * them. A tracker shared by both calls puts the read after the write. */
 
-#include <fcntl.h>
-#include <stdio.h>
-#include <unistd.h>
+#include "explicit_utils.hh"
 
-#include "demo_provenance.hh"
+// No tracker: the read may run before the write.
+static struct pair untracked(struct provenance* p) {
+  struct pair c;
+  c.write = fasync_pwrite(p->fd_write, p->written, p->len, 0);
+  c.read = fasync_pread(p->fd_read, p->read_untracked, p->len, 0);
+  return c;
+}
 
-#define N_BLOCKS 2
-#define BLOCK_SIZE 65536
+// One tracker for both calls: the read waits for the write.
+static struct pair tracked(struct provenance* p) {
+  fasync_tracker* t = fasync_tracker_new();
+  struct pair c;
+  c.write = fasync_tagged_pwrite(p->fd_write, p->written, p->len, 0, t, FASYNC_INOUT);
+  c.read = fasync_tagged_pread(p->fd_read, p->read_tracked, p->len, 0, t, FASYNC_INOUT);
+  fasync_tracker_free(t);
+  return c;
+}
 
 int main(int argc, char** argv) {
-  const char* dir = argc > 1 ? argv[1] : "/tmp";
+  struct provenance p = provenance_setup(argc, argv);
 
-  char path[256];
-  snprintf(path, sizeof(path), "%s/async-a-sync_provenance_payload.bin", dir);
-  if (demo_seed_file(path, N_BLOCKS, BLOCK_SIZE) != 0)
-    return 1;
-  int fdw = open(path, O_WRONLY);
-  int fdr = open(path, O_RDONLY);
-  if (fdw < 0 || fdr < 0)
-    return 1;
+  check_untracked(&p, untracked(&p));
+  check_tracked(&p, tracked(&p));
 
-  size_t len = (size_t)N_BLOCKS * BLOCK_SIZE;
-  printf("  provenance: %zu bytes, on %s\n", len, dir);
-
-  if (demo_prov_setup(len) < 0)
-    return 1;
-  int verified = demo_provenance(fdw, fdr);
-  printf("  %d/2 claims verified\n", verified);
-  demo_prov_teardown();
-
-  close(fdw);
-  close(fdr);
-  unlink(path);
-  return verified == 2 ? 0 : 1;
+  return provenance_report(&p);
 }

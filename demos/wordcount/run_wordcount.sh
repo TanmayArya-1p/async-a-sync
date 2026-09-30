@@ -32,7 +32,7 @@ mkdir -p "$OUT" "$DIR"
 echo "== building the same source three ways"
 ARMS=
 if command -v "$CC" >/dev/null 2>&1; then
-  "$CC" -O2 -o "$OUT/wc_c" "$HERE/demo_wordcount.c"
+  "$CC" -O2 -Wno-unused-result -o "$OUT/wc_c" "$HERE/demo_wordcount.c"
   ARMS="$ARMS c"
 else
   echo "  $CC not found; no C arm"

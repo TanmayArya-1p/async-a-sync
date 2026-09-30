@@ -13,8 +13,10 @@ Run `make help` for the full list.
 ### Annotated calls (`make demo-pragma`, or `make demo-pragma-<name> ARGS=...`)
 
 Each demo prints a table, a `=>` result line, and `DEMO OK` when its checks
-pass. A demo's source holds only the code it demonstrates. Setup, timing and
-checks are in `demos/pragma/pragma_report.hh`.
+pass. A demo's source holds only its annotated functions, whose bodies only
+log, and the code that calls them. Setup, logging, timing and checks are in
+`demos/pragma/pragma_utils.hh`; each demo directory has a utils header like
+it.
 
 | Demo | Shows |
 |---|---|

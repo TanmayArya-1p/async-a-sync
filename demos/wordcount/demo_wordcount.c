@@ -1,33 +1,24 @@
-#include <stdio.h>
+/* wordcount: one loop, built blocking or implicit.
+ *
+ * Built plainly, it reads each file with pread. Built with
+ * -DFASYNC_IMPLICIT and the patched compiler, it queues each read with
+ * fasync_pread instead, and counting a buffer waits for its read. */
 
-#include "demo_wordcount.hh"
-
-#define FILES 512
-
-#ifndef FASYNC_IMPLICIT
-#define DEMO_LABEL "sync"
-#else
-#define DEMO_LABEL "implicit"
-#endif
+#include "wordcount_utils.hh"
 
 int main(int argc, char** argv) {
-  const char* dir = argc > 1 ? argv[1] : "/tmp";
+  wordcount_setup(argc, argv);
 
-  if (demo_files(dir, FILES, 4096) < 0)
-    return 1;
+  for (int i = 0; i < files.n; i++)
+#ifdef FASYNC_IMPLICIT
+    fasync_pread(files.fd[i], files.buf[i], files.bytes, 0); // queues the read
+#else
+    pread(files.fd[i], files.buf[i], files.bytes, 0);
+#endif
 
-  size_t expected = 0;
-  for (int i = 0; i < FILES; i++)
-    expected += demo_expect[i];
+  size_t words = 0;
+  for (int i = 0; i < files.n; i++)
+    words += count_words(files.buf[i]); // implicit: waits for that file
 
-  demo_cold();
-  demo_start();
-
-  size_t words = demo_wordcount();
-
-  double ms = demo_elapsed();
-  printf("  %-9s %7.2f ms  (%zu words)\n", DEMO_LABEL, ms, words);
-
-  demo_finish();
-  return words != expected;
+  return wordcount_report(words);
 }

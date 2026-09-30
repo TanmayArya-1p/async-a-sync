@@ -1,44 +1,23 @@
-/* demo_pragma_hello: what one annotated call does.
+/* hello: one annotated call.
  *
- * The pragma on read_block tells the patched compiler that the function
- * stands for pread(2), that argument 0 is the fd and that argument 1 is a
- * buffer the kernel fills. The compiler rewrites every call to it:
- *
- *   1. the call marks buf pending and hands the call to the runtime, which
- *      runs the body and queues an io_uring request; the call returns at
- *      once;
- *   2. the first read of buf sends the request to the kernel and waits for
- *      it, through the check the compiler put in front of that load.
- *
- * No wait is written anywhere. pragma_report.hh times each step and prints
- * what the runtime did. */
+ * read_block stands for pread. Calling it queues the read and returns at
+ * once. The first read of buf waits for the data. No wait is written. */
 
-#include "pragma_report.hh"
+#include "pragma_utils.hh"
 
+// pread: the kernel fills buf.
 #pragma clang attribute push(__attribute__((annotate("filc_async", "runtime=io_uring", "op=pread", "bout=buf"))), apply_to=function)
-void* read_block(int fd, void* buf, size_t len, unsigned long offset);
+void* read_block(int fd, void* buf, size_t len, unsigned long offset) {
+  log_call("read_block"); // runs as the call is made
+  return 0;
+}
 #pragma clang attribute pop
 
 int main(int argc, char** argv) {
   struct hello h = hello_setup(argc, argv);
-  char* buf = h.buf;
 
-  step_start(&h);
-  void* task = read_block(h.fd, buf, h.len, 0);
-  step_done(&h, "call read_block()");
+  read_block(h.fd, h.buf, h.len, 0); // queues the read, returns at once
+  char first = h.buf[0];             // waits here for the read
 
-  step_start(&h);
-  char first = buf[0];
-  step_done(&h, "first read: buf[0]");
-
-  /* The handle is still there for code that wants the result. */
-  long n = pragma_wait(task);
-  return hello_report(&h, first, n);
-}
-
-/* The runtime runs this before it issues the read; a program could log or
- * instrument its calls here. */
-void* read_block(int fd, void* buf, size_t len, unsigned long offset) {
-  pragma_body_calls++;
-  return 0;
+  return hello_report(&h, first);
 }

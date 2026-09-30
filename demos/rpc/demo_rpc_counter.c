@@ -10,26 +10,26 @@
  *   r_dep=port:counter  reads it
  *   bout=value          reply lands in *value, pending until it arrives
  *
- * Logging, timeline and checks: rpc_counter_report.hh. */
+ * Logging, timeline and checks: rpc_utils.hh. */
 
-#include "rpc_counter_report.hh"
+#include "rpc_utils.hh"
 
 // Bodies run just before the call is sent; they only log.
 
 #pragma clang attribute push(__attribute__((annotate("filc_async", "runtime=rpc", "op=step", "w_dep=port:counter", "bout=value"))), apply_to=function)
 void step(unsigned port, long* value) {
-  rpc_log_sent("step");
+  log_call("step");
 }
 #pragma clang attribute pop
 
 #pragma clang attribute push(__attribute__((annotate("filc_async", "runtime=rpc", "op=get", "r_dep=port:counter", "bout=value"))), apply_to=function)
 void get(unsigned port, long* value) {
-  rpc_log_sent("get");
+  log_call("get");
 }
 #pragma clang attribute pop
 
 int main(int argc, char** argv) {
-  unsigned port = rpc_setup(argc, argv);
+  unsigned port = counter_setup(argc, argv);
   long first, second, stepped, after;
 
   get(port, &first);
@@ -38,5 +38,5 @@ int main(int argc, char** argv) {
   get(port, &after);    // waits here for the step
 
   // reading the values is the only wait
-  return rpc_report(first, second, stepped, after);
+  return counter_report(first, second, stepped, after);
 }
