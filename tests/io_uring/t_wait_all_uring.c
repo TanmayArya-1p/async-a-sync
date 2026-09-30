@@ -129,8 +129,8 @@ int main(int argc, char** argv)
     prov_tag tokens[30];
     char* data[30];
     for (unsigned i = 0; i < 30; ++i) {
-        tokens[i] = malloc(1);
-        data[i] = malloc(1);
+        tokens[i] = prov_alloc();
+        data[i] = prov_alloc();
         assert(tokens[i] && data[i]);
         tasks[i] = joined_read(fd, data[i], 1, i, tokens[i]);
     }

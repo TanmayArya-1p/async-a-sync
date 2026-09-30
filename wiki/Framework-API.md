@@ -59,6 +59,7 @@ waits on the first access.
 
 ```c
 typedef const void* prov_tag;
+void* prov_alloc(void);
 void* filc_async_wait_all(const prov_tag* tags, size_t count);
 ```
 
@@ -73,8 +74,8 @@ consumer to its runtime. Do not mark that consumer argument `bin=`: an input
 annotation alone does not make the stub wait.
 
 ```c
-prov_tag first = malloc(1);
-prov_tag second = malloc(1);
+prov_tag first = prov_alloc();
+prov_tag second = prov_alloc();
 prov_tag tags[] = { first, second };
 
 read_work(first);
@@ -91,8 +92,9 @@ complete declaration example.
 - **Separate objects.** Each producer needs a separate allocation. Different
   elements of one byte array share the same pending flag and would serialize
   the producers. An array containing separately allocated pointers is fine.
-  Use the program's `malloc` for the tags; `filc_async_alloc` is a framework
-  arena whose slices can share one pending flag.
+  `prov_alloc` allocates a separate Fil-C object for each tag. It returns
+  `NULL` if allocation fails. `filc_async_alloc` is a framework arena whose
+  slices can share one pending flag.
 - **Snapshot.** A group captures existing marks, including every shared owner
   of each input object. New marks on an input are not added to that group, even
   when the same task removes and replaces a mark. Duplicates and interior
@@ -177,8 +179,10 @@ void* filc_async_alloc(size_t size, size_t align);
 
 **What uses it.** Staged arguments, tasks, marks, locks, and runtime state
 come from `filc_async_alloc`.
-The completion object returned by `wait_all` instead uses a separate GC
-allocation, so it does not share an arena object's pending flag.
+Provenance tags and completion objects returned by `wait_all` use separate GC
+allocations, so they do not share an arena object's pending flag. `prov_alloc`
+calls Fil-C's `zgc_aligned_alloc` through the linked runtime. A custom
+`filc_async_allocator` only changes framework bookkeeping allocations.
 
 **The default arena.** A thread-safe, GC-backed bump arena that never frees.
 Passing `{0, 0}` to `filc_async_set_allocator` restores it.

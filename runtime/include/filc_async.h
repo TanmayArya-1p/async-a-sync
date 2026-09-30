@@ -137,6 +137,8 @@ void  filc_async_mark_resolved(void* buf);
 bool  filc_async_is_pending(const void* buf);
 
 typedef const void* prov_tag;
+// one fil-c object per tag; null on failure
+void* prov_alloc(void);
 
 // returns a separate completion object without waiting for the inputs
 // captures current marks; later marks on an input are not included

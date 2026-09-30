@@ -2,7 +2,7 @@
 #include <stddef.h>
 
 /* Allocator interface for framework bookkeeping and staged arguments.
- * Completion objects returned by wait_all use separate GC allocations,
+ * Provenance tags and completion objects use separate GC allocations,
  * since arena slices share one object's pending flag.
  * Default allocator is the bump arena in filc_async_arena.c
  * (zgc-backed, zeroed memory).
