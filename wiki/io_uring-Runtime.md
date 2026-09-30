@@ -45,19 +45,20 @@ Trailing scalars and `bin=` arguments are rejected.
 
 ```c
 #pragma clang attribute push(__attribute__((annotate("filc_async", "runtime=io_uring", "op=pread", "bout=data"))), apply_to=function)
-void* read_at(int fd, void* data, size_t len, unsigned long offset, void* done);
+void* read_at(int fd, void* data, size_t len, unsigned long offset, prov_tag done);
 #pragma clang attribute pop
 
 #pragma clang attribute push(__attribute__((annotate("filc_async", "runtime=io_uring", "op=pwrite", "bin=data"))), apply_to=function)
-void* write_at(int fd, const void* data, size_t len, unsigned long offset, void* done);
+void* write_at(int fd, const void* data, size_t len, unsigned long offset, prov_tag done);
 #pragma clang attribute pop
 
-void* first = calloc(1, 1);
-void* second = calloc(1, 1);
+prov_tag first = malloc(1);
+prov_tag second = malloc(1);
+prov_tag tags[] = { first, second };
 read_at(fd, first_buffer, first_size, 0, first);
 read_at(fd, second_buffer, second_size, first_size, second);
 void* result = write_at(fd, output, output_size, 0,
-                       filc_async_wait_all(first, second));
+                       filc_async_wait_all(tags, 2));
 ```
 
 The reads can overlap. The writer's stub waits for both read marks before

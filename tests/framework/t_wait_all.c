@@ -16,7 +16,7 @@ static _Atomic size_t object_count;
 
 static void* object_alloc(size_t size)
 {
-    void* p = calloc(1, size);
+    void* p = malloc(size);
     assert(p);
     size_t n = atomic_load(&object_count);
     assert(n < sizeof objects / sizeof objects[0]);
@@ -67,7 +67,7 @@ void zsys_abort(void) { abort(); }
 #else
 static void* object_alloc(size_t size)
 {
-    void* p = calloc(1, size);
+    void* p = malloc(size);
     assert(p);
     return p;
 }
@@ -184,17 +184,17 @@ static void finish_task(void* task)
 
 static void basic_cases(void)
 {
-    void* empty = filc_async_wait_all_array(NULL, 0);
+    void* empty = filc_async_wait_all(NULL, 0);
     assert(!filc_async_is_pending(empty));
     void* clear = object_alloc(16);
-    void* group = filc_async_wait_all(NULL, clear);
+    void* group = filc_async_wait_all((prov_tag[]){ NULL, clear }, 2);
     assert(group != empty && group != clear && !filc_async_is_pending(group));
 
     struct producer a, b;
     void* ta = producer_new(&a, object_alloc(16), false);
     void* tb = producer_new_on(&b, object_alloc(16), false, &other_runtime);
     const void* inputs[] = { a.token, b.token, a.token, NULL };
-    group = filc_async_wait_all_array(inputs, 4);
+    group = filc_async_wait_all(inputs, 4);
     inputs[0] = inputs[1] = NULL;
     assert(filc_async_is_pending(group));
     refresh();
@@ -219,7 +219,8 @@ static void aliases_shared_and_reuse(void)
     struct producer a, b;
     void* ta = producer_new(&a, token, true);
     void* tb = producer_new(&b, token, true);
-    void* group = filc_async_wait_all(token, (char*)token + 1, token);
+    void* group = filc_async_wait_all(
+        (prov_tag[]){ token, (char*)token + 1, token }, 3);
     atomic_store(&a.ready, true);
     refresh();
     assert(filc_async_is_pending(group));
@@ -231,7 +232,7 @@ static void aliases_shared_and_reuse(void)
 
     struct producer first, later;
     ta = producer_new(&first, token, false);
-    group = filc_async_wait_all(token);
+    group = filc_async_wait_all((prov_tag[]){ token }, 1);
     atomic_store(&first.ready, true);
     assert(producer_poll(ta, FILC_ASYNC_POLL_PROGRESS));
     tb = producer_new(&later, token, false);
@@ -245,7 +246,7 @@ static void aliases_shared_and_reuse(void)
     // even the same owner can remove and replace a mark
     struct producer again;
     ta = producer_new(&again, token, false);
-    group = filc_async_wait_all(token);
+    group = filc_async_wait_all((prov_tag[]){ token }, 1);
     filc_async_resolve_buffer(ta, token);
     filc_async_mark_pending(ta, token);
     filc_async_wait_buffer(NULL, group);
@@ -260,8 +261,8 @@ static void nested_and_early(void)
     struct producer a, b;
     void* ta = producer_new(&a, object_alloc(16), false);
     void* tb = producer_new(&b, object_alloc(16), false);
-    void* inner = filc_async_wait_all(a.token);
-    void* outer = filc_async_wait_all(inner, b.token);
+    void* inner = filc_async_wait_all((prov_tag[]){ a.token }, 1);
+    void* outer = filc_async_wait_all((prov_tag[]){ inner, b.token }, 2);
     a.early = true;
     atomic_store(&a.ready, true);
     atomic_store(&b.ready, true);
@@ -277,7 +278,9 @@ static void nested_and_early(void)
     assert(!pthread_mutex_destroy(&a.mutex));
     ta = producer_new(&a, object_alloc(16), false);
     a.early = true;
-    struct waiter w = { .token = filc_async_wait_all(a.token) };
+    struct waiter w = {
+        .token = filc_async_wait_all((prov_tag[]){ a.token }, 1)
+    };
     pthread_t thread;
     assert(!pthread_create(&thread, NULL, wait_thread, &w));
     until_true(&a.started);
@@ -297,7 +300,7 @@ static void manual_and_concurrent(void)
     filc_async_mark_pending(NULL, token);
     struct producer p;
     void* task = producer_new(&p, object_alloc(16), false);
-    void* group = filc_async_wait_all(token, p.token);
+    void* group = filc_async_wait_all((prov_tag[]){ token, p.token }, 2);
     struct waiter a = { .token = group, .id = 1 }, b = { .token = group, .id = 2 };
     pthread_t threads[2];
     assert(!pthread_create(&threads[0], NULL, wait_thread, &a));
@@ -357,12 +360,12 @@ static void* writer_thread(void* group)
 static void thirty_reads_then_write(void)
 {
     void* tasks[30];
-    const void* tokens[30];
+    prov_tag tokens[30];
     for (unsigned i = 0; i < 30; ++i) {
         tokens[i] = object_alloc(16);
         tasks[i] = producer_new(&reads[i], (void*)tokens[i], false);
     }
-    void* group = filc_async_wait_all_array(tokens, 30);
+    void* group = filc_async_wait_all(tokens, 30);
     writer_meta = calloc(1, sizeof *writer_meta);
     assert(writer_meta);
     writer_meta->runtime = &writer_runtime;

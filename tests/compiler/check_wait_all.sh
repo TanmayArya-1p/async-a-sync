@@ -52,7 +52,7 @@ for name, marks in [('joined_read', 2), ('joined_write', 1)]:
     assert '[5 x { i32, i32 }]' in meta and '{ i32, i32 } { i32 5, i32 0 }]' in meta, meta
 undefined = (p / 'undefined.txt').read_text()
 for symbol in ['filc_async_begin', 'filc_async_mark_pending', 'filc_async_submit',
-               'filc_async_wait_all_array', 'filc_async_runtime_io_uring']:
+               'filc_async_wait_all', 'filc_async_runtime_io_uring']:
     assert re.search(r'\bU ' + symbol + r'$', undefined, re.M), undefined
 assert not re.search(r'\bU (joined_read|joined_write|fasync_\w+)$', undefined, re.M), undefined
 assembly = (p / 'disassembly.txt').read_text()

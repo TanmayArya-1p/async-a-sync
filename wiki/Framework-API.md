@@ -58,14 +58,13 @@ waits on the first access.
 ### Joining pending buffers
 
 ```c
-void* filc_async_wait_all_array(const void* const* buffers, size_t count);
-void* group = filc_async_wait_all(first, second, third);
+typedef const void* prov_tag;
+void* filc_async_wait_all(const prov_tag* tags, size_t count);
 ```
 
-Both forms return a new completion object immediately. It stays pending until
-all the input marks captured by the call have resolved. The array contents are
-copied into the group; the array itself can be reused or go out of scope.
-The convenience macro is for C and evaluates each argument once.
+The function returns a new completion object immediately. It stays pending
+until all the input marks captured by the call have resolved. The array
+contents are copied; the array itself can be reused or go out of scope.
 
 This orders operations that have no shared data. Give each producer a separate
 completion object, then pass the group to the consumer as an unannotated pointer
@@ -74,12 +73,13 @@ consumer to its runtime. Do not mark that consumer argument `bin=`: an input
 annotation alone does not make the stub wait.
 
 ```c
-void* first = calloc(1, 1);
-void* second = calloc(1, 1);
+prov_tag first = malloc(1);
+prov_tag second = malloc(1);
+prov_tag tags[] = { first, second };
 
 read_work(first);
 read_work(second);
-write_work(filc_async_wait_all(first, second));
+write_work(filc_async_wait_all(tags, 2));
 ```
 
 Here `read_work` and `write_work` are annotated functions whose runtime accepts
@@ -91,12 +91,14 @@ complete declaration example.
 - **Separate objects.** Each producer needs a separate allocation. Different
   elements of one byte array share the same pending flag and would serialize
   the producers. An array containing separately allocated pointers is fine.
+  Use the program's `malloc` for the tags; `filc_async_alloc` is a framework
+  arena whose slices can share one pending flag.
 - **Snapshot.** A group captures existing marks, including every shared owner
   of each input object. New marks on an input are not added to that group, even
   when the same task removes and replaces a mark. Duplicates and interior
   pointers do not add a second dependency on the same mark.
 - **Empty inputs.** Null pointers and resolved objects add no dependencies.
-  `filc_async_wait_all_array(NULL, 0)` returns a resolved object. A nonzero
+  `filc_async_wait_all(NULL, 0)` returns a resolved object. A nonzero
   count needs a readable array of that many pointers.
 - **Completion.** A failed operation also resolves its marks. Collect each
   operation's result separately when success matters. Early buffer resolution
