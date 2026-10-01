@@ -688,3 +688,85 @@ static inline int overlap_report(struct overlap* o) {
   demo_finish();
   return pragma_finish();
 }
+
+/* ---- demo_pragma_wait-all ---- */
+
+#define WAITALL_READS 30
+
+static const char waitall_file[] = "abcdefghijklmnopqrstuvwxyz1234";
+
+struct waitall {
+  char path[PRAGMA_PATH_MAX];
+  int fd;
+  char* byte[WAITALL_READS];    /* one object per read, so one mark each */
+  prov_tag tag[WAITALL_READS];  /* the same objects, as wait_all takes them */
+  struct pragma_snap start;
+};
+
+/* Writes the file the reads will fetch from and allocates a buffer for each. */
+static inline struct waitall waitall_setup(int argc, char** argv) {
+  struct waitall w = {0};
+  pragma_title("wait-all: one write behind thirty reads",
+               "  wait_all() joins the reads' buffers; the write waits for the group.");
+
+  snprintf(w.path, sizeof(w.path), "%s/demo_pragma_wait_all.dat",
+           pragma_dir(argc, argv));
+  w.fd = open(w.path, O_CREAT | O_TRUNC | O_RDWR, 0644);
+  if (w.fd < 0 || pwrite(w.fd, waitall_file, WAITALL_READS, 0) != WAITALL_READS ||
+      fsync(w.fd) != 0) {
+    perror(w.path);
+    exit(1);
+  }
+  for (int i = 0; i < WAITALL_READS; i++)
+    w.tag[i] = w.byte[i] = (char*)prov_alloc();
+
+  /* The first request sets up the io_uring ring. Pay for that untimed. */
+  char* warm = (char*)prov_alloc();
+  pragma_wait(async_pread(w.fd, warm, 1, 0));
+  pragma_snap(&w.start);
+  return w;
+}
+
+/* Waits for everything the demo issued, then prints and checks the outcome. */
+static inline int waitall_report(struct waitall* w, void** reads, void* group,
+                                 void* writer) {
+  /* Before any wait: nothing has run, so the group is still pending. */
+  int pending = filc_async_is_pending(group);
+  struct pragma_snap issued = pragma_since(&w->start);
+
+  int reads_ok = 1;
+  for (int i = 0; i < WAITALL_READS; i++)
+    reads_ok &= pragma_wait(reads[i]) == 1;
+  long wrote = pragma_wait(writer);
+
+  /* Compiled code, so the compiler's access check resolves each buffer. */
+  char seen[WAITALL_READS + 1] = {0};
+  int old_bytes = 1;
+  for (int i = 0; i < WAITALL_READS; i++) {
+    seen[i] = *w->byte[i];
+    old_bytes &= seen[i] == waitall_file[i];
+  }
+  char first = 0;
+  pread(w->fd, &first, 1, 0);
+
+  printf("  issued: %lu calls (30 reads, 1 write); the reads reached the kernel "
+         "in %lu submit\n",
+         issued.calls, issued.submits);
+  printf("  group pending when the write was issued: %s\n", pending ? "yes" : "no");
+  printf("\n  the reads saw   %s\n", seen);
+  printf("  the file holds  %c%s\n", first, waitall_file + 1);
+  printf("\n  => the write landed after all 30 reads: none of them saw '!'\n");
+
+  pragma_check_bodies();
+  pragma_check("the group was pending until the reads were waited for", pending);
+  pragma_check("issuing the write sent all 30 reads to the kernel in one submit",
+               issued.submits == 1 && issued.waits == 0);
+  pragma_check("all 30 reads and the write succeeded", reads_ok && wrote == 1);
+  pragma_check("no read saw the byte the write stored", old_bytes);
+  pragma_check("the write reached the file", first == '!');
+  pragma_check("the group is done once the write is", !filc_async_is_pending(group));
+
+  close(w->fd);
+  unlink(w->path);
+  return pragma_finish();
+}

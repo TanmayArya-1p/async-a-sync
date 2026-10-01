@@ -94,6 +94,16 @@ static bool is_input_kind(uint32_t kind)
            kind == FILC_ASYNC_ARG_PENDING;
 }
 
+static bool completion_args_ok(const filc_async_meta* m, unsigned required)
+{
+    if (m->nargs < required)
+        return false;
+    for (unsigned i = required; i < m->nargs; ++i)
+        if (!is_output_kind(m->args[i].kind))
+            return false;
+    return true;
+}
+
 /* Whether the argument kinds match the op's syscall. Every op takes the
  * descriptor as argument 0, an unannotated integer. */
 static bool shape_ok(const filc_async_meta* m, enum uring_op op)
@@ -104,17 +114,17 @@ static bool shape_ok(const filc_async_meta* m, enum uring_op op)
         return false;
     switch (op) {
     case URING_OP_READ:
-        return m->nargs == 4 && is_output_kind(m->args[1].kind) &&
+        return completion_args_ok(m, 4) && is_output_kind(m->args[1].kind) &&
                m->args[2].kind == FILC_ASYNC_ARG_IGNORED &&
                m->args[3].kind == FILC_ASYNC_ARG_IGNORED;
     case URING_OP_WRITE:
     case URING_OP_OPENAT:
-        return m->nargs == 4 && is_input_kind(m->args[1].kind) &&
+        return completion_args_ok(m, 4) && is_input_kind(m->args[1].kind) &&
                m->args[2].kind == FILC_ASYNC_ARG_IGNORED &&
                m->args[3].kind == FILC_ASYNC_ARG_IGNORED;
     case URING_OP_FSYNC:
     case URING_OP_CLOSE:
-        return m->nargs == 1;
+        return completion_args_ok(m, 1);
     default:
         return false;
     }

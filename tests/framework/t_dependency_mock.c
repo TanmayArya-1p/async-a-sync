@@ -65,6 +65,12 @@ void* filc_async_alloc(size_t size, size_t align)
     return calloc(1, size);
 }
 
+void* zgc_aligned_alloc(size_t alignment, size_t size)
+{
+    (void)alignment;
+    return calloc(1, size);
+}
+
 /* ---- The mock runtime: numbers each call it is handed, and completes call
  * n once done[n] is set or someone blocks on it. ---- */
 

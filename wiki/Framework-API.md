@@ -55,6 +55,66 @@ void filc_async_mark_resolved(void* buf);
 To wait for a buffer, simply access it. Code built by the patched compiler
 waits on the first access.
 
+### Joining pending buffers
+
+```c
+typedef const void* prov_tag;
+void* prov_alloc(void);
+void* filc_async_wait_all(const prov_tag* tags, size_t count);
+```
+
+The function returns a new completion object immediately. It stays pending
+until all the input marks captured by the call have resolved. The array
+contents are copied; the array itself can be reused or go out of scope.
+
+This orders operations that have no shared data. Give each producer a separate
+completion object, then pass the group to the consumer as an unannotated pointer
+or a `bout=` / `buf=` argument. Its stub waits for the group before handing the
+consumer to its runtime. Do not mark that consumer argument `bin=`: an input
+annotation alone does not make the stub wait.
+
+```c
+prov_tag first = prov_alloc();
+prov_tag second = prov_alloc();
+prov_tag tags[] = { first, second };
+
+read_work(first);
+read_work(second);
+write_work(filc_async_wait_all(tags, 2));
+```
+
+Here `read_work` and `write_work` are annotated functions whose runtime accepts
+the extra pointer. The framework joins marks from any runtime. The io_uring
+runtime accepts trailing completion pointers; other runtimes decide their own
+argument shapes. See [io_uring](io_uring-Runtime.md#completion-pointers) for a
+complete declaration example.
+
+- **Separate objects.** Each producer needs a separate allocation. Different
+  elements of one byte array share the same pending flag and would serialize
+  the producers. An array containing separately allocated pointers is fine.
+  `prov_alloc` allocates a separate Fil-C object for each tag. It returns
+  `NULL` if allocation fails. `filc_async_alloc` is a framework arena whose
+  slices can share one pending flag.
+- **Snapshot.** A group captures existing marks, including every shared owner
+  of each input object. New marks on an input are not added to that group, even
+  when the same task removes and replaces a mark. Duplicates and interior
+  pointers do not add a second dependency on the same mark.
+- **Empty inputs.** Null pointers and resolved objects add no dependencies.
+  `filc_async_wait_all(NULL, 0)` returns a resolved object. A nonzero
+  count needs a readable array of that many pointers.
+- **Completion.** A failed operation also resolves its marks. Collect each
+  operation's result separately when success matters. Early buffer resolution
+  releases that dependency without waiting for the rest of the operation.
+  An ownerless mark needs an explicit `filc_async_mark_resolved`.
+- **Progress.** Construction starts no work and does not wait for producers.
+  Waiting or accessing the group progresses its producers; a statistics refresh
+  only checks them. The group may still report pending until one of these
+  collects its completion. There is no background worker for groups.
+- **Lifetime.** The returned object is a separate GC allocation. Keep its
+  pointer while using it, and do not free it or use its bytes as data. It is a
+  buffer token, not a result handle for `filc_async_poll` / `filc_async_wait`.
+  Do not manually resolve the group or make a producer depend on its own group.
+
 ### Statistics
 
 ```c
@@ -119,6 +179,10 @@ void* filc_async_alloc(size_t size, size_t align);
 
 **What uses it.** Staged arguments, tasks, marks, locks, and runtime state
 come from `filc_async_alloc`.
+Provenance tags and completion objects returned by `wait_all` use separate GC
+allocations, so they do not share an arena object's pending flag. `prov_alloc`
+calls Fil-C's `zgc_aligned_alloc` through the linked runtime. A custom
+`filc_async_allocator` only changes framework bookkeeping allocations.
 
 **The default arena.** A thread-safe, GC-backed bump arena that never frees.
 Passing `{0, 0}` to `filc_async_set_allocator` restores it.

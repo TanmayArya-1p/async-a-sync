@@ -59,8 +59,10 @@ run_check() {
 
 run_check io_uring/check_forwarders
 run_check framework/check_dependencies
+run_check framework/check_wait_all
 run_check compiler/check_dependency_options
 run_check compiler/check_callsite_pragma
+run_check compiler/check_wait_all
 
 # Most of the suite submits real requests, so it needs a working io_uring.
 # Without one those tests are skipped, not failed, so the ones that can run
@@ -159,6 +161,8 @@ needs_io_uring run_filc_test io_uring/stage5_trackers
 needs_io_uring run_filc_test io_uring/stage6_fd_provenance
 needs_io_uring run_filc_test io_uring/stage7_throughput
 run_filc_test framework/t_pending_registry
+run_filc_test framework/t_wait_all
+needs_io_uring run_filc_test io_uring/t_wait_all_uring "$OUT"
 run_filc_test io_uring/t_dag_submit_failure
 # Allocator interface only (no annotations), so the stock filcc builds it.
 run_filc_test framework/t_pragma_alloc
@@ -388,6 +392,7 @@ if [ "$PATCHED_READY" -eq 1 ]; then
     -DLINKED_ANNOTATE_DEF
   needs_io_uring run_patched t_pragma_io_uring "$HERE/io_uring/t_pragma_io_uring.c" "$OUT"
   needs_io_uring run_patched t_pragma_dependencies "$HERE/io_uring/t_pragma_dependencies.c" "$OUT"
+  needs_io_uring run_patched t_pragma_wait_all "$HERE/io_uring/t_wait_all_uring.c" "$OUT"
   needs_io_uring run_patched t_param_names "$HERE/compiler/t_param_names.c" "$OUT"
   needs_io_uring run_patched t_pragma_same_tu_lazy "$HERE/compiler/t_pragma_same_tu_lazy.c" "$OUT"
   needs_io_uring run_patched t_pragma_lazy_many "$HERE/io_uring/t_pragma_lazy_many.c" "$OUT"

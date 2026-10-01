@@ -13,6 +13,9 @@ runs asynchronously underneath.
   to an asynchronous runtime and returns immediately.
 - **Buffers stay pending.** The buffers the call produces are pending until it
   completes.
+  `filc_async_wait_all(tags, count)` joins completion pointers when a later
+  call needs to wait for several operations. See the
+  [group contract](wiki/Framework-API.md#joining-pending-buffers).
 - **The first access waits.** Fil-C's
   [InvisiCaps](https://fil-c.org/invisicaps) give every pointer a reference to
   its object's header. The patched compiler tests a pending flag there before
@@ -43,6 +46,11 @@ for (int i = 0; i < n; i++)
 
 Compiled normally, the first loop would block on every read in turn. Here,
 512 cold-cache reads finish about 3.5x faster than blocking `pread`.
+
+The [wait-all demo](demos/pragma/demo_pragma_wait-all.c) queues 30 reads, joins
+their buffers with `filc_async_wait_all`, and hands off one write that waits for
+all of them.
+Run it with `make demo-pragma-wait-all` after building the patched compiler.
 
 ## Quickstart
 
