@@ -3,10 +3,13 @@
 #include <stdint.h>
 #include <stdbool.h>
 
+#include "filc_async_annotate.h"
+
 /* Generic async-function interface.
  *
- * A function declared with `#pragma clang attribute` +
- * `__attribute__((annotate("filc_async", ...)))` is called through a stub the
+ * A function annotated with FILC_ASYNC (filc_async_annotate.h), or with
+ * `#pragma clang attribute` + `__attribute__((annotate("filc_async", ...)))`,
+ * is called through a stub the
  * FilAsync pass emits for it. The stub takes the call's dependency locks and
  * marks its output buffers pending through this framework, then hands the
  * call to the runtime its runtime=<name> option names (see
