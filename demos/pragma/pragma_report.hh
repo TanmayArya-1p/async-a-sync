@@ -770,3 +770,203 @@ static inline int waitall_report(struct waitall* w, void** reads, void* group,
   unlink(w->path);
   return pragma_finish();
 }
+
+/* ---- demo_pragma_slowdown ---- */
+
+#define CHAIN_RECORD 4096
+#define CHAIN_MAX_RECORDS 1024
+
+/* One record of the chain file: the offset of the next record, then data. */
+struct record {
+  long next;
+  char data[CHAIN_RECORD - sizeof(long)];
+};
+_Static_assert(sizeof(struct record) == CHAIN_RECORD, "one record per block");
+
+enum { CHAIN_BLOCKING, CHAIN_ANNOTATED, KNOWN_ANNOTATED, N_CHAIN_WAYS };
+
+static const char* const chain_name[N_CHAIN_WAYS] = {
+    "A chain, blocking pread",
+    "B chain, async_pread",
+    "C known offsets, async_pread",
+};
+
+typedef long (*chain_fn)(int n);
+
+static char chain_path[PRAGMA_PATH_MAX];
+static int chain_fd;
+static long first_record;                    /* where the chain starts */
+static long chain_offset[CHAIN_MAX_RECORDS]; /* the chain, in order */
+static struct record* records[CHAIN_MAX_RECORDS];     /* one per record read */
+
+struct chain_run {
+  double ms;
+  long sum;
+  unsigned long entries; /* io_uring_enter calls: submits + waits */
+};
+
+struct chain {
+  int records;
+  int passes;
+  long expect; /* the sum of every next offset along the chain */
+  struct chain_run run[N_CHAIN_WAYS][2][PRAGMA_MAX_PASSES]; /* [way][cold] */
+};
+
+/* Writes `records` records linked in a shuffled order, so the chain jumps
+ * around the file. Readahead is turned off for the file: the chain's next
+ * read is never the next block, and C must not get blocks A had to wait for. */
+static inline struct chain chain_setup(int argc, char** argv) {
+  struct chain c = {0};
+  c.records = argc > 2 ? atoi(argv[2]) : 512;
+  c.passes = argc > 3 ? atoi(argv[3]) : 5;
+  if (c.records < 2 || c.records > CHAIN_MAX_RECORDS || c.passes < 1 ||
+      c.passes > PRAGMA_MAX_PASSES) {
+    fprintf(stderr, "usage: %s [dir] [records 2..%d] [passes 1..%d]\n",
+            argv[0], CHAIN_MAX_RECORDS, PRAGMA_MAX_PASSES);
+    exit(2);
+  }
+  pragma_title("slowdown: annotating code that cannot overlap",
+               "  B's next offset is in the record it just read, so its reads "
+               "run one at a time.\n  An annotation pays only when there is "
+               "independent work and device latency.");
+  printf("  Read %d records of %d bytes, median of %d passes, from a warm and "
+         "from a\n  dropped page cache. C makes B's calls with the offsets "
+         "known up front.\n\n",
+         c.records, CHAIN_RECORD, c.passes);
+
+  int order[CHAIN_MAX_RECORDS];
+  unsigned int state = 11;
+  for (int i = 0; i < c.records; i++)
+    order[i] = i;
+  for (int i = c.records - 1; i > 0; i--) {
+    int j = (int)(demo_rand(&state) % (unsigned)(i + 1));
+    int t = order[i];
+    order[i] = order[j];
+    order[j] = t;
+  }
+  for (int i = 0; i < c.records; i++)
+    chain_offset[i] = (long)order[i] * CHAIN_RECORD;
+  first_record = chain_offset[0];
+
+  snprintf(chain_path, sizeof(chain_path), "%s/demo_pragma_slowdown.dat",
+           pragma_dir(argc, argv));
+  chain_fd = open(chain_path, O_CREAT | O_TRUNC | O_RDWR, 0644);
+  struct record* record = (struct record*)calloc(1, sizeof(*record));
+  if (chain_fd < 0 || !record) {
+    perror(chain_path);
+    exit(1);
+  }
+  for (int i = 0; i < c.records; i++) {
+    /* the last record points back at the first */
+    record->next = chain_offset[(i + 1) % c.records];
+    memset(record->data, 'a' + i % 26, sizeof(record->data));
+    c.expect += record->next;
+    if (pwrite(chain_fd, record, sizeof(*record), (off_t)chain_offset[i]) !=
+        CHAIN_RECORD) {
+      perror(chain_path);
+      exit(1);
+    }
+  }
+  free(record);
+  if (fsync(chain_fd) != 0) {
+    perror(chain_path);
+    exit(1);
+  }
+  posix_fadvise(chain_fd, 0, 0, POSIX_FADV_RANDOM);
+  for (int i = 0; i < c.records; i++)
+    records[i] = (struct record*)calloc(1, sizeof(struct record));
+
+  /* The first request sets up the io_uring ring; keep that out of the passes. */
+  pragma_wait(async_pread(chain_fd, records[0], CHAIN_RECORD, first_record));
+  return c;
+}
+
+/* Times one pass of `fn` from empty buffers, with the page cache warm or
+ * dropped. */
+static inline void chain_time(struct chain* c, int pass, int cold, int way,
+                              chain_fn fn) {
+  if (cold)
+    posix_fadvise(chain_fd, 0, 0, POSIX_FADV_DONTNEED);
+  else
+    for (int i = 0; i < c->records; i++) /* bring every record into the cache */
+      if (pread(chain_fd, records[i], CHAIN_RECORD, chain_offset[i]) !=
+          CHAIN_RECORD)
+        exit(1);
+  for (int i = 0; i < c->records; i++)
+    memset(records[i], 0, CHAIN_RECORD);
+
+  struct chain_run* r = &c->run[way][cold][pass];
+  struct pragma_snap start;
+  pragma_snap(&start);
+  demo_start();
+  r->sum = fn(c->records);
+  r->ms = demo_elapsed();
+  struct pragma_snap used = pragma_since(&start);
+  r->entries = way == CHAIN_BLOCKING ? (unsigned long)c->records
+                                     : used.submits + used.waits;
+}
+
+static inline double chain_median(struct chain* c, int way, int cold,
+                                  int entries) {
+  double v[PRAGMA_MAX_PASSES];
+  for (int i = 0; i < c->passes; i++)
+    v[i] = entries ? (double)c->run[way][cold][i].entries
+                   : c->run[way][cold][i].ms;
+  return pragma_median(v, c->passes);
+}
+
+static inline int chain_report(struct chain* c) {
+  double ms[N_CHAIN_WAYS][2];
+  for (int w = 0; w < N_CHAIN_WAYS; w++)
+    for (int cold = 0; cold <= 1; cold++)
+      ms[w][cold] = chain_median(c, w, cold, 0);
+
+  /* vs A: above 1x is faster than A, below 1x slower. kernel entries: one
+   * per pread for A; io_uring_enter submits + waits for B and C. */
+  printf("  %-30s %9s %7s %9s %7s %15s\n", "way", "warm ms", "vs A", "cold ms",
+         "vs A", "kernel entries");
+  for (int w = 0; w < N_CHAIN_WAYS; w++)
+    printf("  %-30s %9.2f %6.2fx %9.2f %6.2fx %15.0f\n", chain_name[w],
+           ms[w][0], ratio(ms[CHAIN_BLOCKING][0], ms[w][0]), ms[w][1],
+           ratio(ms[CHAIN_BLOCKING][1], ms[w][1]),
+           chain_median(c, w, 1, 1));
+
+  printf("\n  => cold: annotating the chain gained nothing (%.2fx); the same "
+         "calls with\n     the offsets known up front ran %.2fx faster than "
+         "blocking\n",
+         ratio(ms[CHAIN_BLOCKING][1], ms[CHAIN_ANNOTATED][1]),
+         ratio(ms[CHAIN_BLOCKING][1], ms[KNOWN_ANNOTATED][1]));
+  printf("  => warm: with no device latency to hide, annotating only adds cost: "
+         "B ran\n     %.2fx slower than blocking, C %.2fx slower\n",
+         ratio(ms[CHAIN_ANNOTATED][0], ms[CHAIN_BLOCKING][0]),
+         ratio(ms[KNOWN_ANNOTATED][0], ms[CHAIN_BLOCKING][0]));
+
+  int sums_ok = 1;
+  for (int w = 0; w < N_CHAIN_WAYS; w++)
+    for (int cold = 0; cold <= 1; cold++)
+      for (int i = 0; i < c->passes; i++)
+        sums_ok &= c->run[w][cold][i].sum == c->expect;
+  pragma_check("every pass of every way read every record", sums_ok);
+  pragma_check_bodies();
+  pragma_check("B entered the kernel at least once per record: no batching",
+               chain_median(c, CHAIN_ANNOTATED, 1, 1) >= c->records);
+  pragma_check("C entered the kernel far less than once per record",
+               chain_median(c, KNOWN_ANNOTATED, 1, 1) < c->records / 4.0 + 1);
+  pragma_check("B was slower than A on a warm cache",
+               ms[CHAIN_ANNOTATED][0] > ms[CHAIN_BLOCKING][0]);
+  /* Dropping the cache must add device latency, or there is nothing for C
+   * to overlap. */
+  if (ms[CHAIN_BLOCKING][1] > 1.5 * ms[CHAIN_BLOCKING][0]) {
+    pragma_check("B gained nothing on an uncached device",
+                 ms[CHAIN_ANNOTATED][1] > 0.9 * ms[CHAIN_BLOCKING][1]);
+    pragma_check("C beat A on an uncached device",
+                 ms[KNOWN_ANNOTATED][1] < ms[CHAIN_BLOCKING][1]);
+  } else
+    printf("  (C vs A not checked: dropping the cache added no device latency)\n");
+
+  for (int i = 0; i < c->records; i++)
+    free(records[i]);
+  close(chain_fd);
+  unlink(chain_path);
+  return pragma_finish();
+}

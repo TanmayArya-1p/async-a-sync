@@ -24,6 +24,7 @@ checks are in `demos/pragma/pragma_report.hh`.
 | `coldread` | the same loop calling `pread` and an annotated `async_pread` over 512 cold files, next to hand-written `fasync_*` |
 | `scaling` | that comparison for 1 to 2048 files, with the time spent inside each annotated call |
 | `overlap` | reading and hashing 256 files, with the reads and the hashing also timed alone |
+| `slowdown` | where annotating costs: a chain of reads, each offset taken from the record before, runs no faster cold and several times slower warm; the same calls with the offsets known up front win cold and lose warm |
 
 ### The rpc runtime (`make demo-rpc`)
 
@@ -115,6 +116,11 @@ eagerly:
   small.
 - **Fil-C's own overhead** is 1.5–4x over GCC, so the overlap has to pay for
   it. Warm-cache workloads gain little.
+- **Nothing to overlap, nothing to gain.** When each call needs the result
+  of the one before, the calls run one at a time and an annotation only adds
+  its cost. From a warm page cache there is no latency to hide either, so
+  annotated reads lose to blocking ones. `make demo-pragma-slowdown` shows
+  both.
 - **The device is not saturated.** The implicit path reaches about 52 kIOPS,
   where plain threads sustain about 184 kIOPS. The gap comes from io_uring's
   `io-wq` worker ceiling, which has to be tuned per workload

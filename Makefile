@@ -29,6 +29,7 @@ help:
 	@echo " make demo-pragma-scaling    : The same comparison for 1 to 2048 files"
 	@echo " make demo-pragma-overlap    : Read + hash: blocking vs annotated, overlapped"
 	@echo " make demo-pragma-wait-all   : 30 overlapping reads, then one write"
+	@echo " make demo-pragma-slowdown   : Dependent reads: annotating them makes them slower"
 	@echo " make demo-rpc               : Run both rpc demos"
 	@echo " make demo-rpc-counter       : Annotated calls on a custom runtime: TCP requests to a counter server"
 	@echo " make demo-rpc-upload        : Two runtimes: read files with io_uring, upload them with rpc"
@@ -71,7 +72,7 @@ PRAGMA_FLAGS := -O2 -static -Werror=pragma-clang-attribute -DFASYNC_IMPLICIT \
 	-DFASYNC_COMPILER_INSERTS_CHECKS -I$(REPO_DIR)/runtime/include \
 	-L$(REPO_DIR)/runtime/build/lib
 
-PRAGMA_DEMOS := hello lifecycle ordering coldread scaling overlap wait-all
+PRAGMA_DEMOS := hello lifecycle ordering coldread scaling overlap wait-all slowdown
 
 demo-pragma: $(addprefix demo-pragma-,$(PRAGMA_DEMOS))
 
