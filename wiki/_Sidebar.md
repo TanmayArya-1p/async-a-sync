@@ -21,5 +21,6 @@
 **Explanation**
 - [Architecture](Architecture.md)
 - [Demos and performance](Performance.md)
+- [Comparisons](Comparisons.md)
 - [Limitations](Limitations.md)
 - [Glossary](Glossary.md)

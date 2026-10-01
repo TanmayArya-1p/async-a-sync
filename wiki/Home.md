@@ -54,5 +54,7 @@ exactly, and explanation pages cover the design.
   compiler through the framework to a runtime.
 - [Demos and performance](Performance.md): what the demos show and the measured
   results.
+- [Comparisons](Comparisons.md): the same task with an annotated call and the
+  usual way, side by side in code and time.
 - [Limitations](Limitations.md): what is not supported yet.
 - [Glossary](Glossary.md).

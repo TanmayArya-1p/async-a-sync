@@ -36,6 +36,15 @@ Both demos send calls to a loopback TCP server through `runtime=rpc`
 | `counter` | `step` and `get` calls on `runtime=rpc` alone. Each reply lands in a `bout=` value, and reading the value is the only wait. Two `get` calls are in flight together and only the `step` and the `get` after it wait for a lock: four 50 ms calls finish in about 150 ms instead of 200 |
 | `upload` | two runtimes in one loop: each file is read with io_uring and its buffer uploaded over rpc. Each upload waits for its own read, the reads still reach the kernel in one submit, and the server's checksums match the files |
 
+### Comparisons (`make demo-compare`)
+
+Each comparison writes one task twice: with an annotated call, and the usual
+way. Both run on the same workload. See [Comparisons](Comparisons.md).
+
+| Comparison | Shows |
+|---|---|
+| `io_read` | reading cold files and checksumming them, with `FILC_ASYNC` against liburing: 12 lines of task code against 29, and about 2.4 µs more per file |
+
 ### Explicit API (`make all-demos`)
 
 | Demo | Shows |

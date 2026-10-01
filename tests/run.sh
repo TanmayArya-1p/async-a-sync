@@ -324,6 +324,28 @@ run_unlinked_runtime() {
   fi
 }
 
+# run_comparison <task>: builds both versions of demos/comparison/<task>
+# (demos/comparison/run_comparison.sh) on a small workload and checks that
+# each reads every byte. Speed is shown, not checked. The baseline needs
+# liburing's headers.
+run_comparison() {
+  # shellcheck disable=SC2086
+  if ! printf '#include <liburing.h>\n' |
+      "$HOST_CC" ${LIBURING_CFLAGS:-} -E - >/dev/null 2>&1; then
+    skip "comparison $1" "needs liburing-dev"
+    return
+  fi
+  echo
+  echo "### comparison $1 (run_comparison.sh $1)"
+  if PATCHED_CC="$PATCHED_CC" CC="$HOST_CC" \
+      "$REPO/demos/comparison/run_comparison.sh" "$1" "$OUT" 128 4096 2; then
+    PASSED=$((PASSED + 1))
+  else
+    echo "!!! run_comparison.sh $1 exited non-zero"
+    FAILED=$((FAILED + 1))
+  fi
+}
+
 # run_rpc_demo <name>: builds and runs demos/rpc/demo_rpc_<name>.c against
 # the rpc demos' server (demos/rpc/run_rpc_demo.sh).
 run_rpc_demo() {
@@ -410,6 +432,8 @@ if [ "$PATCHED_READY" -eq 1 ]; then
   # loopback TCP server: alone (counter), and next to io_uring (upload).
   run_rpc_demo counter
   needs_io_uring run_rpc_demo upload
+  # demos/comparison: the same task with an annotated call and the usual way.
+  needs_io_uring run_comparison io_read
   # Negative control: an unknown op= is accepted by the pass and rejected by
   # the runtime's startup validator (the runtime is the authority).
   run_patched_neg t_pragma_unknownop "$HERE/framework/t_pragma_unknownop.c"

@@ -9,7 +9,7 @@ FILC_ROOT ?= $(REPO_DIR)/vendor/filc-0.685-linux-x86_64
 FILCC ?= $(FILC_ROOT)/build/bin/filcc
 PATCHED_CC ?= $(REPO_DIR)/vendor/fil-c-src/build/bin/filcc
 
-.PHONY: all help runtime demo-wordcount demo-plain demo-async demo-provenance all-demos demo-pragma demo-rpc demo-rpc-counter demo-rpc-upload disasm cfg clean
+.PHONY: all help runtime demo-wordcount demo-plain demo-async demo-provenance all-demos demo-pragma demo-rpc demo-rpc-counter demo-rpc-upload demo-compare demo-compare-io-read disasm cfg clean
 
 all: help
 
@@ -32,6 +32,10 @@ help:
 	@echo " make demo-rpc               : Run both rpc demos"
 	@echo " make demo-rpc-counter       : Annotated calls on a custom runtime: TCP requests to a counter server"
 	@echo " make demo-rpc-upload        : Two runtimes: read files with io_uring, upload them with rpc"
+	@echo "------------------------------------------------------------------"
+	@echo " Comparisons (the same task, ours against the usual way; needs liburing-dev):"
+	@echo " make demo-compare           : Run every comparison"
+	@echo " make demo-compare-io-read   : Read cold files: FILC_ASYNC vs liburing"
 	@echo "------------------------------------------------------------------"
 	@echo " make disasm           : Inspect disassembly (GCC raw load vs Fil-C hook)"
 	@echo " make cfg              : Generate CFG graph (PNG image & AST dump)"
@@ -87,6 +91,13 @@ demo-rpc: demo-rpc-counter demo-rpc-upload
 
 demo-rpc-counter demo-rpc-upload: demo-rpc-%: runtime
 	@PATCHED_CC=$(PATCHED_CC) ./demos/rpc/run_rpc_demo.sh $* $(OUT_DIR)
+
+COMPARISONS := io_read
+
+demo-compare: $(addprefix demo-compare-,$(subst _,-,$(COMPARISONS)))
+
+demo-compare-io-read: runtime
+	@PATCHED_CC=$(PATCHED_CC) ./demos/comparison/run_comparison.sh io_read $(OUT_DIR) $(ARGS)
 
 disasm:
 	@PATCHED_CC=$(PATCHED_CC) ./demos/wordcount/inspect_disasm.sh

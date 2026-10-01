@@ -35,8 +35,8 @@ Read the skip count as well as the failure count.
 stock clang, which records no parameter names.
 `tests/support/add_param_names.py` adds them the way the clang patch does.
 
-**Not covered.** `run.sh` runs `demos/wordcount/run_wordcount.sh` and both
-rpc demos, but not the other Makefile demo targets or the inspection
+**Not covered.** `run.sh` runs `demos/wordcount/run_wordcount.sh`, both
+rpc demos and the comparisons on a small workload, but not the other Makefile demo targets or the inspection
 scripts (`make disasm`, `make cfg`). After changing the runtime or the link
 line, run `make demo-pragma`, `make all-demos` and `make disasm` by hand.
 
@@ -66,6 +66,7 @@ line, run `make demo-pragma`, `make all-demos` and `make disasm` by hand.
 | `t_two_runtimes.c` with `support/mock_runtime.c` and io_uring | two runtimes in one program: a lock and a pending buffer order calls across them |
 | `t_unlinked_runtime.c` | naming a runtime the program does not link fails at link time |
 | `demos/rpc/run_rpc_demo.sh counter` | `runtime=rpc` (`runtime/rpc/rpc_runtime.c`) sends calls to a loopback TCP server; its results and lock ordering come back through the framework |
+| `demos/comparison/run_comparison.sh io_read` | the io_read comparison on 128 files: the annotated version and the liburing one each read every file's bytes (skipped without liburing-dev) |
 | `demos/rpc/run_rpc_demo.sh upload` | io_uring reads and rpc uploads in one loop: an upload's payload waits for the read filling it, through the io_uring runtime, and the uploaded bytes are the file's |
 | `t_pending_registry.c`, `t_pragma_markpending.c` | the pending-mark contract: which arguments are marked, aliasing, ownerless marks |
 | `t_pragma_alloc.c` | the allocator interface |

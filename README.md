@@ -84,7 +84,7 @@ The documentation lives in [`wiki/`](wiki/Home.md):
 | **Tutorial** | [Getting started](wiki/Getting-Started.md) |
 | **How-to** | [Annotate a function](wiki/Annotating-Functions.md) · [Write a runtime](wiki/Writing-a-Runtime.md) · [Build and link](wiki/Building-and-Linking.md) · [Troubleshooting](wiki/Troubleshooting.md) |
 | **Reference** | [Annotations](wiki/Annotation-Reference.md) · [Runtime API](wiki/Runtime-API.md) · [Framework API](wiki/Framework-API.md) · [io_uring runtime](wiki/io_uring-Runtime.md) · [RPC runtime example](wiki/RPC-Runtime.md) · [Explicit API](wiki/Explicit-API.md) · [Tests](wiki/Testing.md) |
-| **Explanation** | [Architecture](wiki/Architecture.md) · [Demos and performance](wiki/Performance.md) · [Limitations](wiki/Limitations.md) · [Glossary](wiki/Glossary.md) |
+| **Explanation** | [Architecture](wiki/Architecture.md) · [Demos and performance](wiki/Performance.md) · [Comparisons](wiki/Comparisons.md) · [Limitations](wiki/Limitations.md) · [Glossary](wiki/Glossary.md) |
 
 ## Layout
 
@@ -92,7 +92,7 @@ The documentation lives in [`wiki/`](wiki/Home.md):
 |---|---|
 | `compiler/` | the FilAsync pass, and patches to Fil-C's clang for the pass and the access hook |
 | `runtime/` | `include/` the public headers, `framework/` the async framework, `io_uring/` and `rpc/` the runtimes, `patches/` Fil-C's forwarder generator |
-| `demos/` | the demos (`make help`): `pragma/` annotated calls, `explicit/` the `fasync_*` API, `wordcount/` one program built three ways, `rpc/` calls to a TCP server through `runtime=rpc`, `common/` shared helpers |
+| `demos/` | the demos (`make help`): `pragma/` annotated calls, `explicit/` the `fasync_*` API, `wordcount/` one program built three ways, `rpc/` calls to a TCP server through `runtime=rpc`, `comparison/` the same task with an annotated call and the usual way, `common/` shared helpers |
 | `tests/` | the test suite (`./tests/run.sh`) |
 | `scripts/` | build helpers shared by `compiler/` and `runtime/` |
 | `wiki/` | the documentation |
