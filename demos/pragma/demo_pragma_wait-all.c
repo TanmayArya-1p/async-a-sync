@@ -11,20 +11,18 @@
 
 #include "pragma_report.hh"
 
-#pragma clang attribute push(__attribute__((annotate("filc_async", "runtime=io_uring", "op=pread", "bout=buf"))), apply_to=function)
+FILC_ASYNC(io_uring, FILC_OP(pread), FILC_BOUT(buf))
 void* read_byte(int fd, void* buf, size_t len, unsigned long offset) {
   pragma_body_calls++;
   return 0;
 }
-#pragma clang attribute pop
 
-#pragma clang attribute push(__attribute__((annotate("filc_async", "runtime=io_uring", "op=pwrite", "bin=buf"))), apply_to=function)
+FILC_ASYNC(io_uring, FILC_OP(pwrite), FILC_BIN(buf))
 void* write_byte(int fd, const void* buf, size_t len, unsigned long offset,
                  prov_tag after) {
   pragma_body_calls++;
   return 0;
 }
-#pragma clang attribute pop
 
 int main(int argc, char** argv) {
   struct waitall w = waitall_setup(argc, argv);
