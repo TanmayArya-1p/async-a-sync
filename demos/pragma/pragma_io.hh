@@ -2,18 +2,19 @@
 
 /* The annotation layer the demo_pragma_* programs share.
  *
- * Each function below is ordinary C under a `#pragma clang attribute` that
- * tells the patched compiler which syscall it stands for and what its
- * arguments are:
+ * Each function below is ordinary C under a FILC_ASYNC annotation
+ * (filc_async_annotate.h) that tells the patched compiler which syscall it
+ * stands for and what its arguments are. FILC_ASYNC names the runtime and
+ * lists the options, one macro each:
  *
- *   runtime=io_uring  the runtime that runs the call
- *   op=<syscall>  the io_uring operation a call becomes
- *   bin=<p>       parameter p is a buffer the kernel reads (never marked)
- *   bout=<p>      parameter p is a buffer the kernel fills (marked pending
- *                 until the read lands; the first access waits for it)
- *   r_dep=<p>:<ns>  the call reads the resource parameter p names, in
- *                 namespace ns
- *   w_dep=<p>:<ns>  the call writes it
+ *   FILC_ASYNC(io_uring, ...)  the runtime that runs the call
+ *   FILC_OP(syscall)    the io_uring operation a call becomes
+ *   FILC_BIN(p)         parameter p is a buffer the kernel reads (never marked)
+ *   FILC_BOUT(p)        parameter p is a buffer the kernel fills (marked pending
+ *                       until the read lands; the first access waits for it)
+ *   FILC_R_DEP(p, ns)   the call reads the resource parameter p names, in
+ *                       namespace ns
+ *   FILC_W_DEP(p, ns)   the call writes it
  *
  * The descriptor needs no option: it is argument 0 of every op, and the
  * runtime knows that. Each dependency option locks the argument's value,
@@ -47,40 +48,36 @@ build with -DFASYNC_COMPILER_INSERTS_CHECKS"
 
 static volatile int pragma_body_calls;
 
-#pragma clang attribute push(__attribute__((annotate("filc_async", "runtime=io_uring", "op=openat", "bin=path"))), apply_to=function)
+FILC_ASYNC(io_uring, FILC_OP(openat), FILC_BIN(path))
 void* async_openat(int dirfd, const char* path, int flags, int mode) {
   pragma_body_calls++;
   return 0;
 }
-#pragma clang attribute pop
 
-#pragma clang attribute push(__attribute__((annotate("filc_async", "runtime=io_uring", "op=pread", "bout=buf", "r_dep=fd:file", "w_dep=buf:mem"))), apply_to=function)
+FILC_ASYNC(io_uring, FILC_OP(pread), FILC_BOUT(buf), FILC_R_DEP(fd, file),
+           FILC_W_DEP(buf, mem))
 void* async_pread(int fd, void* buf, size_t len, unsigned long offset) {
   pragma_body_calls++;
   return 0;
 }
-#pragma clang attribute pop
 
-#pragma clang attribute push(__attribute__((annotate("filc_async", "runtime=io_uring", "op=pwrite", "bin=buf", "w_dep=fd:file"))), apply_to=function)
+FILC_ASYNC(io_uring, FILC_OP(pwrite), FILC_BIN(buf), FILC_W_DEP(fd, file))
 void* async_pwrite(int fd, const void* buf, size_t len, unsigned long offset) {
   pragma_body_calls++;
   return 0;
 }
-#pragma clang attribute pop
 
-#pragma clang attribute push(__attribute__((annotate("filc_async", "runtime=io_uring", "op=fsync", "w_dep=fd:file"))), apply_to=function)
+FILC_ASYNC(io_uring, FILC_OP(fsync), FILC_W_DEP(fd, file))
 void* async_fsync(int fd) {
   pragma_body_calls++;
   return 0;
 }
-#pragma clang attribute pop
 
-#pragma clang attribute push(__attribute__((annotate("filc_async", "runtime=io_uring", "op=close", "w_dep=fd:file"))), apply_to=function)
+FILC_ASYNC(io_uring, FILC_OP(close), FILC_W_DEP(fd, file))
 void* async_close(int fd) {
   pragma_body_calls++;
   return 0;
 }
-#pragma clang attribute pop
 
 /* Waits for an annotated call and returns its syscall result (-errno on
  * failure). */

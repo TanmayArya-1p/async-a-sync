@@ -16,17 +16,15 @@
 
 // Bodies run just before the call is sent; they only log.
 
-#pragma clang attribute push(__attribute__((annotate("filc_async", "runtime=rpc", "op=step", "w_dep=port:counter", "bout=value"))), apply_to=function)
+FILC_ASYNC(rpc, FILC_OP(step), FILC_W_DEP(port, counter), FILC_BOUT(value))
 void step(unsigned port, long* value) {
   rpc_log_sent("step");
 }
-#pragma clang attribute pop
 
-#pragma clang attribute push(__attribute__((annotate("filc_async", "runtime=rpc", "op=get", "r_dep=port:counter", "bout=value"))), apply_to=function)
+FILC_ASYNC(rpc, FILC_OP(get), FILC_R_DEP(port, counter), FILC_BOUT(value))
 void get(unsigned port, long* value) {
   rpc_log_sent("get");
 }
-#pragma clang attribute pop
 
 int main(int argc, char** argv) {
   unsigned port = rpc_setup(argc, argv);

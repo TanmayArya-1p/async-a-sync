@@ -8,13 +8,45 @@ see [Annotate a function](Annotating-Functions.md).
 ## Syntax
 
 ```c
+FILC_ASYNC(<runtime>, <option macro>, ...)
+<function declaration or definition>
+```
+
+`FILC_ASYNC` and the option macros are in `filc_async_annotate.h`, which
+`filc_async.h` includes. They expand to the attribute
+
+```c
+__attribute__((annotate("filc_async", "runtime=<runtime>", "<option>", ...)))
+```
+
+and that attribute is all the compiler pass reads. The tables below give each
+option as the string it produces and the macro that writes it:
+
+| Macro | String |
+|---|---|
+| `FILC_ASYNC(runtime, ...)` | `"runtime=<runtime>"`, then the options |
+| `FILC_OP(op)` | `"op=<op>"` |
+| `FILC_BIN(param)` | `"bin=<param>"` |
+| `FILC_BOUT(param)` | `"bout=<param>"` |
+| `FILC_BUF(param)` | `"buf=<param>"` |
+| `FILC_R_DEP(param, ns)` | `"r_dep=<param>:<ns>"` |
+| `FILC_W_DEP(param, ns)` | `"w_dep=<param>:<ns>"` |
+| `FILC_OPTION(key, value)` | `"<key>=<value>"`, an option only the runtime reads |
+
+The same annotation can be written by hand, around functions, as
+
+```c
 #pragma clang attribute push(__attribute__((annotate("filc_async", "<option>", ...))), apply_to=function)
 <function declarations or definitions>
 #pragma clang attribute pop
 ```
 
-- **Options.** Each option is a separate string literal. `runtime=` is
-  required; the others are optional.
+- **Options.** `runtime=` is required; the others are optional. The macro
+  arguments are names, not strings, and the compiler stringizes them, so a
+  name that is also a macro is not expanded. `FILC_ASYNC` needs at least one
+  option after the runtime, normally `FILC_OP`.
+- **One annotation.** A function carries one `FILC_ASYNC`; put every option in
+  it. The compiler keeps one annotation per function.
 - **Parameters.** Options refer to arguments by parameter name, never by
   position. The names come from the annotated declaration; an unnamed
   parameter takes its name from another declaration of the function, such

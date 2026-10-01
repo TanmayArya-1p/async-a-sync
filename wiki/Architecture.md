@@ -74,7 +74,7 @@ c = buf[0]
 
 `compiler/pass/FilAsync.cpp`
 
-**Where it runs.** Clang records the pragma in `llvm.global.annotations`.
+**Where it runs.** Clang records each `FILC_ASYNC` annotation in `llvm.global.annotations`.
 `BackendUtil.cpp` installs FilAsync at the very start of Fil-C's pipeline,
 before any optimization and before FilPizlonator. Keep that order: the
 inliner and attribute inference must never see a direct call to an annotated

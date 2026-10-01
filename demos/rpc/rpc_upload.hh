@@ -18,8 +18,7 @@
 
 #include "../pragma/pragma_io.hh"
 
-#pragma clang attribute push(__attribute__((annotate("filc_async", "runtime=rpc", "op=put", "bin=data"))), apply_to=function)
+FILC_ASYNC(rpc, FILC_OP(put), FILC_BIN(data))
 void* upload(unsigned port, const void* data, size_t len) {
   return 0;
 }
-#pragma clang attribute pop

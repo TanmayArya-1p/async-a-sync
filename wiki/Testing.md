@@ -49,6 +49,7 @@ line, run `make demo-pragma`, `make all-demos` and `make disasm` by hand.
 | `check_dependency_options.sh` | dependency metadata and the hashes of `<param>:<namespace>`, the runtime each descriptor points to, option precedence between declaration and definition, rejection of conflicting, empty-namespace, namespace-less and obsolete options, of indices and unknown parameter names, of the removed `fd=`, and of a missing, malformed or doubled `runtime=` |
 | `t_param_names.c` | the patched clang gives an annotated prototype without parameter names the definition's names; dependencies conflict only when value, parameter name and namespace all match |
 | `check_callsite_pragma.sh` | a pragma around a call is an error with `-Werror=pragma-clang-attribute` |
+| `check_annotation_macros.sh` | `FILC_ASYNC` and its option macros give the same annotation as the pragma form, and a misspelt option macro is an error |
 | `check_wait_all.sh` | completion arguments retain five 16-byte staging cells; read and writer stubs mark tokens before submission; emitted object relocations reference framework services |
 | `t_annotate_smoke.c` | Clang emits `llvm.global.annotations` for the pragma |
 | `stage4_compiler_hook.c` | the patched compiler inserts the pending-flag test and resolves buffers on access |
@@ -79,6 +80,7 @@ line, run `make demo-pragma`, `make all-demos` and `make disasm` by hand.
 | `t_backend_io_uring.c` | hand-built descriptors naming the io_uring runtime reach every supported operation through `filc_async_submit` |
 | `t_wait_all_uring.c` | 30 separately marked reads queue before the writer; trailing completion arguments validate, each read sees the original data, and the later write reaches disk; stock builds use explicit stubs, patched builds use annotated calls |
 | `t_pragma_io_uring.c`, `t_pragma_dependencies.c` | annotated calls dispatch end to end and honor dependency order |
+| `t_annotation_macros.c` | calls annotated with `FILC_ASYNC` (one per function, a shared `#define`, an annotated declaration with an unannotated definition) dispatch end to end in dependency order |
 | `t_pragma_lazy_many.c` | more never-polled calls than the request table holds complete (slot reclaiming) |
 | `t_pragma_many_calls.c`, `t_pragma_reuse_lazy.c` | handles retire once delivered; reusing touched buffers does not flush the queue |
 | `t_pragma_error_path.c` | calls on a bad fd fail with `-EBADF` instead of hanging |

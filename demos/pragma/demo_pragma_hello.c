@@ -1,6 +1,6 @@
 /* demo_pragma_hello: what one annotated call does.
  *
- * The pragma on read_block tells the patched compiler that the function
+ * The annotation on read_block tells the patched compiler that the function
  * stands for pread(2), that argument 0 is the fd and that argument 1 is a
  * buffer the kernel fills. The compiler rewrites every call to it:
  *
@@ -15,9 +15,8 @@
 
 #include "pragma_report.hh"
 
-#pragma clang attribute push(__attribute__((annotate("filc_async", "runtime=io_uring", "op=pread", "bout=buf"))), apply_to=function)
+FILC_ASYNC(io_uring, FILC_OP(pread), FILC_BOUT(buf))
 void* read_block(int fd, void* buf, size_t len, unsigned long offset);
-#pragma clang attribute pop
 
 int main(int argc, char** argv) {
   struct hello h = hello_setup(argc, argv);

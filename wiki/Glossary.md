@@ -1,7 +1,7 @@
 # Glossary
 
 - **Access hook**: The pending-flag test FilPizlonator inserts before an access through a pointer. If the flag is set, it calls `filc_resolve_pending`.
-- **Annotated function**: A function under a `filc_async` annotation pragma. Direct calls to it are redirected to its stub.
+- **Annotated function**: A function carrying a `FILC_ASYNC` annotation. Direct calls to it are redirected to its stub.
 - **Capability**: Fil-C's bounds and type information carried with every pointer. The object it names has a header whose `aux` word holds the pending flag.
 - **Descriptor**: `filc_async_meta`, emitted by the pass for each annotated function. It holds the argument kinds, the dependency bits, the option strings and a pointer to the function's runtime. A runtime's own descriptor is a `filc_async_runtime`.
 - **Dependency lock**: A reader/writer lock on an argument's value (or object), its parameter name and a namespace, taken by the stub for each `r_dep=`/`w_dep=` and released when the call completes.

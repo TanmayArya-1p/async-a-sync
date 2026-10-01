@@ -6,13 +6,19 @@ meaning of every option, see the [annotation reference](Annotation-Reference.md)
 
 ## Mark the function
 
-Wrap the declaration or definition in a `filc_async` annotation pragma:
+Put `FILC_ASYNC` before the declaration or definition. It comes from
+`filc_async.h` (the macros themselves are in `filc_async_annotate.h`):
 
 ```c
-#pragma clang attribute push(__attribute__((annotate("filc_async", "runtime=io_uring", "op=pread", "bout=buf"))), apply_to=function)
+#include "filc_async.h"
+
+FILC_ASYNC(io_uring, FILC_OP(pread), FILC_BOUT(buf))
 void* read_at(int fd, void* buf, size_t len, unsigned long offset);
-#pragma clang attribute pop
 ```
+
+The first argument names the runtime. The rest are options, one macro each,
+and they take plain names, not strings. A misspelt option macro is a compile
+error. The options are listed in the [reference](Annotation-Reference.md#options).
 
 - **`runtime=`.** Names the runtime that runs the call. It is required, and
   the program must link that runtime: `runtime=io_uring` needs
@@ -27,13 +33,13 @@ void* read_at(int fd, void* buf, size_t len, unsigned long offset);
   runtime does not support aborts the program at startup.
 - **Arguments.** Options name parameters (`bout=buf`), never positions. Give
   the parameters names in the annotated declaration, or in the definition.
-- **Warnings.** Always compile with `-Werror=pragma-clang-attribute`. A pragma
-  placed around a call site instead of a function is otherwise only a warning,
-  and it does nothing.
+- **One annotation per function.** Put every option inside one `FILC_ASYNC`.
+  The compiler keeps one annotation per function, so a second one would replace
+  the first.
 
 ## Annotate a function declared in a header
 
-Put the pragma in the header, around the declaration. Every file that
+Put the annotation in the header, before the declaration. Every file that
 includes it gets its calls rewritten. The definition can be:
 
 - **In another file.** Its ordinary symbol is kept, so the runtime can call it.
@@ -51,14 +57,14 @@ way each buffer flows:
 
 | Option | Meaning | Marked pending? |
 |---|---|---|
-| `bout=<param>` | the call writes `<param>` | yes, until the call completes |
-| `bin=<param>` | the call only reads `<param>` | no |
-| `buf=<param>` | direction unknown | yes |
-| (no option) | an unannotated pointer argument is treated like `buf=` | yes |
+| `FILC_BOUT(param)` | the call writes `param` | yes, until the call completes |
+| `FILC_BIN(param)` | the call only reads `param` | no |
+| `FILC_BUF(param)` | direction unknown | yes |
+| (no option) | an unannotated pointer argument is treated like `FILC_BUF` | yes |
 
 A pending buffer blocks the first access to it until the call completes. Mark
-inputs with `bin=` so reading them does not wait. `bin=`, `bout=` and `buf=`
-must name pointer arguments. Other arguments need no option: the runtime
+inputs with `FILC_BIN` so reading them does not wait. `FILC_BIN`, `FILC_BOUT`
+and `FILC_BUF` must name pointer arguments. Other arguments need no option: the runtime
 knows its own ops' signatures, such as the io_uring runtime's descriptor in
 argument 0.
 
@@ -69,18 +75,16 @@ something the buffers do not show, such as a file descriptor, list what each
 call reads and writes:
 
 ```c
-#pragma clang attribute push(__attribute__((annotate("filc_async", "runtime=io_uring", "op=pwrite", "bin=buf", "w_dep=fd:file"))), apply_to=function)
+FILC_ASYNC(io_uring, FILC_OP(pwrite), FILC_BIN(buf), FILC_W_DEP(fd, file))
 void* write_at(int fd, const void* buf, size_t len, unsigned long offset);
-#pragma clang attribute pop
 
-#pragma clang attribute push(__attribute__((annotate("filc_async", "runtime=io_uring", "op=pread", "bout=buf", "r_dep=fd:file"))), apply_to=function)
+FILC_ASYNC(io_uring, FILC_OP(pread), FILC_BOUT(buf), FILC_R_DEP(fd, file))
 void* read_at(int fd, void* buf, size_t len, unsigned long offset);
-#pragma clang attribute pop
 ```
 
-- **`r_dep=<param>:<namespace>`.** The call reads the resource `<param>`
-  names, in `<namespace>`.
-- **`w_dep=<param>:<namespace>`.** The call writes it.
+- **`FILC_R_DEP(param, namespace)`.** The call reads the resource `param`
+  names, in `namespace`.
+- **`FILC_W_DEP(param, namespace)`.** The call writes it.
 - **Keys.** A call's key is the argument's value together with the parameter
   name and the namespace. An integer argument counts by its value, a pointer
   argument by the object it points into.
@@ -92,13 +96,33 @@ void* read_at(int fd, void* buf, size_t len, unsigned long offset);
 
 Both functions above call their descriptor `fd` and use the namespace
 `file`, so their keys match. A function that calls it `handle`, or that
-uses `w_dep=fd:meta`, locks a different resource, and runs independently of
+uses `FILC_W_DEP(fd, meta)`, locks a different resource, and runs independently of
 them. That is how you keep apart things that share a value: fd 3 as "the
 file's data" (`fd:file`) and fd 3 as "the file's metadata" (`fd:meta`).
 
 The namespace is required, so every dependency says what it protects. If you
 list two dependency options on one parameter, they must agree in mode and
 namespace.
+
+## Share options between functions
+
+Name an annotation with `#define` when several functions take the same one:
+
+```c
+#define ASYNC_READ FILC_ASYNC(io_uring, FILC_OP(pread), FILC_BOUT(buf))
+
+ASYNC_READ void* read_a(int fd, void* buf, size_t len, unsigned long offset);
+ASYNC_READ void* read_b(int fd, void* buf, size_t len, unsigned long offset);
+```
+
+## The pragma form
+
+`FILC_ASYNC` expands to `__attribute__((annotate("filc_async", ...)))`. The
+older form, which wraps functions in `#pragma clang attribute push(...,
+apply_to=function)` and `#pragma clang attribute pop`, gives the same
+annotation and still works. Build with `-Werror=pragma-clang-attribute` if you
+use it, because a pragma around a call site instead of a function is otherwise
+only a warning, and it does nothing.
 
 ## Get the result
 
