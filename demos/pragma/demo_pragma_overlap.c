@@ -17,43 +17,42 @@
 
 #include "pragma_report.hh"
 
-/* FNV-1a over 8-byte words, mixing each one hash_rounds times so the hash
- * costs compute, not memory access. */
-static unsigned long hash_file(const unsigned char* p) {
-  const unsigned long* w = (const unsigned long*)p;
-  unsigned long h = 1469598103934665603UL;
-  for (size_t i = 0; i < demo_bytes / sizeof(*w); i++) {
-    unsigned long x = w[i];
+/* A polynomial hash over 8-byte words, mixing each one hash_rounds times so
+ * the hash costs compute, not memory access. Every step stays below 2^35, so
+ * it never overflows. */
+long hash_file(const void* p) {
+  const long* w = (const long*)p;
+  long h = 0;
+  for (size_t i = 0; i < demo_bytes / sizeof(*w); i++)
     for (int r = 0; r < hash_rounds; r++)
-      h = (h ^ (x + (unsigned long)r)) * 1099511628211UL;
-  }
+      h = (h * 31 + w[i] % 1000003 + r) % 1000000007;
   return h;
 }
 
-static unsigned long reads_only(int n) {
+long reads_only(int n) {
   for (int i = 0; i < n; i++)
     pread(demo_fd[i], demo_buf[i], demo_bytes, 0);
   return 0;
 }
 
-static unsigned long async_reads_only(int n) {
+long async_reads_only(int n) {
   for (int i = 0; i < n; i++)
     async_pread(demo_fd[i], demo_buf[i], demo_bytes, 0);
-  unsigned long first_bytes = 0;
+  long first_bytes = 0;
   for (int i = 0; i < n; i++)
     first_bytes += demo_buf[i][0]; /* waits for that file's read */
   return first_bytes;
 }
 
-static unsigned long hash_only(int n) {
-  unsigned long h = 0;
+long hash_only(int n) {
+  long h = 0;
   for (int i = 0; i < n; i++)
     h ^= hash_file(demo_buf[i]);
   return h;
 }
 
-static unsigned long read_then_hash(int n) {
-  unsigned long h = 0;
+long read_then_hash(int n) {
+  long h = 0;
   for (int i = 0; i < n; i++) {
     pread(demo_fd[i], demo_buf[i], demo_bytes, 0);
     h ^= hash_file(demo_buf[i]);
@@ -61,10 +60,10 @@ static unsigned long read_then_hash(int n) {
   return h;
 }
 
-static unsigned long async_then_hash(int n) {
+long async_then_hash(int n) {
   for (int i = 0; i < n; i++)
     async_pread(demo_fd[i], demo_buf[i], demo_bytes, 0);
-  unsigned long h = 0;
+  long h = 0;
   for (int i = 0; i < n; i++)
     h ^= hash_file(demo_buf[i]);
   return h;

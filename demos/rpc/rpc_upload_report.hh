@@ -12,7 +12,7 @@
 #define UPLOAD_BYTES 4096
 
 struct upload {
-  unsigned port;
+  int port;
   char path[UPLOAD_FILES][256];
   int fd[UPLOAD_FILES];
   char* buf[UPLOAD_FILES];
@@ -34,12 +34,12 @@ static inline uint32_t upload_checksum(const char* p, size_t len) {
  * so each read is a device round trip, and opens them. */
 static inline struct upload upload_setup(int argc, char** argv) {
   struct upload u = {0};
-  unsigned long port = argc > 2 ? strtoul(argv[1], NULL, 10) : 0;
-  if (port == 0 || port > 65535) {
+  long port = argc > 2 ? strtol(argv[1], NULL, 10) : 0;
+  if (port <= 0 || port > 65535) {
     fprintf(stderr, "usage: demo_rpc_upload PORT DIR\n");
     exit(2);
   }
-  u.port = (unsigned)port;
+  u.port = (int)port;
   pragma_title("upload: read files with io_uring, upload them with rpc",
                "  async_pread() says runtime=io_uring; upload() says runtime=rpc.");
 

@@ -14,7 +14,7 @@
 #include "pragma_reads.hh"
 #include "pragma_report.hh"
 
-static const int sizes[] = {1, 4, 16, 64, 256, 512, 1024, 2048};
+const int sizes[] = {1, 4, 16, 64, 256, 512, 1024, 2048};
 
 int main(int argc, char** argv) {
   struct timing t = scaling_setup(argc, argv);

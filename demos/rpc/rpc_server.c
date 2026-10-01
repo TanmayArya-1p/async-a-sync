@@ -18,11 +18,11 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
-static pthread_mutex_t counter_lock = PTHREAD_MUTEX_INITIALIZER;
-static long counter;
+pthread_mutex_t counter_lock = PTHREAD_MUTEX_INITIALIZER;
+long counter;
 
 // Read a PUT's payload; its checksum, or -1.
-static long put(int fd, size_t len) {
+long put(int fd, size_t len) {
   uint32_t hash = 2166136261u;
   unsigned char chunk[4096];
   while (len) {
@@ -36,7 +36,7 @@ static long put(int fd, size_t len) {
   return hash;
 }
 
-static void* serve(void* arg) {
+void* serve(void* arg) {
   int fd = (int)(intptr_t)arg;
   char command[32] = {0};
   size_t used = 0;

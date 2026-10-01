@@ -12,13 +12,13 @@
 #include "pragma_report.hh"
 
 FILC_ASYNC(io_uring, FILC_OP(pread), FILC_BOUT(buf))
-void* read_byte(int fd, void* buf, size_t len, unsigned long offset) {
+void* read_byte(int fd, void* buf, size_t len, long offset) {
   pragma_body_calls++;
   return 0;
 }
 
 FILC_ASYNC(io_uring, FILC_OP(pwrite), FILC_BIN(buf))
-void* write_byte(int fd, const void* buf, size_t len, unsigned long offset,
+void* write_byte(int fd, const void* buf, size_t len, long offset,
                  prov_tag after) {
   pragma_body_calls++;
   return 0;

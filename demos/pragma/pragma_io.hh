@@ -56,13 +56,13 @@ void* async_openat(int dirfd, const char* path, int flags, int mode) {
 
 FILC_ASYNC(io_uring, FILC_OP(pread), FILC_BOUT(buf), FILC_R_DEP(fd, file),
            FILC_W_DEP(buf, mem))
-void* async_pread(int fd, void* buf, size_t len, unsigned long offset) {
+void* async_pread(int fd, void* buf, size_t len, long offset) {
   pragma_body_calls++;
   return 0;
 }
 
 FILC_ASYNC(io_uring, FILC_OP(pwrite), FILC_BIN(buf), FILC_W_DEP(fd, file))
-void* async_pwrite(int fd, const void* buf, size_t len, unsigned long offset) {
+void* async_pwrite(int fd, const void* buf, size_t len, long offset) {
   pragma_body_calls++;
   return 0;
 }

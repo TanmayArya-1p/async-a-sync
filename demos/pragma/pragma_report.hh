@@ -533,7 +533,7 @@ static inline int scaling_report(struct timing* t) {
  * pread. */
 static int hash_rounds = 1;
 
-typedef unsigned long (*overlap_fn)(int n);
+typedef long (*overlap_fn)(int n);
 
 enum {
   READS_ONLY,
@@ -554,7 +554,7 @@ static const char* const overlap_name[N_OVERLAP_RUNS] = {
 
 struct overlap_run {
   double ms;
-  unsigned long hash;
+  long hash;
   unsigned long waits; /* io_uring_enter calls that slept */
 };
 
@@ -563,7 +563,7 @@ struct overlap {
   int passes;
   int fixed_rounds;
   int regime_ok;
-  unsigned long expect;
+  long expect;
   struct overlap_run run[N_OVERLAP_RUNS][PRAGMA_MAX_PASSES];
 };
 

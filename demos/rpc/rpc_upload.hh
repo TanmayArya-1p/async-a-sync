@@ -19,6 +19,6 @@
 #include "../pragma/pragma_io.hh"
 
 FILC_ASYNC(rpc, FILC_OP(put), FILC_BIN(data))
-void* upload(unsigned port, const void* data, size_t len) {
+void* upload(int port, const void* data, size_t len) {
   return 0;
 }

@@ -16,7 +16,7 @@
 #include "pragma_report.hh"
 
 FILC_ASYNC(io_uring, FILC_OP(pread), FILC_BOUT(buf))
-void* read_block(int fd, void* buf, size_t len, unsigned long offset);
+void* read_block(int fd, void* buf, size_t len, long offset);
 
 int main(int argc, char** argv) {
   struct hello h = hello_setup(argc, argv);
@@ -37,7 +37,7 @@ int main(int argc, char** argv) {
 
 /* The runtime runs this before it issues the read; a program could log or
  * instrument its calls here. */
-void* read_block(int fd, void* buf, size_t len, unsigned long offset) {
+void* read_block(int fd, void* buf, size_t len, long offset) {
   pragma_body_calls++;
   return 0;
 }

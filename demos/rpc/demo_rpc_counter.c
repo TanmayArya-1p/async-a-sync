@@ -17,17 +17,17 @@
 // Bodies run just before the call is sent; they only log.
 
 FILC_ASYNC(rpc, FILC_OP(step), FILC_W_DEP(port, counter), FILC_BOUT(value))
-void step(unsigned port, long* value) {
+void step(int port, long* value) {
   rpc_log_sent("step");
 }
 
 FILC_ASYNC(rpc, FILC_OP(get), FILC_R_DEP(port, counter), FILC_BOUT(value))
-void get(unsigned port, long* value) {
+void get(int port, long* value) {
   rpc_log_sent("get");
 }
 
 int main(int argc, char** argv) {
-  unsigned port = rpc_setup(argc, argv);
+  int port = rpc_setup(argc, argv);
   long first, second, stepped, after;
 
   get(port, &first);

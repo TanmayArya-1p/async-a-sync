@@ -9,7 +9,7 @@
 
 #include "pragma_report.hh"
 
-static const char text[] = "Written, flushed and read back by io_uring.";
+const char text[] = "Written, flushed and read back by io_uring.";
 
 int main(int argc, char** argv) {
   struct lifecycle l = lifecycle_setup(argc, argv);

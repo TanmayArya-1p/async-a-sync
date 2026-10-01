@@ -35,9 +35,9 @@ static inline void rpc_log_sent(const char* op) {
 }
 
 // Port from the command line; starts the clock.
-static inline unsigned rpc_setup(int argc, char** argv) {
-  unsigned long port = argc > 1 ? strtoul(argv[1], NULL, 10) : 0;
-  if (port == 0 || port > 65535) {
+static inline int rpc_setup(int argc, char** argv) {
+  long port = argc > 1 ? strtol(argv[1], NULL, 10) : 0;
+  if (port <= 0 || port > 65535) {
     fprintf(stderr, "usage: demo_rpc_counter PORT\n");
     exit(2);
   }
@@ -45,7 +45,7 @@ static inline unsigned rpc_setup(int argc, char** argv) {
                "  The server takes 50 ms per reply. No call is waited for:\n"
                "  reading a value waits for its reply.");
   rpc_t0 = rpc_now_ms();
-  return (unsigned)port;
+  return (int)port;
 }
 
 // The four values in call order, already read by main.

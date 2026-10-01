@@ -15,7 +15,7 @@
 #define RECORD ORDERING_RECORD
 
 /* Two writes and a read of the same bytes, all issued before any wait. */
-static void same_file(int fd) {
+void same_file(int fd) {
   char buf[8] = {0};
 
   scenario_start("write, write, read, one file", CONFLICTING);
@@ -32,8 +32,8 @@ static void same_file(int fd) {
 }
 
 /* One write to each file: no two calls share a key. */
-static void many_files(const int* fd) {
-  static const char msg[] = "independent";
+void many_files(const int* fd) {
+  const char msg[] = "independent";
   void* task[FILES];
 
   scenario_start("8 writes to 8 different files", INDEPENDENT);
@@ -49,7 +49,7 @@ static void many_files(const int* fd) {
 
 /* Eight reads of one file. Reads of one fd do not conflict. Each read gets
  * its own buffer, because a pending mark covers a whole object. */
-static void many_reads(int fd) {
+void many_reads(int fd) {
   char* buf[FILES];
   for (int i = 0; i < FILES; i++)
     buf[i] = calloc(1, RECORD + 1);
@@ -57,7 +57,7 @@ static void many_reads(int fd) {
 
   scenario_start("8 reads of one file", INDEPENDENT);
   for (int i = 0; i < FILES; i++)
-    async_pread(fd, buf[i], RECORD, (unsigned long)i * RECORD);
+    async_pread(fd, buf[i], RECORD, i * RECORD);
   scenario_issued();
 
   /* No handles and no waits: reading a buffer is enough. */
