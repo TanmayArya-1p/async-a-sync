@@ -34,7 +34,8 @@ fi
 #   instrumentation-cmake-filasync.patch  builds FilAsync.cpp
 #   filpizlonator-pending-hook.patch   the pending-flag test at access sites
 #   filc-async-param-names.patch       clang records the parameter names of
-#                                      each filc_async function
+#                                      each filc_async function, and which
+#                                      parameters point to const
 #   sroa-release-verbose.patch         Release builds omit AllocaSlices::AI,
 #                                      which SROA's verbose log still uses
 # ---------------------------------------------------------------------

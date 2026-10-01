@@ -193,7 +193,7 @@ static void basic_cases(void)
     struct producer a, b;
     void* ta = producer_new(&a, object_alloc(16), false);
     void* tb = producer_new_on(&b, object_alloc(16), false, &other_runtime);
-    const void* inputs[] = { a.token, b.token, a.token, NULL };
+    prov_tag inputs[] = { a.token, b.token, a.token, NULL };
     group = filc_async_wait_all(inputs, 4);
     inputs[0] = inputs[1] = NULL;
     assert(filc_async_is_pending(group));

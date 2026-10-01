@@ -33,7 +33,8 @@
  * w_dep=fd:meta does not.
  *
  * Pending buffers: the stub marks the producing args (bout=, bare buf=, and
- * unannotated pointer args) pending; bin= inputs never are. Marking a buffer
+ * unannotated pointers to non-const) pending; inputs (bin=, and unannotated
+ * pointers to const) never are. Marking a buffer
  * another call still owns waits for that call. When a call completes, the
  * buffers it still has pending resolve; a runtime can resolve some earlier.
  *
@@ -46,11 +47,12 @@
 #define FILC_ASYNC_RESULT_WORD 1u
 #define FILC_ASYNC_RESULT_PTR  2u
 
-/* Arg kinds. The pass records these from the pragma's argument options
- * ONLY -- op= never decides a kind: bin=<p> -> BUFFER_IN, bout=<p> ->
- * BUFFER_OUT, buf=<p> -> PENDING (no direction annotated; the runtime decides
- * at use time). Unannotated pointer args also default to PENDING
- * (pessimistic); unannotated non-pointers stay IGNORED. Value 4 is unused. */
+/* Arg kinds. The pass records these from the pragma's argument options and
+ * the parameter types -- op= never decides a kind: bin=<p> -> BUFFER_IN,
+ * bout=<p> -> BUFFER_OUT, buf=<p> -> PENDING (no direction annotated; the
+ * runtime decides at use time). An unannotated pointer to const is
+ * BUFFER_IN, and any other unannotated pointer PENDING (pessimistic);
+ * unannotated non-pointers stay IGNORED. Value 4 is unused. */
 #define FILC_ASYNC_ARG_IGNORED    0u
 #define FILC_ASYNC_ARG_SCALAR     1u
 #define FILC_ASYNC_ARG_BUFFER_IN  2u
@@ -139,7 +141,9 @@ void  filc_async_wait(struct filc_async_result_s* out);
 void  filc_async_mark_resolved(void* buf);
 bool  filc_async_is_pending(const void* buf);
 
-typedef const void* prov_tag;
+// not const: a call that takes a tag completes it, so an unannotated tag
+// parameter is marked pending like any pointer to non-const
+typedef void* prov_tag;
 // one fil-c object per tag; null on failure
 void* prov_alloc(void);
 

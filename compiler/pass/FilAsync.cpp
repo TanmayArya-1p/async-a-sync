@@ -159,14 +159,31 @@ static SmallVector<StringRef, 8> paramNames(const Function &F) {
   return Names;
 }
 
+// Whether each of F's parameters points to a const type, from the
+// !filc_async.const metadata the patched clang attaches. IR without it (a
+// stock clang) says nothing, and every parameter reads as not const.
+static SmallVector<bool, 8> constParams(const Function &F) {
+  SmallVector<bool, 8> Consts;
+  if (MDNode *MD = F.getMetadata("filc_async.const"))
+    for (const MDOperand &Op : MD->operands()) {
+      auto *C = mdconst::dyn_extract_or_null<ConstantInt>(Op.get());
+      Consts.push_back(C && C->isOne());
+    }
+  Consts.resize(F.arg_size());
+  return Consts;
+}
+
 // Reads the argument option tokens into Kinds and Deps and counts the buffer
 // options in Noped. Each option names a parameter: bin=<p> -> ARG_BUFFER_IN;
 // bout=<p> -> ARG_BUFFER_OUT; buf=<p> -> ARG_PENDING (direction decided at use
 // time by the runtime); r_dep=<p>:<ns> and w_dep=<p>:<ns> lock the argument's
 // value in a space hashed from "<p>:<ns>". op= never decides a kind.
-// Unannotated pointer args default to ARG_PENDING (the pessimistic "undecided
-// direction" case); unannotated non-pointers stay ARG_IGNORED. An option that
-// names no parameter is a compile-time fatal.
+// Unannotated pointer args default from their type: a pointer to const is
+// ARG_BUFFER_IN, as if bin= named it, and any other pointer ARG_PENDING (the
+// pessimistic "undecided direction" case); unannotated non-pointers stay
+// ARG_IGNORED. A buffer option overrides the default either way, and only
+// options count in Noped. An option that names no parameter is a
+// compile-time fatal.
 static void parseKinds(StringRef OrigName, const Function &F,
                        const FilAsyncPass::AnnotInfo &Info,
                        SmallVectorImpl<unsigned> &Kinds,
@@ -174,11 +191,12 @@ static void parseKinds(StringRef OrigName, const Function &F,
   FunctionType *FTy = F.getFunctionType();
   unsigned NArgs = FTy->getNumParams();
   SmallVector<StringRef, 8> Names = paramNames(F);
+  SmallVector<bool, 8> Consts = constParams(F);
   Kinds.assign(NArgs, ARG_IGNORED);
   Deps.assign(NArgs, DEP_NONE);
   for (unsigned I = 0; I < NArgs; ++I)
     if (FTy->getParamType(I)->isPointerTy())
-      Kinds[I] = ARG_PENDING;
+      Kinds[I] = Consts[I] ? ARG_BUFFER_IN : ARG_PENDING;
   Noped = 0;
   for (StringRef Opt : Info.opts) {
     unsigned Kind = 0;

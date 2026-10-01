@@ -1,8 +1,8 @@
 diff --git a/clang/lib/CodeGen/CodeGenModule.cpp b/clang/lib/CodeGen/CodeGenModule.cpp
-index eb8d3ceee..add96dc1d 100644
+index eb8d3ceee..ef2b26474 100644
 --- a/clang/lib/CodeGen/CodeGenModule.cpp
 +++ b/clang/lib/CodeGen/CodeGenModule.cpp
-@@ -3469,6 +3469,30 @@ void CodeGenModule::AddGlobalAnnotations(const ValueDecl *D,
+@@ -3469,6 +3469,40 @@ void CodeGenModule::AddGlobalAnnotations(const ValueDecl *D,
    // Get the struct elements for these annotations.
    for (const auto *I : D->specific_attrs<AnnotateAttr>())
      Annotations.push_back(EmitAnnotateAttr(GV, I, D->getLocation()));
@@ -10,7 +10,9 @@ index eb8d3ceee..add96dc1d 100644
 +  // Fil-C async: filc_async options name arguments by parameter, and IR
 +  // declarations carry no parameter names. Record one name per parameter,
 +  // taken from this declaration or, where it has none, from another
-+  // redeclaration, for the FilAsync pass.
++  // redeclaration, for the FilAsync pass. IR pointers carry no qualifiers
++  // either, so also record which parameters point to a const type: the pass
++  // reads those as inputs.
 +  const auto *FD = dyn_cast<FunctionDecl>(D);
 +  auto *Fn = dyn_cast<llvm::Function>(GV);
 +  if (!FD || !Fn ||
@@ -19,6 +21,7 @@ index eb8d3ceee..add96dc1d 100644
 +      }))
 +    return;
 +  SmallVector<llvm::Metadata *, 8> Names;
++  SmallVector<llvm::Metadata *, 8> Consts;
 +  for (unsigned I = 0, E = FD->getNumParams(); I != E; ++I) {
 +    StringRef Name;
 +    for (const FunctionDecl *R : FD->redecls())
@@ -27,9 +30,16 @@ index eb8d3ceee..add96dc1d 100644
 +        break;
 +      }
 +    Names.push_back(llvm::MDString::get(getLLVMContext(), Name));
++    // The pointee's qualifiers, not the parameter's: `char *const p` still
++    // points to writable bytes. Compatible redeclarations agree on them.
++    const auto *PT = FD->getParamDecl(I)->getType()->getAs<PointerType>();
++    Consts.push_back(llvm::ConstantAsMetadata::get(llvm::ConstantInt::getBool(
++        getLLVMContext(), PT && PT->getPointeeType().isConstQualified())));
 +  }
 +  Fn->setMetadata("filc_async.params",
 +                  llvm::MDNode::get(getLLVMContext(), Names));
++  Fn->setMetadata("filc_async.const",
++                  llvm::MDNode::get(getLLVMContext(), Consts));
  }
  
  bool CodeGenModule::isInNoSanitizeList(SanitizerMask Kind, llvm::Function *Fn,

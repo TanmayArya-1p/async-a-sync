@@ -69,12 +69,26 @@ The same annotation can be written by hand, around functions, as
 
 ### Arguments without an option
 
-These kinds only record what an annotation says. `op=` never changes them.
+An argument no option names takes its kind from its parameter's type. `op=`
+never changes it.
 
 | Argument | Kind recorded | Marked pending? |
 |---|---|---|
-| unannotated pointer | `FILC_ASYNC_ARG_PENDING` | yes (the pessimistic default) |
+| unannotated pointer to `const` | `FILC_ASYNC_ARG_BUFFER_IN`, as `bin=` | no |
+| any other unannotated pointer | `FILC_ASYNC_ARG_PENDING`, as `buf=` | yes (the pessimistic default) |
 | unannotated non-pointer | `FILC_ASYNC_ARG_IGNORED` | no |
+
+- **The pointee's `const`.** Only a `const` on the type the pointer points to
+  counts, after typedefs: `const char*`, `char const* const*` and `cbyte*`
+  (with `typedef const char cbyte`) are inputs; `char* const` and
+  `const char**` are not. Compatible declarations of a function always agree
+  on it.
+- **Options win.** `buf=`, `bout=` or `bin=` on a parameter replaces the kind
+  its type gives. Only options count in `noped_args`.
+- **Where it comes from.** The patched clang records which parameters point
+  to `const` as `!filc_async.const`; IR pointers carry no qualifiers. IR from
+  a stock clang has no such record, and its unannotated pointers are all
+  `FILC_ASYNC_ARG_PENDING`.
 
 ## Dependencies
 

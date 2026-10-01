@@ -32,8 +32,8 @@ Read the skip count as well as the failure count.
 
 **Stock-clang checks.** `check_dependency_options.sh` and the
 `opt_annotate*.sh` scripts in `tests/compiler/` run the pass on IR from a
-stock clang, which records no parameter names.
-`tests/support/add_param_names.py` adds them the way the clang patch does.
+stock clang, which records no parameter names and no `const`.
+`tests/support/add_param_names.py` adds both the way the clang patch does.
 
 **Not covered.** `run.sh` runs `demos/wordcount/run_wordcount.sh` and both
 rpc demos, but not the other Makefile demo targets or the inspection
@@ -46,7 +46,7 @@ line, run `make demo-pragma`, `make all-demos` and `make disasm` by hand.
 
 | Check | Proves |
 |---|---|
-| `check_dependency_options.sh` | dependency metadata and the hashes of `<param>:<namespace>`, the runtime each descriptor points to, option precedence between declaration and definition, rejection of conflicting, empty-namespace, namespace-less and obsolete options, of indices and unknown parameter names, of the removed `fd=`, and of a missing, malformed or doubled `runtime=` |
+| `check_dependency_options.sh` | dependency metadata and the hashes of `<param>:<namespace>`, the runtime each descriptor points to, option precedence between declaration and definition, rejection of conflicting, empty-namespace, namespace-less and obsolete options, of indices and unknown parameter names, of the removed `fd=`, and of a missing, malformed or doubled `runtime=`; the kinds unannotated pointers take from `const`, and that options override them |
 | `t_param_names.c` | the patched clang gives an annotated prototype without parameter names the definition's names; dependencies conflict only when value, parameter name and namespace all match |
 | `check_callsite_pragma.sh` | a pragma around a call is an error with `-Werror=pragma-clang-attribute` |
 | `check_annotation_macros.sh` | `FILC_ASYNC` and its option macros give the same annotation as the pragma form, and a misspelt option macro is an error |
@@ -68,6 +68,7 @@ line, run `make demo-pragma`, `make all-demos` and `make disasm` by hand.
 | `demos/rpc/run_rpc_demo.sh counter` | `runtime=rpc` (`runtime/rpc/rpc_runtime.c`) sends calls to a loopback TCP server; its results and lock ordering come back through the framework |
 | `demos/rpc/run_rpc_demo.sh upload` | io_uring reads and rpc uploads in one loop: an upload's payload waits for the read filling it, through the io_uring runtime, and the uploaded bytes are the file's |
 | `t_pending_registry.c`, `t_pragma_markpending.c` | the pending-mark contract: which arguments are marked, aliasing, ownerless marks |
+| `t_const_inference.c` | built by the patched clang, unannotated pointers to `const` (also through a typedef or a pointer to const pointers) are not marked; `char* const`, `const char**` and plain pointers are; `FILC_BUF` overrides `const` |
 | `t_pragma_alloc.c` | the allocator interface |
 | `t_pragma_custom_validator.c`, `t_pragma_unknownop.c`, `t_pragma_ignore.c` | the runtime owns the op set, and a program validator replaces it |
 

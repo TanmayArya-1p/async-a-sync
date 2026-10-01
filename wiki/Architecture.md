@@ -100,7 +100,10 @@ other units still link (`tests/io_uring/t_linked_async_*.c`).
 IR declarations carry no parameter names, so a small clang patch
 (`compiler/patches/filc-async-param-names.patch`) records them on
 each annotated function as `!filc_async.params`, and the pass resolves each
-option against that list.
+option against that list. IR pointers carry no `const` either, so the same
+patch records which parameters point to a `const` type as
+`!filc_async.const`. The pass gives such a parameter, when no option names
+it, the `bin=` kind.
 
 **What it leaves alone.** The pass only validates parameter names and
 dependency types. It never checks `op=`: the runtime decides which ops exist.
