@@ -637,6 +637,17 @@ static bool join_entry_pending(const struct join_entry* e)
     return e->mark->buf && e->mark->generation == e->generation;
 }
 
+// The join's own storage is GC memory rather than arena memory: the arena
+// never frees, and a program may join in a loop. Nothing refers to it once
+// the join completes.
+static void* gc_alloc_or_die(size_t size)
+{
+    void* p = zgc_aligned_alloc(16, size);
+    if (!p)
+        filc_async_fatal("out of memory");
+    return p;
+}
+
 static bool join_poll(void* task, enum filc_async_poll_mode mode)
 {
     struct filc_async_task* t = (struct filc_async_task*)task;
@@ -664,6 +675,10 @@ static bool join_poll(void* task, enum filc_async_poll_mode mode)
         if (!pending) {
             unlock();
             filc_async_complete(t, 0);
+            // drop the snapshot as soon as the group is done
+            lock();
+            t->runtime_data = NULL;
+            unlock();
             return true;
         }
         if (mode != FILC_ASYNC_POLL_BLOCK) {
@@ -691,7 +706,7 @@ void* filc_async_wait_all(const prov_tag* buffers, size_t count)
 {
     if ((!buffers && count) || count > SIZE_MAX / sizeof *buffers)
         filc_async_fatal("wait_all: invalid input array");
-    const void** snapshot = count ? (const void**)alloc_or_die(
+    const void** snapshot = count ? (const void**)gc_alloc_or_die(
         count * sizeof *snapshot) : NULL;
     for (size_t i = 0; i < count; ++i)
         snapshot[i] = buffers[i];
@@ -717,7 +732,7 @@ void* filc_async_wait_all(const prov_tag* buffers, size_t count)
         unlock();
         return token;
     }
-    struct join_state* s = (struct join_state*)alloc_or_die(
+    struct join_state* s = (struct join_state*)gc_alloc_or_die(
         sizeof *s + capacity * sizeof s->entries[0]);
     for (size_t i = 0; i < count; ++i) {
         if (!snapshot[i])
@@ -734,7 +749,8 @@ void* filc_async_wait_all(const prov_tag* buffers, size_t count)
                 s->entries[s->count++] = (struct join_entry){ m, m->generation };
         }
     }
-    struct filc_async_task* t = (struct filc_async_task*)alloc_or_die(sizeof *t);
+    struct filc_async_task* t =
+        (struct filc_async_task*)gc_alloc_or_die(sizeof *t);
     t->runtime = &g_join_runtime;
     t->runtime_data = s;
     t->state = 1;
