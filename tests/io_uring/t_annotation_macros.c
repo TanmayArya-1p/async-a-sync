@@ -18,6 +18,7 @@
 FILC_ASYNC(io_uring, FILC_OP(pwrite), FILC_BIN(buf), FILC_W_DEP(fd, file))
 void* write_at(int fd, const void* buf, size_t len, unsigned long offset)
 {
+    (void)fd, (void)buf, (void)len, (void)offset;
     return 0;
 }
 
@@ -26,11 +27,13 @@ void* write_at(int fd, const void* buf, size_t len, unsigned long offset)
 
 ASYNC_READ void* read_first(int fd, void* buf, size_t len, unsigned long offset)
 {
+    (void)fd, (void)buf, (void)len, (void)offset;
     return 0;
 }
 
 ASYNC_READ void* read_second(int fd, void* buf, size_t len, unsigned long offset)
 {
+    (void)fd, (void)buf, (void)len, (void)offset;
     return 0;
 }
 
@@ -39,6 +42,7 @@ void* sync_file(int fd);
 
 void* sync_file(int fd)
 {
+    (void)fd;
     return 0;
 }
 
