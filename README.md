@@ -47,8 +47,9 @@ for (int i = 0; i < n; i++)
 Compiled normally, the first loop would block on every read in turn. Here,
 512 cold-cache reads finish about 3.5x faster than blocking `pread`.
 
-The [wait-all demo](demos/pragma/demo_pragma_wait-all.c) queues 30 reads with
-separate provenance tags, then waits for them before handing off one write.
+The [wait-all demo](demos/pragma/demo_pragma_wait-all.c) queues 30 reads, joins
+their buffers with `filc_async_wait_all`, and hands off one write that waits for
+all of them.
 Run it with `make demo-pragma-wait-all` after building the patched compiler.
 
 ## Quickstart
