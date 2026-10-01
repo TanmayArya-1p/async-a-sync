@@ -54,9 +54,8 @@ FILC_ASYNC_RUNTIME(mock, mock_submit, mock_poll, mock_validate);
 functions annotated with `runtime=mock` point to:
 
 ```c
-#pragma clang attribute push(__attribute__((annotate("filc_async", "runtime=mock", "op=double", "bout=out", "bin=in"))), apply_to=function)
+FILC_ASYNC(mock, FILC_OP(double), FILC_BOUT(out), FILC_BIN(in))
 void* double_into(long* out, const long* in);
-#pragma clang attribute pop
 ```
 
 - **The descriptor is the only export.** The functions are `static`, so this
@@ -236,12 +235,12 @@ runtime the program's annotations name:
 
 ```sh
 # only your runtime
-vendor/fil-c-src/build/bin/filcc -O2 -static -Werror=pragma-clang-attribute \
+vendor/fil-c-src/build/bin/filcc -O2 -static \
   -Iruntime/include -Lruntime/build/lib \
   -o app app.c my_runtime.c -lpizlo -lc
 
 # your runtime and the io_uring runtime in one program
-vendor/fil-c-src/build/bin/filcc -O2 -static -Werror=pragma-clang-attribute \
+vendor/fil-c-src/build/bin/filcc -O2 -static \
   -Iruntime/include -Lruntime/build/lib \
   -o app app.c my_runtime.c -lfilc_async_uring -lpizlo -lc
 ```

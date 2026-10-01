@@ -29,9 +29,8 @@ runs asynchronously underneath.
   demos.
 
 ```c
-#pragma clang attribute push(__attribute__((annotate("filc_async", "runtime=io_uring", "op=pread", "bout=buf"))), apply_to=function)
+FILC_ASYNC(io_uring, FILC_OP(pread), FILC_BOUT(buf))
 void* read_at(int fd, void* buf, size_t len, unsigned long offset);
-#pragma clang attribute pop
 
 // request every file: each call only queues a request; nothing blocks
 for (int i = 0; i < n; i++)

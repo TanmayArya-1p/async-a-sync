@@ -28,7 +28,7 @@
 | `FilAsync: '<opt>' on <f> needs a namespace` | Dependencies need one: `r_dep=fd:file`, not `r_dep=fd`. |
 | `FilAsync: call to <f> returns i32 but the stub returns ptr; call left in place` | The annotated function returns a scalar. Make it return `void*` or `void`. |
 | `FilAsync: call to <f> is not a plain call matching its prototype` | The call goes through a different prototype or is an `invoke`. It stays a synchronous call. |
-| Warning (or error with `-Werror=pragma-clang-attribute`) about an unused attribute | The pragma surrounds a call, not a function declaration. Move it to the declaration. |
+| Warning (or error with `-Werror=pragma-clang-attribute`) about an unused attribute | A `#pragma clang attribute` surrounds a call, not a function declaration. Move it to the declaration, or use `FILC_ASYNC`, which goes only before a function. |
 
 ## Run
 

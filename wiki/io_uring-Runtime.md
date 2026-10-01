@@ -27,9 +27,8 @@ through how it implements each runtime function.
 - **Example declaration:**
 
   ```c
-  #pragma clang attribute push(__attribute__((annotate("filc_async", "runtime=io_uring", "op=pwrite", "bin=buf", "w_dep=fd:file"))), apply_to=function)
+  FILC_ASYNC(io_uring, FILC_OP(pwrite), FILC_BIN(buf), FILC_W_DEP(fd, file))
   void* async_pwrite(int fd, const void* buf, size_t len, unsigned long offset);
-  #pragma clang attribute pop
   ```
 
 - **Capacity.** At most 1024 requests are in flight (`FASYNC_MAX_INFLIGHT`).
@@ -44,13 +43,11 @@ on completion; the io_uring request uses only the required syscall arguments.
 Trailing scalars and `bin=` arguments are rejected.
 
 ```c
-#pragma clang attribute push(__attribute__((annotate("filc_async", "runtime=io_uring", "op=pread", "bout=data"))), apply_to=function)
+FILC_ASYNC(io_uring, FILC_OP(pread), FILC_BOUT(data))
 void* read_at(int fd, void* data, size_t len, unsigned long offset, prov_tag done);
-#pragma clang attribute pop
 
-#pragma clang attribute push(__attribute__((annotate("filc_async", "runtime=io_uring", "op=pwrite", "bin=data"))), apply_to=function)
+FILC_ASYNC(io_uring, FILC_OP(pwrite), FILC_BIN(data))
 void* write_at(int fd, const void* data, size_t len, unsigned long offset, prov_tag done);
-#pragma clang attribute pop
 
 prov_tag first = prov_alloc();
 prov_tag second = prov_alloc();

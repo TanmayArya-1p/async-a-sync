@@ -83,9 +83,8 @@ Save this as `first.c`:
 
 #include "filc_async.h"
 
-#pragma clang attribute push(__attribute__((annotate("filc_async", "runtime=io_uring", "op=pread", "bout=buf"))), apply_to=function)
+FILC_ASYNC(io_uring, FILC_OP(pread), FILC_BOUT(buf))
 void* read_at(int fd, void* buf, size_t len, unsigned long offset);
-#pragma clang attribute pop
 
 // The io_uring runtime runs this body before it issues the read.
 void* read_at(int fd, void* buf, size_t len, unsigned long offset)
@@ -114,7 +113,7 @@ int main(int argc, char** argv)
 }
 ```
 
-The pragma tells the compiler three things:
+The annotation tells the compiler three things:
 
 - calls to `read_at` run on the io_uring runtime (`runtime=io_uring`), which
   the link line brings in with `-lfilc_async_uring`;
@@ -126,7 +125,7 @@ Build and run it:
 
 ```sh
 echo hello > hello.txt
-vendor/fil-c-src/build/bin/filcc -O2 -static -Werror=pragma-clang-attribute \
+vendor/fil-c-src/build/bin/filcc -O2 -static \
   -Iruntime/include -Lruntime/build/lib -o first first.c \
   -lfilc_async_uring -lpizlo -lc
 ./first hello.txt

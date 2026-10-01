@@ -99,7 +99,7 @@ Put the libraries after the program's sources or objects:
 
 ```sh
 vendor/fil-c-src/build/bin/filcc -O2 -static \
-  -Werror=pragma-clang-attribute -Iruntime/include -Lruntime/build/lib \
+  -Iruntime/include -Lruntime/build/lib \
   -o app app.c -lfilc_async_uring -lpizlo -lc
 ```
 
@@ -110,8 +110,9 @@ vendor/fil-c-src/build/bin/filcc -O2 -static \
 - **The trailing `-lc`.** The framework and the runtime use Fil-C's pthreads.
   Without `-lc`, the link fails with undefined `pizlonated_pthread_mutex_lock`
   and similar symbols.
-- **`-Werror=pragma-clang-attribute`.** Turns a pragma placed around a call
-  (which does nothing) into an error.
+- **`-Werror=pragma-clang-attribute`.** Only for annotations written with
+  `#pragma clang attribute`. It turns a pragma placed around a call (which does
+  nothing) into an error. `FILC_ASYNC` cannot be misplaced that way.
 - **`-DFASYNC_COMPILER_INSERTS_CHECKS`.** Makes `FASYNC_ACCESS` a no-op. Use
   it with the patched compiler when you use the explicit API.
 

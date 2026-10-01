@@ -117,17 +117,15 @@ retries, or authentication.
 The annotated functions, from `demo_rpc_counter.c`:
 
 ```c
-#pragma clang attribute push(__attribute__((annotate("filc_async", "runtime=rpc", "op=step", "w_dep=port:counter", "bout=value"))), apply_to=function)
+FILC_ASYNC(rpc, FILC_OP(step), FILC_W_DEP(port, counter), FILC_BOUT(value))
 void step(unsigned port, long* value) {
   rpc_log_sent("step");
 }
-#pragma clang attribute pop
 
-#pragma clang attribute push(__attribute__((annotate("filc_async", "runtime=rpc", "op=get", "r_dep=port:counter", "bout=value"))), apply_to=function)
+FILC_ASYNC(rpc, FILC_OP(get), FILC_R_DEP(port, counter), FILC_BOUT(value))
 void get(unsigned port, long* value) {
   rpc_log_sent("get");
 }
-#pragma clang attribute pop
 ```
 
 And their calls, in `main` below them:
@@ -163,9 +161,8 @@ return rpc_report(first, second, stepped, after);
 `upload()`, from `rpc_upload.hh`, sends a buffer and returns its checksum:
 
 ```c
-#pragma clang attribute push(__attribute__((annotate("filc_async", "runtime=rpc", "op=put", "bin=data"))), apply_to=function)
+FILC_ASYNC(rpc, FILC_OP(put), FILC_BIN(data))
 void* upload(unsigned port, const void* data, size_t len) { return 0; }
-#pragma clang attribute pop
 ```
 
 The loop, from `demo_rpc_upload.c`. `async_pread` is the io_uring read from
