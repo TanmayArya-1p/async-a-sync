@@ -1,8 +1,8 @@
 /* demo_pragma_hello: what one annotated call does.
  *
  * The annotation on read_block tells the patched compiler that the function
- * stands for pread(2), that argument 0 is the fd and that argument 1 is a
- * buffer the kernel fills. The compiler rewrites every call to it:
+ * stands for pread(2); argument 0 is the fd, and buf, a pointer to non-const,
+ * is a buffer the kernel fills. The compiler rewrites every call to it:
  *
  *   1. the call marks buf pending and hands the call to the runtime, which
  *      runs the body and queues an io_uring request; the call returns at
@@ -15,7 +15,7 @@
 
 #include "pragma_report.hh"
 
-FILC_ASYNC(io_uring, FILC_OP(pread), FILC_BOUT(buf))
+FILC_ASYNC(io_uring, FILC_OP(pread))
 void* read_block(int fd, void* buf, size_t len, long offset);
 
 int main(int argc, char** argv) {

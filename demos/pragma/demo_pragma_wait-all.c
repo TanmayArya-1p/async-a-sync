@@ -11,13 +11,13 @@
 
 #include "pragma_report.hh"
 
-FILC_ASYNC(io_uring, FILC_OP(pread), FILC_BOUT(buf))
+FILC_ASYNC(io_uring, FILC_OP(pread))
 void* read_byte(int fd, void* buf, size_t len, long offset) {
   pragma_body_calls++;
   return 0;
 }
 
-FILC_ASYNC(io_uring, FILC_OP(pwrite), FILC_BIN(buf))
+FILC_ASYNC(io_uring, FILC_OP(pwrite))
 void* write_byte(int fd, const void* buf, size_t len, long offset,
                  prov_tag after) {
   pragma_body_calls++;
@@ -31,7 +31,7 @@ int main(int argc, char** argv) {
   for (int i = 0; i < WAITALL_READS; i++)
     reads[i] = read_byte(w.fd, w.byte[i], 1, i);
 
-  void* group = filc_async_wait_all(w.tag, WAITALL_READS);
+  prov_tag group = filc_async_wait_all(w.tag, WAITALL_READS);
   void* writer = write_byte(w.fd, "!", 1, 0, group);
 
   return waitall_report(&w, reads, group, writer);

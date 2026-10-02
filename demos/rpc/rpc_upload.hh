@@ -9,10 +9,10 @@
  *   runtime=rpc  the runtime that runs the call
  *   op=put       send `len` bytes of `data` to the server; the reply is
  *                their checksum
- *   const data   `data` points to const, so the call only reads it and
- *                does not mark it, as bin=data would say. If a read is
- *                still filling it, the runtime holds the bytes back until
- *                that read lands.
+ *   const data   `data` points to const, so the call only reads it: it is
+ *                not marked pending, but a later call that writes it waits
+ *                for the upload. If a read is still filling it, the runtime
+ *                holds the bytes back until that read lands.
  *
  * The runtime runs the body just before it sends the call; here it does
  * nothing, and the server does the work. */

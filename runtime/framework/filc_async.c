@@ -811,12 +811,12 @@ static const filc_async_runtime g_join_runtime = {
     "wait_all", NULL, join_poll, NULL
 };
 
-void* prov_alloc(void)
+prov_tag prov_alloc(void)
 {
     return zgc_aligned_alloc(16, 16);
 }
 
-void* filc_async_wait_all(const prov_tag* buffers, size_t count)
+prov_tag filc_async_wait_all(const prov_tag* buffers, size_t count)
 {
     if ((!buffers && count) || count > SIZE_MAX / sizeof *buffers)
         filc_async_fatal("wait_all: invalid input array");
@@ -824,7 +824,7 @@ void* filc_async_wait_all(const prov_tag* buffers, size_t count)
         count * sizeof *snapshot) : NULL;
     for (size_t i = 0; i < count; ++i)
         snapshot[i] = buffers[i];
-    void* token = prov_alloc();
+    prov_tag token = prov_alloc();
     if (!token)
         filc_async_fatal("out of memory");
     lock();

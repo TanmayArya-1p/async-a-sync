@@ -59,8 +59,8 @@ waits on the first access.
 
 ```c
 typedef void* prov_tag;
-void* prov_alloc(void);
-void* filc_async_wait_all(const prov_tag* tags, size_t count);
+prov_tag prov_alloc(void);
+prov_tag filc_async_wait_all(const prov_tag* tags, size_t count);
 ```
 
 The function returns a new completion object immediately. It stays pending

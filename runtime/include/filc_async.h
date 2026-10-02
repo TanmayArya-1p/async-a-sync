@@ -157,13 +157,13 @@ bool  filc_async_is_pending(const void* buf);
 // parameter is marked pending like any pointer to non-const
 typedef void* prov_tag;
 // one fil-c object per tag; null on failure
-void* prov_alloc(void);
+prov_tag prov_alloc(void);
 
 // returns a separate completion object without waiting for the inputs
 // captures current marks; later marks on an input are not included
 // null inputs and an empty array are allowed; errors stay with each task
 // the returned object is gc-managed; do not free it or use it as data
-void* filc_async_wait_all(const prov_tag* buffers, size_t count);
+prov_tag filc_async_wait_all(const prov_tag* buffers, size_t count);
 
 void  filc_async_get_stats(filc_async_stats* out);
 

@@ -9,15 +9,19 @@
  *
  *   FILC_ASYNC(io_uring, ...)  the runtime that runs the call
  *   FILC_OP(syscall)    the io_uring operation a call becomes
- *   FILC_BIN(p)         parameter p is a buffer the kernel reads (never marked)
- *   FILC_BOUT(p)        parameter p is a buffer the kernel fills (marked pending
- *                       until the read lands; the first access waits for it)
  *   FILC_R_DEP(p, ns)   the call reads the resource parameter p names, in
  *                       namespace ns
  *   FILC_W_DEP(p, ns)   the call writes it
  *
- * The descriptor needs no option: it is argument 0 of every op, and the
- * runtime knows that. Each dependency option locks the argument's value,
+ * Buffers need no option: the parameter's type says which way each flows.
+ * A pointer to const (`const void* buf`, `const char* path`) is a buffer the
+ * kernel only reads; it is not marked pending. A pointer to non-const
+ * (`void* buf`) is one the kernel fills: it is marked pending until the read
+ * lands, and the first access waits for it. FILC_BIN, FILC_BOUT and FILC_BUF
+ * exist for a type that says the wrong thing.
+ *
+ * The descriptor needs no option either: it is argument 0 of every op, and
+ * the runtime knows that. Each dependency option locks the argument's value,
  * together with the parameter's name and the namespace: a read lock is
  * shared and a write lock is exclusive. Here fd:file is the file, so a
  * write, fsync or close waits for earlier calls on the same fd, while reads
@@ -25,10 +29,11 @@
  * take turns.
  *
  * The FilAsync pass redirects every call to a stub that takes those locks,
- * marks the output buffers pending and hands the call to the runtime, and
- * returns a task handle. The io_uring runtime runs the body once, where a
- * program could instrument its calls, then queues the request. The bodies
- * count themselves in pragma_body_calls so a demo can show that. */
+ * marks the output buffers pending, gives the input buffers read marks (so a
+ * later call that writes one waits for this one), hands the call to the
+ * runtime and returns a task handle. The io_uring runtime runs the body
+ * once, where a program could instrument its calls, then queues the request.
+ * The bodies count themselves in pragma_body_calls so a demo can show that. */
 
 #include <fcntl.h>
 #include <stdio.h>
@@ -48,20 +53,19 @@ build with -DFASYNC_COMPILER_INSERTS_CHECKS"
 
 static volatile int pragma_body_calls;
 
-FILC_ASYNC(io_uring, FILC_OP(openat), FILC_BIN(path))
+FILC_ASYNC(io_uring, FILC_OP(openat))
 void* async_openat(int dirfd, const char* path, int flags, int mode) {
   pragma_body_calls++;
   return 0;
 }
 
-FILC_ASYNC(io_uring, FILC_OP(pread), FILC_BOUT(buf), FILC_R_DEP(fd, file),
-           FILC_W_DEP(buf, mem))
+FILC_ASYNC(io_uring, FILC_OP(pread), FILC_R_DEP(fd, file), FILC_W_DEP(buf, mem))
 void* async_pread(int fd, void* buf, size_t len, long offset) {
   pragma_body_calls++;
   return 0;
 }
 
-FILC_ASYNC(io_uring, FILC_OP(pwrite), FILC_BIN(buf), FILC_W_DEP(fd, file))
+FILC_ASYNC(io_uring, FILC_OP(pwrite), FILC_W_DEP(fd, file))
 void* async_pwrite(int fd, const void* buf, size_t len, long offset) {
   pragma_body_calls++;
   return 0;
