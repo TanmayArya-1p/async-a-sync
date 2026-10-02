@@ -209,6 +209,9 @@ static struct fasync_req_shared* fasync_req_alloc(void) {
 void fasync_req_release(struct fasync_req_shared* r) {
   unsigned int index = (unsigned int)(r->id & 0xFFFFFFFFUL);
   r->state = FASYNC_REQ_FREE;
+  /* a free slot keeps nothing reachable: its buffer belongs to the caller */
+  r->buf = 0;
+  r->task = 0;
   fasync_slot_mark(index, 0);
   g_req_free_next[index] = g_req_free_head;
   g_req_free_head = index + 1;
