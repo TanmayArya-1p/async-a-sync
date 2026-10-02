@@ -57,7 +57,7 @@ know which way each buffer flows, and the parameter's type usually says it:
 
 | Parameter | Option that says the same | Marked pending? |
 |---|---|---|
-| `const T* param` | `FILC_BIN(param)`: the call only reads `param` | no |
+| `const T* param` | `FILC_BIN(param)`: the call only reads `param` | no; a later call that writes `param` waits for it |
 | `T* param` | `FILC_BUF(param)`: the call may write `param` | yes, until the call completes |
 
 Only the pointee's `const` counts: `char* const p` points to writable bytes,
@@ -71,8 +71,29 @@ overrides it:
 | Option | Meaning | Marked pending? |
 |---|---|---|
 | `FILC_BOUT(param)` | the call writes `param` | yes, until the call completes |
-| `FILC_BIN(param)` | the call only reads `param` | no |
+| `FILC_BIN(param)` | the call only reads `param` | no; a later call that writes `param` waits for it |
 | `FILC_BUF(param)` | direction unknown | yes |
+
+**Inputs are ordered too.** A call that only reads a buffer still records
+that it reads it, with a read mark that makes nothing pending. A later
+annotated call that writes the buffer waits for it, so a pread into a buffer
+never overtakes a queued pwrite from it. Your own code is not ordered that
+way: a store into a buffer that a queued call is still reading goes through
+at once. Wait for that call before reusing the buffer.
+
+**When the type says the wrong thing.** Use `FILC_BUF` on a pointer to
+`const` that the call does write:
+
+- the body casts `const` away and writes through it;
+- the pointee is a C++ object with `mutable` members the call changes;
+- the argument is a completion token the call completes rather than reads
+  (`prov_tag` is `void*` for this reason).
+
+Buffers reached through a pointer, such as the `iov_base` buffers of a
+`const struct iovec*`, are never marked, whatever the type: a mark covers
+the object the argument points into. For a read-only array of strings, write
+`const char* const*`, not `const char**`, which is an array the call may
+write; or use `FILC_BIN`.
 
 `FILC_BIN`, `FILC_BOUT` and `FILC_BUF` must name pointer arguments. Other arguments need no option: the runtime
 knows its own ops' signatures, such as the io_uring runtime's descriptor in

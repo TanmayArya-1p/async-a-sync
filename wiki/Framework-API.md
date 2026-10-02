@@ -49,8 +49,8 @@ void filc_async_mark_resolved(void* buf);
 
 | Function | Behavior |
 |---|---|
-| `filc_async_is_pending` | Whether any call still owns the object `buf` points into. Does not wait. |
-| `filc_async_mark_resolved` | Removes one mark on the object without waiting for its owner. The call's completion does not restore the mark. Meant for tests and for marks made with a `NULL` task. |
+| `filc_async_is_pending` | Whether any call is still producing the object `buf` points into (holds a write mark on it). Calls only reading it do not count. Does not wait. |
+| `filc_async_mark_resolved` | Removes one write mark on the object without waiting for its owner; read marks stay. The call's completion does not restore the mark. Meant for tests and for marks made with a `NULL` task. |
 
 To wait for a buffer, simply access it. Code built by the patched compiler
 waits on the first access.
@@ -252,6 +252,7 @@ void* filc_async_begin(const filc_async_meta* meta, void* staged_args);
 void  filc_async_lock_word(void* task, uint64_t value, uint32_t space, uint32_t mode);
 void  filc_async_lock_ptr(void* task, const void* ptr, uint32_t space, uint32_t mode);
 void  filc_async_mark_pending(void* task, void* buf);
+void  filc_async_mark_input(void* task, const void* buf);
 void  filc_async_submit(void* task, const filc_async_meta* meta,
                         filc_async_run_fn run, void* staged_args, size_t nargs);
 ```
@@ -266,6 +267,7 @@ void* __filc_async_stub_F(int fd, void* buf, size_t len, unsigned long off)
     void* task = filc_async_begin(&__filc_meta_F, staged);
     filc_async_lock_word(task, fd, space_fd, FILC_ASYNC_DEP_READ); /* per r_dep/w_dep */
     filc_async_mark_pending(task, buf);                /* per bout=/buf=/unannotated non-const pointer */
+    /* filc_async_mark_input(task, src);                  per bin=/unannotated pointer to const */
     filc_async_submit(task, &__filc_meta_F, __filc_async_run_F, staged, 4);
     return task;
 }
@@ -275,5 +277,6 @@ void* __filc_async_stub_F(int fd, void* buf, size_t len, unsigned long off)
 |---|---|
 | `filc_async_begin` | Creates a task in the running state, belonging to `meta->runtime`. A runtime creates tasks of its own with [`filc_async_task_new`](Runtime-API.md#filc_async_task_new) instead. |
 | `filc_async_lock_word` / `_ptr` | Queues a read or write lock on a value or object in `space` (the dependency bits minus the mode: the pointer bit and the hash of `<param>:<namespace>`). It waits, polling the holder through the runtime, until the lock is granted. Released when the task completes. |
-| `filc_async_mark_pending` | Waits for every other call that owns the object `buf` points into, then marks it pending for `task` and sets the pending flag in the object's header. With a `NULL` task, the mark has no owner and only `filc_async_mark_resolved` clears it. |
+| `filc_async_mark_pending` | Waits for every other call that owns the object `buf` points into, including calls only reading it, then gives `task` a write mark on it and sets the pending flag in the object's header. A read mark `task` already holds becomes a write mark. With a `NULL` task, the mark has no owner and only `filc_async_mark_resolved` clears it. |
+| `filc_async_mark_input` | Gives `task` a read mark on the object `buf` points into, without waiting. It sets no flag, so the object is not pending, but a later `filc_async_mark_pending` on it waits for `task`. Does nothing if `task` already has a mark there. Emitted after the output marks, so an argument that is both stays a write. |
 | `filc_async_submit` | Hands the call to `meta->runtime->submit`. |

@@ -33,10 +33,13 @@
  * w_dep=fd:meta does not.
  *
  * Pending buffers: the stub marks the producing args (bout=, bare buf=, and
- * unannotated pointers to non-const) pending; inputs (bin=, and unannotated
- * pointers to const) never are. Marking a buffer
- * another call still owns waits for that call. When a call completes, the
- * buffers it still has pending resolve; a runtime can resolve some earlier.
+ * unannotated pointers to non-const) pending, with write marks; inputs (bin=,
+ * and unannotated pointers to const) get read marks, which are never
+ * pending: they set no flag, and accessing the buffer does not wait for
+ * them. Marking a buffer for writing waits for every other call that owns
+ * it, readers included, so a later call never writes a buffer an earlier
+ * call is still reading. A read mark never waits. When a call completes, its
+ * marks are released; a runtime can resolve a buffer earlier.
  *
  * Threading: every entry point below may be called from any thread, and a
  * runtime may report completions from any thread. A thread touching a buffer
@@ -119,8 +122,13 @@ void  filc_async_lock_word(void* task, uint64_t value, uint32_t space,
 void  filc_async_lock_ptr(void* task, const void* ptr, uint32_t space,
                           uint32_t mode);
 /* Marks `buf` pending for `task`, first waiting for any other call that owns
- * it. With a NULL task the mark has no owner and only mark_resolved clears it. */
+ * it, including calls still reading it. With a NULL task the mark has no
+ * owner and only mark_resolved clears it. */
 void  filc_async_mark_pending(void* task, void* buf);
+/* Records that `task` reads `buf` until it completes, without waiting and
+ * without making `buf` pending: a later mark_pending on it waits for `task`.
+ * Does nothing if `task` already marked `buf`. */
+void  filc_async_mark_input(void* task, const void* buf);
 
 /* Calls the annotated function's body with the staged arguments and returns
  * its result as a word. Emitted by the pass; only runtimes call it, through
@@ -138,6 +146,7 @@ void  filc_async_submit(void* task, const filc_async_meta* meta,
 bool  filc_async_poll(struct filc_async_result_s* out);
 void  filc_async_wait(struct filc_async_result_s* out);
 
+/* Pending means still being produced: read marks do not count. */
 void  filc_async_mark_resolved(void* buf);
 bool  filc_async_is_pending(const void* buf);
 

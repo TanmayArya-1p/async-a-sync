@@ -25,6 +25,16 @@ pending flag. Fil-C's libc is not built that way, so `memcmp`, `strlen`,
 `write` and the like read a pending buffer as it stands. Touch the buffer or
 wait first.
 
+**Stores into a buffer a call is reading.** A call that only reads a buffer
+holds a read mark, which orders later annotated calls that write it but sets
+no pending flag. A store by your own code into a buffer that a queued call
+is still reading, such as refilling the source of a pending pwrite, goes
+through at once. Wait for the call first.
+
+**Hidden writes through `const`.** A body that casts `const` away, or a C++
+`mutable` member, writes a buffer the type calls an input. Mark such a
+parameter `FILC_BUF`.
+
 **Granularity.** A mark covers the whole object. Any access to any part of a
 pending object waits, even if the call writes only part of it.
 

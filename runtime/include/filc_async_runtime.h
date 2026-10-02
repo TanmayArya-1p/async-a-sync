@@ -72,13 +72,14 @@ long filc_async_run(void* task, filc_async_run_fn run, void* staged_args);
  * `task` does not own is left alone. */
 void filc_async_resolve_buffer(void* task, void* buf);
 
-/* Marks `buf` pending for `task` without waiting for its other owners, so
- * several of a runtime's requests can own one object. */
+/* Marks `buf` pending for `task`, as a write mark, without waiting for its
+ * other owners, so several of a runtime's requests can own one object. */
 void filc_async_mark_shared(void* task, void* buf);
 
-/* Waits until no call other than `task` (which may be NULL) owns the object
- * `buf` points into: for a runtime about to hand the kernel a buffer an
- * earlier call may still be filling. */
+/* Waits until no call other than `task` (which may be NULL) is producing the
+ * object `buf` points into: for a runtime about to hand the kernel a buffer
+ * an earlier call may still be filling. Calls that only read it are not
+ * waited for. */
 void filc_async_wait_buffer(void* task, const void* buf);
 
 /* One word of per-task storage for the runtime's own state. */

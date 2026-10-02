@@ -252,7 +252,8 @@ pending.
 | `BLOCK` | calls `advance` until the request is done. In between, it waits in `poll(2)` for the socket event, or in `filc_async_wait_buffer` for the payload. |
 
 **Waiting for a payload.** `filc_async_wait_buffer` waits for every other
-call that owns the buffer, polling each through its own runtime. That is how
+call still producing the buffer, polling each through its own runtime. The
+`put` call's own read mark on its payload is not waited for. That is how
 an rpc call drives an io_uring read without knowing that io_uring exists.
 
 - **Before submit.** If the data word is still empty, submit has not finished.

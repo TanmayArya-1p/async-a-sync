@@ -268,8 +268,8 @@ completes. Use it when part of a call's output is ready early. A buffer
 void filc_async_mark_shared(void* task, void* buf);
 ```
 
-Marks the object `buf` points into pending for `task` without waiting for
-its other owners. Several tasks can then own one object, and an access waits
+Gives `task` a write mark on the object `buf` points into, making it
+pending, without waiting for its other owners. Several tasks can then own one object, and an access waits
 for all of them.
 
 - **Stubs versus runtimes.** A stub's marks are exclusive: they wait for
@@ -283,7 +283,8 @@ for all of them.
 void filc_async_wait_buffer(void* task, const void* buf);
 ```
 
-Waits until no task other than `task` owns the object `buf` points into.
+Waits until no task other than `task` is producing the object `buf` points
+into: holds a write mark on it. Tasks only reading it are not waited for.
 `task` may be `NULL`. Marks held by the task whose body is running on this
 thread are also ignored.
 

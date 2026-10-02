@@ -191,6 +191,7 @@ expect_grep 'call ptr @filc_async_begin(ptr @__filc_meta_procread' 'procread stu
 expect_grep 'call void @filc_async_lock_word(ptr %task, i64' 'r_dep=fd:file on the fd locks its value'
 expect_grep 'call void @filc_async_lock_ptr(ptr %task, ptr %1, i32 -1935689468, i32 2)' 'w_dep=buf:mem write-locks the buffer object'
 expect_grep 'call void @filc_async_mark_pending(ptr %task, ptr %1)' 'bout=/buf= arguments are marked pending'
+expect_grep 'call void @filc_async_mark_input(ptr %task, ptr %1)' 'bin= arguments get a read mark'
 expect_grep '@__filc_meta_procread, ptr @__filc_async_run_procread, ptr %staging, i64 3)' \
   'procread stub submits its meta, run thunk and staging'
 expect_grep '@__filc_meta_uopenat, ptr @__filc_async_run_uopenat, ptr %staging, i64 4)' \

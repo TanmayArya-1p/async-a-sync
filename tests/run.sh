@@ -59,6 +59,7 @@ run_check() {
 
 run_check io_uring/check_forwarders
 run_check framework/check_dependencies
+run_check framework/check_write_after_read
 run_check framework/check_wait_all
 run_check compiler/check_dependency_options
 run_check compiler/check_callsite_pragma
@@ -168,6 +169,7 @@ run_filc_test io_uring/t_dag_submit_failure
 # Allocator interface only (no annotations), so the stock filcc builds it.
 run_filc_test framework/t_pragma_alloc
 needs_io_uring run_filc_test io_uring/t_backend_io_uring "$OUT"
+needs_io_uring run_filc_test io_uring/t_write_after_read_uring "$OUT"
 needs_io_uring run_filc_test io_uring/t_pending_open_failure "$OUT"
 needs_io_uring run_filc_test io_uring/t_openat_pending_path "$OUT"
 

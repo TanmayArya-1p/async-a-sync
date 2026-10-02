@@ -60,7 +60,7 @@ The same annotation can be written by hand, around functions, as
 |---|---|---|---|
 | `runtime=<name>` | none | none | **Required.** The runtime that runs the call: `meta->runtime` points to `filc_async_runtime_<name>`, which the program must link. `<name>` is a C identifier. The io_uring runtime is `runtime=io_uring`. |
 | `op=<name>` | none | none | Names the operation. Passed to the runtime in `meta->opts`, and never read by the compiler or the framework. |
-| `bin=<param>` | pointer | `FILC_ASYNC_ARG_BUFFER_IN` | The call reads `<param>`. Not marked pending. |
+| `bin=<param>` | pointer | `FILC_ASYNC_ARG_BUFFER_IN` | The call reads `<param>`. Not marked pending; given a read mark, so a later call that writes `<param>` waits for this one. |
 | `bout=<param>` | pointer | `FILC_ASYNC_ARG_BUFFER_OUT` | The call writes `<param>`. Marked pending until the call completes. |
 | `buf=<param>` | pointer | `FILC_ASYNC_ARG_PENDING` | Direction unknown; treated as written. Marked pending. |
 | `r_dep=<param>:<namespace>` | pointer, or integer ≤ 64 bits | none (dependency bits) | The call reads the resource `<param>` names in `<namespace>`. The namespace is required. |
@@ -74,7 +74,7 @@ never changes it.
 
 | Argument | Kind recorded | Marked pending? |
 |---|---|---|
-| unannotated pointer to `const` | `FILC_ASYNC_ARG_BUFFER_IN`, as `bin=` | no |
+| unannotated pointer to `const` | `FILC_ASYNC_ARG_BUFFER_IN`, as `bin=` | no (read mark) |
 | any other unannotated pointer | `FILC_ASYNC_ARG_PENDING`, as `buf=` | yes (the pessimistic default) |
 | unannotated non-pointer | `FILC_ASYNC_ARG_IGNORED` | no |
 

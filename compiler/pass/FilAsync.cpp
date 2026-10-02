@@ -524,9 +524,10 @@ Function *FilAsyncPass::emitRunThunk(Module &M, Function *F,
 }
 
 // `@__filc_async_stub_<name>`, with F's signature: stages the arguments,
-// starts a task, takes the dependency locks and marks the output buffers
-// that the annotation names, then hands the call to the runtime. What to
-// lock and mark is known here, so the stub carries no descriptor walk.
+// starts a task, takes the dependency locks, marks the output buffers
+// pending and gives the input buffers read marks, then hands the call to the
+// runtime. What to lock and mark is known here, so the stub carries no
+// descriptor walk.
 Function *FilAsyncPass::emitStub(Module &M, Function *F, const Descriptors &D) {
   LLVMContext &Ctx = M.getContext();
   Type *Int64Ty = Type::getInt64Ty(Ctx);
@@ -548,6 +549,9 @@ Function *FilAsyncPass::emitStub(Module &M, Function *F, const Descriptors &D) {
       FunctionType::get(VoidTy, {PtrTy, PtrTy, Int32Ty, Int32Ty}, false));
   FunctionCallee Mark = M.getOrInsertFunction(
       "filc_async_mark_pending",
+      FunctionType::get(VoidTy, {PtrTy, PtrTy}, false));
+  FunctionCallee MarkInput = M.getOrInsertFunction(
+      "filc_async_mark_input",
       FunctionType::get(VoidTy, {PtrTy, PtrTy}, false));
   FunctionCallee Submit = M.getOrInsertFunction(
       "filc_async_submit",
@@ -576,11 +580,17 @@ Function *FilAsyncPass::emitStub(Module &M, Function *F, const Descriptors &D) {
       B.CreateCall(LockWord,
                    {Task, B.CreateZExtOrTrunc(Arg, Int64Ty), Space, ModeV});
   }
-  // bout=, bare buf= and unannotated pointers are marked; bin= never is. The
-  // option parser only gives these kinds to pointer arguments.
+  // bout=, bare buf= and unannotated pointers to non-const are marked
+  // pending. bin= and unannotated pointers to const get a read mark, which
+  // never makes them pending but makes a later call that writes them wait
+  // for this one. Outputs go first, so an argument passed as both stays an
+  // output. The option parser only gives these kinds to pointer arguments.
   for (unsigned I = 0; I < NArgs; ++I)
     if (D.Kinds[I] == ARG_BUFFER_OUT || D.Kinds[I] == ARG_PENDING)
       B.CreateCall(Mark, {Task, Stub->getArg(I)});
+  for (unsigned I = 0; I < NArgs; ++I)
+    if (D.Kinds[I] == ARG_BUFFER_IN)
+      B.CreateCall(MarkInput, {Task, Stub->getArg(I)});
 
   B.CreateCall(Submit, {Task, D.Meta, Run, Staging, B.getInt64(NArgs)});
   if (FTy->getReturnType()->isVoidTy())
