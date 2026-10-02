@@ -103,11 +103,22 @@ static unsigned id_of(void* task)
 }
 
 static filc_async_meta* toucher;
+static filc_async_meta* late_writer; /* body runs at completion */
+
+static filc_async_run_fn late_run[MAX_CALLS];
+static void* late_args[MAX_CALLS];
 
 static void mock_submit(void* task, const filc_async_meta* meta,
                         filc_async_run_fn run, void* staged_args, size_t nargs)
 {
     (void)nargs;
+    if (meta == late_writer) {
+        assert(issued + 1 < MAX_CALLS);
+        late_run[issued + 1] = run;
+        late_args[issued + 1] = staged_args;
+        *filc_async_task_runtime_data(task) = (void*)(uintptr_t)++issued;
+        return;
+    }
     filc_async_run(task, run, staged_args);
     /* Like io_uring scanning an openat path: the runtime reads the call's
      * own input while it submits the call. */
@@ -126,6 +137,12 @@ static bool mock_poll(void* task, enum filc_async_poll_mode mode)
         if (mode != FILC_ASYNC_POLL_BLOCK)
             return false;
         done[id] = 1;
+    }
+    if (late_run[id]) {
+        /* a body that runs on completion, as a pool worker's would */
+        filc_async_run_fn run = late_run[id];
+        late_run[id] = NULL;
+        filc_async_run(task, run, late_args[id]);
     }
     filc_async_complete(task, 0);
     return true;
@@ -207,6 +224,24 @@ static long touching_body(void* staged)
     return 0;
 }
 
+/* A body that, from inside, makes a call whose own body touches the buffer,
+ * and a call whose body writes it: two levels deep. */
+static void* inner_reader;
+static void* inner_writer;
+static void* middle_call;
+static long middle_body(void* staged)
+{
+    inner_writer = write_call(((staged_arg*)staged)[1].ptr);
+    return 0;
+}
+static long outer_body(void* staged)
+{
+    void* buf = ((staged_arg*)staged)[1].ptr;
+    inner_reader = stub(reader, touching_body, buf);
+    middle_call = stub(reader, middle_body, buf);
+    return 0;
+}
+
 int main(void)
 {
     alarm(20); /* a wait that never ends fails the test instead of hanging it */
@@ -214,7 +249,9 @@ int main(void)
     writer = make_meta("writer", FILC_ASYNC_ARG_BUFFER_OUT);
     nested = make_meta("nested", FILC_ASYNC_ARG_BUFFER_IN);
     toucher = make_meta("toucher", FILC_ASYNC_ARG_BUFFER_IN);
-    const filc_async_meta* table[] = { reader, writer, nested, toucher, NULL };
+    late_writer = make_meta("late_writer", FILC_ASYNC_ARG_BUFFER_OUT);
+    const filc_async_meta* table[] = { reader, writer, nested, toucher,
+                                       late_writer, NULL };
     filc_async_validate_table(table);
 
     /* A read mark sets the flag, so the program's accesses call in, but the
@@ -357,6 +394,45 @@ int main(void)
     void* t12 = stub(reader, touching_body, objects[12]);
     assert(!done[id_of(t12)]);
     finish(t12);
+
+    /* A call that reads a buffer is a reader inside its body too: reading
+     * its input there does not wait for the other calls reading it. */
+    void* first_reader = read_call(objects[13]);
+    void* second_reader = stub(reader, touching_body, objects[13]);
+    assert(!done[id_of(first_reader)] && !done[id_of(second_reader)]);
+    finish(first_reader);
+    finish(second_reader);
+
+    /* A writer whose body runs late, as on a thread pool, does not wait in
+     * its body for a reader queued after it: that reader waits for the
+     * writer, so waiting for it would be a deadlock. */
+    void* producer = stub(late_writer, touching_body, objects[14]);
+    void* consumer = read_call(objects[14]);
+    unsigned consumer_id = id_of(consumer);
+    finish(producer); /* runs the body */
+    assert(!done[consumer_id]);
+    finish(consumer);
+    assert(!flag[14]);
+
+    /* Calls made from a body do not wait for the bodies running on this
+     * thread, at any depth: a nested call's body reads the outer call's
+     * input, and a call made two levels down writes it. That writer still
+     * waits for the separate call reading it. */
+    void* outer_call = stub(nested, outer_body, objects[15]);
+    assert(inner_reader && middle_call && inner_writer);
+    assert(!done[id_of(outer_call)] && !done[id_of(middle_call)]);
+    assert(done[id_of(inner_reader)]);
+    finish(inner_reader);
+    finish(inner_writer);
+    finish(middle_call);
+    finish(outer_call);
+
+    /* Code built without the compiler's check waits the same way through
+     * filc_async_wait_access (FASYNC_ACCESS): for readers too. */
+    void* r16 = read_call(objects[15] + 32);
+    filc_async_wait_access(objects[15]);
+    assert(done[id_of(r16)]);
+    finish(r16);
 
     filc_async_stats stats;
     filc_async_get_stats(&stats);

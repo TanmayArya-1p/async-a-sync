@@ -358,10 +358,11 @@ static int fasync_submit_locked(void) {
 }
 
 /* Code the patched compiler did not build has no access hook: it asks the
- * framework to wait for whatever call still owns the buffer. */
+ * framework to wait as the hook would, for every call that still owns the
+ * buffer, readers too. */
 void* fasync_resolve_pending(void* ptr, size_t size) {
   (void)size;
-  filc_async_wait_buffer(NULL, ptr);
+  filc_async_wait_access(ptr);
   return ptr;
 }
 

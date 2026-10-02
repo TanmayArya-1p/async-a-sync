@@ -27,7 +27,8 @@ complete example, see [the io_uring runtime](io_uring-Runtime.md).
   [`filc_async_task_new`](#filc_async_task_new),
   [`filc_async_resolve_buffer`](#filc_async_resolve_buffer),
   [`filc_async_mark_shared`](#filc_async_mark_shared),
-  [`filc_async_wait_buffer`](#filc_async_wait_buffer)
+  [`filc_async_wait_buffer`](#filc_async_wait_buffer),
+  [`filc_async_wait_access`](#filc_async_wait_access)
 - [Types](#types)
 - [Staged arguments](#staged-arguments)
 - [Rules for runtimes](#rules-for-runtimes)
@@ -295,11 +296,25 @@ the stub already waited when it marked it.
 **Touching a call's buffers from runtime code.** Compiled code that touches
 an object a call owns waits for that call, readers included. A runtime may
 touch a call's buffers inside its `submit` and inside `filc_async_run`: the
-framework knows that call is running on this thread and does not wait for
-it. Anywhere else, such as in `poll` or on a worker thread outside
-`filc_async_run`, touching a buffer of a call still running waits for that
-call, and for its own call never returns. Hand such buffers to native code
-(a syscall) instead, as the rpc runtime's `send` does.
+call is then active on this thread, so the access is the call's own and
+waits only for the object's other producers. Anywhere else, such as in
+`poll` or on a worker thread outside `filc_async_run`, touching a buffer of
+a call still running waits for that call, and for its own call never
+returns. Hand such buffers to native code (a syscall) instead, as the rpc
+runtime's `send` does.
+
+### filc_async_wait_access
+
+```c
+void filc_async_wait_access(const void* buf);
+```
+
+Waits as the program's own access to the object `buf` points into does when
+the compiler's check finds it pending: for every call that owns it, readers
+too, unless the access belongs to a call active on this thread, which waits
+for the object's other producers only. For code the patched compiler did not
+build, which has no check of its own: the io_uring runtime's
+`fasync_resolve_pending` (`FASYNC_ACCESS`) calls it.
 
 ## Types
 

@@ -31,7 +31,14 @@ buffer before it stores into it, so a refill never changes what a queued
 pwrite sends. The hook cannot tell a load from a store, so a load waits for
 them as well: reading back a buffer you just queued for writing waits for
 the write. Read-only objects, such as string literals, are exempt: they
-cannot be stored into.
+cannot be stored into. A call's own body is exempt too: reading its input,
+it waits only for the calls producing it.
+
+**A body reading its own input is slow.** While a call runs, its read mark
+keeps its input flagged, so every access its body makes to that input takes
+the hook's slow path, without waiting. A body that checksums a 1 MiB input
+byte by byte runs about 25x slower than the same loop outside the call.
+Copy the input first, or do the reading after the call.
 
 **Hidden writes through `const`.** A body that casts `const` away, or a C++
 `mutable` member, writes a buffer the type calls an input. Mark such a

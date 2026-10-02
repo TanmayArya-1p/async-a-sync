@@ -82,6 +82,12 @@ void filc_async_mark_shared(void* task, void* buf);
  * waited for. */
 void filc_async_wait_buffer(void* task, const void* buf);
 
+/* Waits as the program's own access to the object `buf` points into does
+ * when the compiler's check finds it pending: for every call that owns it,
+ * readers too, unless the access belongs to a call running on this thread.
+ * For code the patched compiler did not build (fasync_resolve_pending). */
+void filc_async_wait_access(const void* buf);
+
 /* One word of per-task storage for the runtime's own state. */
 void** filc_async_task_runtime_data(void* task);
 

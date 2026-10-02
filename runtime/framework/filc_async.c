@@ -73,8 +73,14 @@ static unsigned long g_hook_resolves;
 
 /* The task whose body filc_async_run is running on this thread. */
 static _Thread_local struct filc_async_task* g_running_body;
-/* The task whose runtime submit is running on this thread. */
-static _Thread_local struct filc_async_task* g_submitting;
+
+/* The calls active on this thread: those whose body (filc_async_run) or
+ * runtime submit is running here, outermost first. None of them can finish
+ * before the code running for it returns, so nothing on this thread waits
+ * for them. */
+#define MAX_ACTIVE 32
+static _Thread_local struct filc_async_task* g_active[MAX_ACTIVE];
+static _Thread_local unsigned g_nactive;
 
 static pthread_mutex_t g_lock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t g_changed = PTHREAD_COND_INITIALIZER;
@@ -489,16 +495,36 @@ static filc_async_mark* writer_find(uintptr_t lower, uintptr_t upper)
     return NULL;
 }
 
+static void active_push(struct filc_async_task* t)
+{
+    if (g_nactive == MAX_ACTIVE)
+        filc_async_fatal("annotated calls nested too deeply");
+    g_active[g_nactive++] = t;
+}
+
+static void active_pop(void)
+{
+    --g_nactive;
+}
+
+static bool is_active(const struct filc_async_task* t)
+{
+    for (unsigned i = 0; i < g_nactive; ++i)
+        if (g_active[i] == t)
+            return true;
+    return false;
+}
+
 /* A mark on the object that `t` does not own, if any. With no task, every
  * mark is another's, so re-marking without an owner replaces the old mark.
- * The read marks of the body running on this thread do not count: a call
- * that body makes must not wait for the body itself. */
+ * The read marks of calls active on this thread do not count: a call made
+ * from a body must not wait for that body, or for an outer one. */
 static filc_async_mark* mark_find_other(uintptr_t lower, uintptr_t upper,
                                         const struct filc_async_task* t)
 {
     for (filc_async_mark* m = *mark_bucket(lower); m; m = m->bucket_next)
         if (lower < m->upper && m->lower < upper && (!t || m->owner != t) &&
-            (m->write || !m->owner || m->owner != g_running_body))
+            (m->write || !is_active(m->owner)))
             return m;
     return NULL;
 }
@@ -670,29 +696,54 @@ void filc_async_wait_buffer(void* task, const void* buf)
     unlock();
 }
 
-/* The access hook's slow path: the program reached an object whose pending
- * flag is set. It waits for every call that owns the object, readers too:
- * the hook cannot tell a load from a store, and a store must not change what
- * a queued call is still reading. The calls whose body or submit runs on
- * this thread are skipped; waiting for them would wait for this thread. */
-static void resolve_access(void* object)
+/* Waits as the program's access to an object must. The access may be a
+ * store, which must not change what a queued call is still reading, so it
+ * waits for every call that owns the object, readers too.
+ *
+ * Code running for a call active on this thread is different. It never
+ * waits for an active call, which cannot finish before it returns. And when
+ * an active call owns the object, the access is that call's own: it waits
+ * for the object's other producers only. A reader's body then does not wait
+ * for the other readers, and a producer's body does not wait for the readers
+ * queued behind it, which are waiting for the producer. */
+static void wait_access_locked(const void* object)
 {
-    uintptr_t lower = (uintptr_t)zgetlower(object);
-    uintptr_t upper = (uintptr_t)zgetupper(object);
-    lock();
-    ++g_hook_resolves;
+    uintptr_t lower = (uintptr_t)zgetlower((void*)object);
+    uintptr_t upper = (uintptr_t)zgetupper((void*)object);
+    bool own = false;
+    for (filc_async_mark* m = *mark_bucket(lower); m && !own; m = m->bucket_next)
+        own = lower < m->upper && m->lower < upper && m->owner &&
+              is_active(m->owner);
     for (;;) {
         struct filc_async_task* owner = NULL;
         for (filc_async_mark* m = *mark_bucket(lower); m; m = m->bucket_next)
             if (lower < m->upper && m->lower < upper && m->owner &&
-                m->owner != g_running_body && m->owner != g_submitting) {
+                !is_active(m->owner) && (m->write || !own)) {
                 owner = m->owner;
                 break;
             }
         if (!owner)
-            break;
+            return;
         wait_for(owner);
     }
+}
+
+/* The access hook's slow path: the program reached an object whose pending
+ * flag is set. */
+static void resolve_access(void* object)
+{
+    lock();
+    ++g_hook_resolves;
+    wait_access_locked(object);
+    unlock();
+}
+
+void filc_async_wait_access(const void* buf)
+{
+    if (!buf)
+        return;
+    lock();
+    wait_access_locked(buf);
     unlock();
 }
 
@@ -916,13 +967,11 @@ void* filc_async_task_new(const filc_async_runtime* rt)
 void filc_async_submit(void* task, const filc_async_meta* meta,
                        filc_async_run_fn run, void* staged_args, size_t nargs)
 {
-    /* While its runtime submits the call, an access to the call's own
-     * buffers, such as io_uring reading an openat path, does not wait for
-     * the call. */
-    struct filc_async_task* outer = g_submitting;
-    g_submitting = (struct filc_async_task*)task;
+    /* While its runtime submits the call, the call is active here: an access
+     * to its buffers, such as io_uring reading an openat path, is its own. */
+    active_push((struct filc_async_task*)task);
     meta->runtime->submit(task, meta, run, staged_args, nargs);
-    g_submitting = outer;
+    active_pop();
 }
 
 void filc_async_complete(void* task, long result)
@@ -965,7 +1014,9 @@ long filc_async_run(void* task, filc_async_run_fn run, void* staged_args)
         return 0;
     struct filc_async_task* outer = g_running_body;
     g_running_body = (struct filc_async_task*)task;
+    active_push((struct filc_async_task*)task);
     long result = run(staged_args);
+    active_pop();
     g_running_body = outer;
     return result;
 }

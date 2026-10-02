@@ -159,17 +159,23 @@ the object's lower bound.
 - **The program waits for every owner.** The hook's slow path cannot tell a
   load from a store, so it waits for every call that owns the object,
   readers included: a store never changes what a queued call is still
-  reading. It skips the calls whose body or submit is running on this
-  thread; waiting for those would wait for the thread itself.
+  reading.
+- **A call's own code waits for producers only.** Code a call runs on this
+  thread, its body under `filc_async_run` or its runtime's `submit`, never
+  waits for the calls active on this thread: they cannot finish before it
+  returns. When one of them owns the object, the access is that call's own,
+  so it waits for the object's other producers only. Readers' bodies then
+  run together, and a producer's body never waits for the readers queued
+  behind it, which are waiting for the producer.
 - **Exclusive marks.** Write marks made by a stub are exclusive. Marking an
   object another call owns first waits for that call, readers included, so
   two calls never write one buffer at once and a write never overtakes a
   call still reading it. A read mark never waits, so calls that only read
   an object run together: a runtime about to hand the buffer to a device
   waits for its producers instead (`filc_async_wait_buffer`).
-- **Calls made from a body.** A call made by a body running under
-  `filc_async_run` does not wait for that body's own read marks; it would
-  wait for the thread it runs on.
+- **Calls made from a body.** A call made from a body does not wait for the
+  read marks of any call active on this thread, however deeply the calls
+  nest; it would wait for the thread it runs on.
 - **Shared marks.** Marks made by a runtime with `filc_async_mark_shared` can
   overlap.
 - **Self-access.** A body running under `filc_async_run` ignores its own
