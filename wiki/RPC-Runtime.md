@@ -21,7 +21,7 @@ lines, with no change to the framework.
 Two demos use it:
 
 - **counter**: `runtime=rpc` alone, with calls ordered by dependency locks
-  and replies read from `bout=` values;
+  and replies written through non-`const` pointers;
 - **upload**: `runtime=rpc` next to `runtime=io_uring`. The loop reads files
   with io_uring and uploads each buffer over rpc.
 
@@ -117,12 +117,12 @@ retries, or authentication.
 The annotated functions, from `demo_rpc_counter.c`:
 
 ```c
-FILC_ASYNC(rpc, FILC_OP(step), FILC_W_DEP(port, counter), FILC_BOUT(value))
+FILC_ASYNC(rpc, FILC_OP(step), FILC_W_DEP(port, counter))
 void step(unsigned port, long* value) {
   rpc_log_sent("step");
 }
 
-FILC_ASYNC(rpc, FILC_OP(get), FILC_R_DEP(port, counter), FILC_BOUT(value))
+FILC_ASYNC(rpc, FILC_OP(get), FILC_R_DEP(port, counter))
 void get(unsigned port, long* value) {
   rpc_log_sent("get");
 }
@@ -142,8 +142,10 @@ get(port, &after);    // waits here for the step
 return rpc_report(first, second, stepped, after);
 ```
 
-- **Results.** The server's number lands in `*value`. `bout=value` marks
-  `value` pending until the reply arrives, so the first read of it waits.
+- **Results.** The server's number lands in `*value`. `value` points to
+  non-`const` `long`, so the call may write it: it is marked pending until
+  the reply arrives, and the first read of it waits. `FILC_BOUT(value)`
+  would say the same.
 - **Failures.** A failed call stores `-errno` in `*value`: `-ECONNREFUSED`
   for a refused connection, `-EPROTO` for a malformed reply. The counter is
   never negative.
@@ -158,10 +160,12 @@ return rpc_report(first, second, stepped, after);
 
 ## The upload program
 
-`upload()`, from `rpc_upload.hh`, sends a buffer and returns its checksum:
+`upload()`, from `rpc_upload.hh`, sends a buffer and returns its checksum.
+`data` points to `const`, so it is an input, as `FILC_BIN(data)` would say:
+the call does not mark it.
 
 ```c
-FILC_ASYNC(rpc, FILC_OP(put), FILC_BIN(data))
+FILC_ASYNC(rpc, FILC_OP(put))
 void* upload(unsigned port, const void* data, size_t len) { return 0; }
 ```
 
@@ -201,8 +205,11 @@ would send the buffer's initial zeros, and every checksum would be the same.
 `rpc_validate` accepts a function whose first argument is an unannotated
 integer, the port, and whose `op=` is one of:
 
-- `step` or `get`, followed by a `bout=` pointer for the reply;
-- `put`, followed by a `bin=` buffer and an unannotated length.
+- `step` or `get`, followed by a pointer for the reply: `bout=`, or a
+  pointer to non-`const` with no option;
+- `put`, followed by an input buffer, `bin=` or a pointer to `const`, and an
+  unannotated length. A payload with neither is rejected: the call would
+  mark its own payload pending, and the runtime would wait for it forever.
 
 A function naming
 `runtime=rpc` with any other shape stops the program before `main` with

@@ -37,10 +37,11 @@ through how it implements each runtime function.
 ### Completion pointers
 
 Supported syscall signatures can include trailing completion pointers after
-their required arguments. These must be unannotated pointers, `bout=` or
-`buf=` arguments. The framework marks them before submission and resolves them
+their required arguments. These must be unannotated pointers to non-`const`
+(such as `prov_tag`), `bout=` or `buf=` arguments. The framework marks them before submission and resolves them
 on completion; the io_uring request uses only the required syscall arguments.
-Trailing scalars and `bin=` arguments are rejected.
+Trailing scalars, `bin=` arguments and unannotated pointers to `const` are
+rejected.
 
 ```c
 FILC_ASYNC(io_uring, FILC_OP(pread), FILC_BOUT(data))

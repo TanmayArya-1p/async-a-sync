@@ -10,7 +10,7 @@ Fil-C source checkout.
 | `patches/backend-util-run-filasync.patch` | runs FilAsync first in Fil-C's pipeline |
 | `patches/instrumentation-cmake-filasync.patch` | builds `FilAsync.cpp` into LLVM |
 | `patches/filpizlonator-pending-hook.patch` | the pending-flag test FilPizlonator puts before each access |
-| `patches/filc-async-param-names.patch` | clang records each `filc_async` function's parameter names for the pass |
+| `patches/filc-async-param-names.patch` | clang records each `filc_async` function's parameter names, and which parameters point to `const`, for the pass |
 | `patches/sroa-release-verbose.patch` | fixes a Release-build error in the pinned revision |
 | `plugin/CMakeLists.txt` | builds the pass as an `opt` plugin, for the tests that run it on its own |
 

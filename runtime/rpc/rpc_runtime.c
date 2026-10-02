@@ -44,7 +44,7 @@ struct request {
   size_t payload_sent;
   char reply[32];
   size_t received;
-  long* value; // the bout= argument of STEP and GET
+  long* value; // the reply argument of STEP and GET
   long result;
   int done;
 };
@@ -62,15 +62,20 @@ static enum op op_of(const filc_async_meta* meta) {
 }
 
 // Shape: the port first, then
-//   step, get: a bout= reply pointer;
-//   put:       a bin= payload and its length.
+//   step, get: a reply pointer: bout=, or a pointer to non-const with no
+//              option (PENDING), which the call marks the same way;
+//   put:       a payload, bin= or a pointer to const, and its length. Never
+//              PENDING: the call would mark its own payload, and advance()
+//              would wait for that mark forever.
 static bool rpc_validate(const filc_async_meta* meta) {
   if (meta->nargs < 1 || meta->args[0].kind != FILC_ASYNC_ARG_IGNORED)
     return false;
   switch (op_of(meta)) {
   case OP_STEP:
   case OP_GET:
-    return meta->nargs == 2 && meta->args[1].kind == FILC_ASYNC_ARG_BUFFER_OUT;
+    return meta->nargs == 2 &&
+           (meta->args[1].kind == FILC_ASYNC_ARG_BUFFER_OUT ||
+            meta->args[1].kind == FILC_ASYNC_ARG_PENDING);
   case OP_PUT:
     return meta->nargs == 3 &&
            meta->args[1].kind == FILC_ASYNC_ARG_BUFFER_IN &&
@@ -123,7 +128,7 @@ static int send_rest(int fd, const char* data, size_t len, size_t* sent) {
 static int advance(void* task, struct request* r) {
   int rc = send_rest(r->fd, r->command, strlen(r->command), &r->command_sent);
   if (rc == 0 && r->payload_sent < r->payload_len) {
-    // the payload is a bin= input another call may still be filling
+    // the payload is an input (bin= or const) another call may still be filling
     if (filc_async_is_pending(r->payload))
       return WAIT_PAYLOAD;
     rc = send_rest(r->fd, r->payload, r->payload_len, &r->payload_sent);

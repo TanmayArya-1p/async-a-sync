@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
 """Stands in for the patched clang in the tests that run the FilAsync pass on
 IR from a stock clang: attaches !filc_async.params, the parameter names of
-each annotated function, as the clang patch does.
+each annotated function, and !filc_async.const, which of its parameters
+point to a const type, as the clang patch does.
 
 Usage: add_param_names.py SOURCE.c IR.ll   (rewrites IR.ll in place)
 
-Each annotated function's names come from the first prototype in SOURCE.c
-that names all its parameters.
+Each annotated function's parameters come from the first prototype in
+SOURCE.c that names all of them. Constness is read from the text: the
+qualifiers before a parameter's last `*`, after any `*` before it. Typedefs
+and arrays are not followed.
 """
 import re
 import sys
@@ -19,17 +22,29 @@ ir_path = sys.argv[2]
 ir = open(ir_path).read()
 
 
-def param_names(name):
+# Whether a parameter, as written, points to a const type: `const char* p`
+# and `char const* const* p` do, `char* const p` and `const char** p` do not.
+def points_to_const(param):
+    if "*" not in param:
+        return False
+    pointee = param[:param.rindex("*")]
+    return re.search(r"\bconst\b", pointee.split("*")[-1]) is not None
+
+
+# (names, consts) of a function's parameters.
+def params(name):
     for m in re.finditer(r"\b%s\s*\(([^()]*)\)" % re.escape(name), source):
         names = []
+        consts = []
         for param in m.group(1).split(","):
             param = param.strip()
             if param in ("", "void"):
                 continue
             last = re.search(r"([A-Za-z_]\w*)\s*$", param)
             names.append(last.group(1) if last and last.group(1) not in TYPE_WORDS else "")
+            consts.append(points_to_const(param))
         if names and all(names):
-            return names
+            return names, consts
     return None
 
 
@@ -45,12 +60,15 @@ for i, line in enumerate(lines):
     m = re.match(r"(declare|define)\b.*?@([\w.$]+)\(", line)
     if not m or m.group(2) not in functions:
         continue
-    names = param_names(m.group(2))
-    if names is None:
+    found = params(m.group(2))
+    if found is None:
         continue
-    attach = " !filc_async.params !%d" % next_id
+    names, consts = found
+    attach = " !filc_async.params !%d !filc_async.const !%d" % (next_id, next_id + 1)
     nodes.append("!%d = !{%s}" % (next_id, ", ".join('!"%s"' % n for n in names)))
-    next_id += 1
+    nodes.append("!%d = !{%s}" % (next_id + 1, ", ".join(
+        "i1 %s" % ("true" if c else "false") for c in consts)))
+    next_id += 2
     # A definition's attachments follow its attributes; a declaration's
     # follow the keyword.
     if m.group(1) == "define":

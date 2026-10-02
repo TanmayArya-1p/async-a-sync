@@ -58,7 +58,7 @@ waits on the first access.
 ### Joining pending buffers
 
 ```c
-typedef const void* prov_tag;
+typedef void* prov_tag;
 void* prov_alloc(void);
 void* filc_async_wait_all(const prov_tag* tags, size_t count);
 ```
@@ -68,10 +68,11 @@ until all the input marks captured by the call have resolved. The array
 contents are copied; the array itself can be reused or go out of scope.
 
 This orders operations that have no shared data. Give each producer a separate
-completion object, then pass the group to the consumer as an unannotated pointer
-or a `bout=` / `buf=` argument. Its stub waits for the group before handing the
-consumer to its runtime. Do not mark that consumer argument `bin=`: an input
-annotation alone does not make the stub wait.
+completion object, then pass the group to the consumer as an unannotated
+`prov_tag` (or any pointer to non-`const`) or a `bout=` / `buf=` argument. Its
+stub waits for the group before handing the consumer to its runtime. Do not
+mark that consumer argument `bin=` or declare it as a pointer to `const`: an
+input alone does not make the stub wait.
 
 ```c
 prov_tag first = prov_alloc();
@@ -223,10 +224,10 @@ field for field. When you add a field, change the header, the pass
 |---|---|---|
 | `FILC_ASYNC_ARG_IGNORED` | 0 | unannotated non-pointer |
 | `FILC_ASYNC_ARG_SCALAR` | 1 | (reserved) |
-| `FILC_ASYNC_ARG_BUFFER_IN` | 2 | `bin=` |
+| `FILC_ASYNC_ARG_BUFFER_IN` | 2 | `bin=`, or an unannotated pointer to `const` |
 | `FILC_ASYNC_ARG_BUFFER_OUT` | 3 | `bout=` |
 | (none) | 4 | unused; it was the removed `fd=` |
-| `FILC_ASYNC_ARG_PENDING` | 5 | `buf=`, or an unannotated pointer |
+| `FILC_ASYNC_ARG_PENDING` | 5 | `buf=`, or any other unannotated pointer |
 
 **Dependency bits.** `FILC_ASYNC_DEP_READ` (1), `FILC_ASYNC_DEP_WRITE` (2) and
 `FILC_ASYNC_DEP_POINTER` (4). The space, a hash of the option's
@@ -264,7 +265,7 @@ void* __filc_async_stub_F(int fd, void* buf, size_t len, unsigned long off)
     /* store fd, buf, len, off into the cells */
     void* task = filc_async_begin(&__filc_meta_F, staged);
     filc_async_lock_word(task, fd, space_fd, FILC_ASYNC_DEP_READ); /* per r_dep/w_dep */
-    filc_async_mark_pending(task, buf);                /* per bout=/buf=/unannotated pointer */
+    filc_async_mark_pending(task, buf);                /* per bout=/buf=/unannotated non-const pointer */
     filc_async_submit(task, &__filc_meta_F, __filc_async_run_F, staged, 4);
     return task;
 }

@@ -387,6 +387,7 @@ if [ "$PATCHED_READY" -eq 1 ]; then
   # annotated call sites into filc_async_submit.
   run_patched t_pragma_ignore "$HERE/framework/t_pragma_ignore.c"
   run_patched t_pragma_markpending "$HERE/framework/t_pragma_markpending.c"
+  run_patched t_const_inference "$HERE/framework/t_const_inference.c"
   needs_io_uring run_patched t_pragma_many_calls "$HERE/io_uring/t_pragma_many_calls.c"
   needs_io_uring run_patched_linked t_linked_async
   needs_io_uring run_patched_linked t_linked_async_annotated_def \

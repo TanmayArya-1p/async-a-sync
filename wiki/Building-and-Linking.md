@@ -68,7 +68,8 @@ The patches:
 - **`filpizlonator-pending-hook.patch`** adds the pending-flag test that
   FilPizlonator puts before each access.
 - **`filc-async-param-names.patch`** makes clang record the parameter names
-  of each `filc_async` function, which the options refer to.
+  of each `filc_async` function, which the options refer to, and which of
+  its parameters point to a `const` type, which makes them inputs.
 - **`sroa-release-verbose.patch`** fixes a Release-build error where a log
   statement reads a field that is compiled out under `NDEBUG`.
 

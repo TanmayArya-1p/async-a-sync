@@ -8,7 +8,9 @@
  *   op=get              read the counter
  *   w_dep=port:counter  writes the counter behind the port
  *   r_dep=port:counter  reads it
- *   bout=value          reply lands in *value, pending until it arrives
+ *   long* value         not const, so the call writes it: the reply lands
+ *                       in *value, pending until it arrives (bout=value
+ *                       says the same)
  *
  * Logging, timeline and checks: rpc_counter_report.hh. */
 
@@ -16,12 +18,12 @@
 
 // Bodies run just before the call is sent; they only log.
 
-FILC_ASYNC(rpc, FILC_OP(step), FILC_W_DEP(port, counter), FILC_BOUT(value))
+FILC_ASYNC(rpc, FILC_OP(step), FILC_W_DEP(port, counter))
 void step(int port, long* value) {
   rpc_log_sent("step");
 }
 
-FILC_ASYNC(rpc, FILC_OP(get), FILC_R_DEP(port, counter), FILC_BOUT(value))
+FILC_ASYNC(rpc, FILC_OP(get), FILC_R_DEP(port, counter))
 void get(int port, long* value) {
   rpc_log_sent("get");
 }

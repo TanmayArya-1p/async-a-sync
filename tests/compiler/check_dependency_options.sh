@@ -3,7 +3,8 @@
 # hash of <param>:<namespace>, the runtime each descriptor names, and the rejection
 # of contradictory options, of a buffer option on an argument that is not a
 # pointer, of a missing, malformed or doubled runtime=, of the removed fd=, and
-# of an index, an unknown parameter name or a missing namespace.
+# of an index, an unknown parameter name or a missing namespace; and the
+# kinds pointer parameters take from const when no option names them.
 set -eu
 ulimit -c 0
 
@@ -100,11 +101,28 @@ for variant in none:'' bad:'"runtime=1bad", ' two:'"runtime=io_uring", "runtime=
   emit "$TMP/runtime_$name.c" "$TMP/runtime_$name.ll"
 done
 
+# A pointer with no buffer option takes its kind from its type: a pointer to
+# const is an input, and an option overrides the type either way.
+printf '%s\n' \
+  '#pragma clang attribute push(__attribute__((annotate("filc_async", "runtime=io_uring", "op=ignore", "buf=forced", "bin=named"))), apply_to=function)' \
+  'void* inferred(int fd, const void* in, char const* const* names, void* out, char* const fixed, const char** list, const char* forced, char* named);' \
+  '#pragma clang attribute pop' \
+  'void* invoke(char** p) { return inferred(0, p, (char const* const*)p, p, *p, (const char**)p, *p, *p); }' \
+  > "$TMP/consts.c"
+emit "$TMP/consts.c" "$TMP/consts.ll"
+"$OPT" -load-pass-plugin="$PLUGIN" -passes=filc-async "$TMP/consts.ll" -S \
+    -o "$TMP/consts_out.ll"
+# The same IR without !filc_async.const, as a stock clang leaves it.
+sed 's/ !filc_async.const ![0-9]*//' "$TMP/consts.ll" > "$TMP/no_consts.ll"
+"$OPT" -load-pass-plugin="$PLUGIN" -passes=filc-async "$TMP/no_consts.ll" -S \
+    -o "$TMP/no_consts_out.ll"
+
 python3 - "$TMP/placement_out.ll" "$TMP/placement_debug.err" "$OPT" "$PLUGIN" \
     "$TMP/legacy_read.ll" "$TMP/legacy_write.ll" "$TMP/conflict.ll" \
     "$TMP/empty_name.ll" "$TMP/scalar_buffer.ll" "$TMP/runtime_none.ll" \
     "$TMP/runtime_bad.ll" "$TMP/runtime_two.ll" "$TMP/runtime_fd.ll" \
-    "$TMP/index.ll" "$TMP/unknown.ll" "$TMP/no_namespace.ll" <<'PY'
+    "$TMP/index.ll" "$TMP/unknown.ll" "$TMP/no_namespace.ll" \
+    "$TMP/consts_out.ll" "$TMP/no_consts_out.ll" <<'PY'
 import pathlib
 import re
 import subprocess
@@ -188,6 +206,23 @@ if not rejected(sys.argv[15], "names no parameter; use a parameter name"):
     raise SystemExit("FAIL: an unknown parameter name was not rejected")
 if not rejected(sys.argv[16], "needs a namespace: <param>:<namespace>"):
     raise SystemExit("FAIL: a dependency without a namespace was not rejected")
+
+# Arg kinds: 0 ignored, 2 bin=, 5 buf= (and any unannotated pointer).
+def kinds(path, name):
+    meta = next((line for line in pathlib.Path(path).read_text().splitlines()
+                 if line.startswith(f"@__filc_meta_{name} =")), "")
+    # LLVM prints an all-zero pair as zeroinitializer.
+    pairs = re.findall(r"\{ i32, i32 \} (zeroinitializer|\{ i32 (\d+),)", meta)
+    return [int(k or 0) for _, k in pairs]
+
+#            fd in names out fixed list forced named
+expect = [0, 2, 2, 5, 5, 5, 5, 2]
+if kinds(sys.argv[17], "inferred") != expect:
+    raise SystemExit(f"FAIL: kinds from const are {kinds(sys.argv[17], 'inferred')},"
+                     f" not {expect}")
+if kinds(sys.argv[18], "inferred") != [0, 5, 5, 5, 5, 5, 5, 2]:
+    raise SystemExit("FAIL: IR without !filc_async.const did not keep every"
+                     " unannotated pointer pending")
 
 print("CHECK_DEPENDENCY_OPTIONS PASS")
 PY

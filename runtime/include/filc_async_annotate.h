@@ -22,6 +22,16 @@
  * They name parameters, never positions. See wiki/Annotation-Reference.md for
  * what each option means.
  *
+ * A pointer parameter no buffer option names takes its direction from its
+ * type: a pointer to const is read, as FILC_BIN would say, and any other
+ * pointer is treated as written, as FILC_BUF would say. So
+ *
+ *     FILC_ASYNC(io_uring, FILC_OP(pwrite))
+ *     void* write_at(int fd, const void* buf, size_t len, unsigned long off);
+ *
+ * needs no FILC_BIN(buf). Only the pointee's const counts: `char* const p`
+ * is written. A buffer option overrides the type.
+ *
  * The macros expand to the attribute
  *
  *     __attribute__((annotate("filc_async", "runtime=io_uring", "op=pread", ...)))

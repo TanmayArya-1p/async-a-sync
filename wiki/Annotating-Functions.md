@@ -52,19 +52,29 @@ there. Another runtime might run it on a worker thread, or not at all.
 
 ## Declare buffers
 
-Pointer arguments are the buffers a call may touch. Tell the framework which
-way each buffer flows:
+Pointer arguments are the buffers a call may touch. The framework needs to
+know which way each buffer flows, and the parameter's type usually says it:
+
+| Parameter | Option that says the same | Marked pending? |
+|---|---|---|
+| `const T* param` | `FILC_BIN(param)`: the call only reads `param` | no |
+| `T* param` | `FILC_BUF(param)`: the call may write `param` | yes, until the call completes |
+
+Only the pointee's `const` counts: `char* const p` points to writable bytes,
+and `const char** p` to a writable array of pointers. Both are marked.
+
+A pending buffer blocks the first access to it until the call completes, so
+declare inputs as pointers to `const` and reading them does not wait. Where
+the type says the wrong thing, or a runtime wants a precise kind, an option
+overrides it:
 
 | Option | Meaning | Marked pending? |
 |---|---|---|
 | `FILC_BOUT(param)` | the call writes `param` | yes, until the call completes |
 | `FILC_BIN(param)` | the call only reads `param` | no |
 | `FILC_BUF(param)` | direction unknown | yes |
-| (no option) | an unannotated pointer argument is treated like `FILC_BUF` | yes |
 
-A pending buffer blocks the first access to it until the call completes. Mark
-inputs with `FILC_BIN` so reading them does not wait. `FILC_BIN`, `FILC_BOUT`
-and `FILC_BUF` must name pointer arguments. Other arguments need no option: the runtime
+`FILC_BIN`, `FILC_BOUT` and `FILC_BUF` must name pointer arguments. Other arguments need no option: the runtime
 knows its own ops' signatures, such as the io_uring runtime's descriptor in
 argument 0.
 
@@ -75,7 +85,7 @@ something the buffers do not show, such as a file descriptor, list what each
 call reads and writes:
 
 ```c
-FILC_ASYNC(io_uring, FILC_OP(pwrite), FILC_BIN(buf), FILC_W_DEP(fd, file))
+FILC_ASYNC(io_uring, FILC_OP(pwrite), FILC_W_DEP(fd, file))
 void* write_at(int fd, const void* buf, size_t len, unsigned long offset);
 
 FILC_ASYNC(io_uring, FILC_OP(pread), FILC_BOUT(buf), FILC_R_DEP(fd, file))
