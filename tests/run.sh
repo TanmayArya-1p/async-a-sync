@@ -395,6 +395,7 @@ if [ "$PATCHED_READY" -eq 1 ]; then
   needs_io_uring run_patched_linked t_linked_async_annotated_def \
     -DLINKED_ANNOTATE_DEF
   needs_io_uring run_patched t_pragma_io_uring "$HERE/io_uring/t_pragma_io_uring.c" "$OUT"
+  needs_io_uring run_patched t_host_access_after_read "$HERE/io_uring/t_host_access_after_read.c" "$OUT"
   needs_io_uring run_patched t_pragma_dependencies "$HERE/io_uring/t_pragma_dependencies.c" "$OUT"
   needs_io_uring run_patched t_annotation_macros "$HERE/io_uring/t_annotation_macros.c" "$OUT"
   needs_io_uring run_patched t_pragma_wait_all "$HERE/io_uring/t_wait_all_uring.c" "$OUT"

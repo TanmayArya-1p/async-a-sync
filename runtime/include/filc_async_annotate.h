@@ -11,7 +11,7 @@
  * error instead of a string the compiler passes on unread:
  *
  *   FILC_OP(op)             the operation the runtime performs
- *   FILC_BIN(param)         the call reads the buffer param (never pending)
+ *   FILC_BIN(param)         the call reads the buffer param (not pending)
  *   FILC_BOUT(param)        the call fills the buffer param (pending until done)
  *   FILC_BUF(param)         direction unknown, treated as written
  *   FILC_R_DEP(param, ns)   the call reads the resource param names, in ns

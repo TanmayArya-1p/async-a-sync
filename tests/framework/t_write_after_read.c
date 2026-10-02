@@ -1,13 +1,15 @@
 /* Read marks against a mock runtime: a call that writes a buffer waits for
- * every earlier call still reading it, and nothing else changes. Calls
- * complete only when polled with BLOCK or finished by hand, so each wait is
- * observable. Built with the host compiler against the framework source, as
- * check_dependencies is. */
+ * every earlier call still reading it, and so does the program's own access
+ * to the buffer, while calls that only read it never wait for each other.
+ * Calls complete only when polled with BLOCK or finished by hand, so each
+ * wait is observable. Built with the host compiler against the framework
+ * source, as check_dependencies is. */
 #include <assert.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 #include "filc_async.h"
 #include "filc_async_alloc.h"
@@ -24,6 +26,7 @@ typedef union {
 #define OBJ_SIZE 64
 static char objects[NOBJ][OBJ_SIZE];
 static int flag[NOBJ];
+static int readonly[NOBJ]; /* the program cannot store into these */
 static void (*resolver)(void*);
 
 static int object_index(const void* ptr)
@@ -50,8 +53,9 @@ void* zgetupper(void* ptr)
 void zasync_set_pending(void* buf, int pending)
 {
     int i = object_index(buf);
+    /* 2 sets the flag for readers only, which a read-only object never needs */
     if (i >= 0)
-        flag[i] = pending;
+        flag[i] = pending == 1 || (pending == 2 && !readonly[i]);
 }
 
 void zasync_set_resolver(void (*fn)(void*))
@@ -98,12 +102,17 @@ static unsigned id_of(void* task)
     return (unsigned)(uintptr_t)*filc_async_task_runtime_data(task);
 }
 
+static filc_async_meta* toucher;
+
 static void mock_submit(void* task, const filc_async_meta* meta,
                         filc_async_run_fn run, void* staged_args, size_t nargs)
 {
-    (void)meta;
     (void)nargs;
     filc_async_run(task, run, staged_args);
+    /* Like io_uring scanning an openat path: the runtime reads the call's
+     * own input while it submits the call. */
+    if (meta == toucher)
+        host_access(((staged_arg*)staged_args)[1].ptr);
     assert(issued + 1 < MAX_CALLS);
     *filc_async_task_runtime_data(task) = (void*)(uintptr_t)++issued;
 }
@@ -191,17 +200,27 @@ static long nested_body(void* staged)
     return 0;
 }
 
+/* The body of a call that reads its own input buffer. */
+static long touching_body(void* staged)
+{
+    host_access(((staged_arg*)staged)[1].ptr);
+    return 0;
+}
+
 int main(void)
 {
+    alarm(20); /* a wait that never ends fails the test instead of hanging it */
     reader = make_meta("reader", FILC_ASYNC_ARG_BUFFER_IN);
     writer = make_meta("writer", FILC_ASYNC_ARG_BUFFER_OUT);
     nested = make_meta("nested", FILC_ASYNC_ARG_BUFFER_IN);
-    const filc_async_meta* table[] = { reader, writer, nested, NULL };
+    toucher = make_meta("toucher", FILC_ASYNC_ARG_BUFFER_IN);
+    const filc_async_meta* table[] = { reader, writer, nested, toucher, NULL };
     filc_async_validate_table(table);
 
-    /* A read mark is not pending: no flag, and is_pending says no. */
+    /* A read mark sets the flag, so the program's accesses call in, but the
+     * buffer is not pending: nothing is producing it. */
     void* r = read_call(objects[0]);
-    assert(!flag[0] && !filc_async_is_pending(objects[0]));
+    assert(flag[0] && !filc_async_is_pending(objects[0]));
     /* A later writer waits for the reader before it reaches the runtime. */
     unsigned long before = pending_resolves();
     unsigned r_id = id_of(r);
@@ -216,6 +235,7 @@ int main(void)
     void* r1 = read_call(objects[1]);
     void* r2 = read_call(objects[1] + 8);
     assert(!done[id_of(r1)] && !done[id_of(r2)] && pending_resolves() == before);
+    assert(flag[1]);
     /* A runtime about to hand the buffer to the kernel waits for producers
      * only, so the readers do not wait on each other there either. */
     filc_async_wait_buffer(r2, objects[1]);
@@ -231,22 +251,24 @@ int main(void)
     assert(!done[id_of(w2)]);
     filc_async_wait_buffer(r3, objects[2]);
     assert(done[id_of(w2)]);
-    /* The writer has gone, so the flag clears though the reader remains. */
-    assert(!flag[2] && !filc_async_is_pending(objects[2]));
+    /* The writer has gone; the reader keeps the flag, though nothing is
+     * producing the buffer any more. */
+    assert(flag[2] && !filc_async_is_pending(objects[2]));
+    /* The program's access waits for the reader: a store must not change
+     * what a queued call is still reading. The last mark clears the flag. */
     host_access(objects[2]);
-    assert(!done[id_of(r3)]);
+    assert(done[id_of(r3)] && !flag[2]);
     finish(r3);
 
-    /* A host access to a buffer only being read does not wait: the flag
-     * stays clear, so the hook never calls in. */
+    /* An access to a buffer only being read waits for its readers. */
     void* r4 = read_call(objects[3]);
     host_access(objects[3]);
-    assert(!done[id_of(r4)]);
-    /* An access to one still being produced waits for the producer only. */
+    assert(done[id_of(r4)] && !flag[3]);
+    /* An access to one being produced and read waits for both. */
     void* w4 = stub(writer, NULL, objects[4]);
     void* r5 = read_call(objects[4]);
     host_access(objects[4]);
-    assert(done[id_of(w4)] && !done[id_of(r5)]);
+    assert(done[id_of(w4)] && done[id_of(r5)] && !flag[4]);
     finish(r4);
     finish(r5);
 
@@ -264,7 +286,7 @@ int main(void)
     a = filc_async_alloc(2 * sizeof *a, 16);
     void* upgrade = filc_async_begin(writer, a);
     filc_async_mark_input(upgrade, objects[5]);
-    assert(!flag[5]);
+    assert(flag[5] && !filc_async_is_pending(objects[5]));
     filc_async_mark_pending(upgrade, objects[5]);
     assert(flag[5] && filc_async_is_pending(objects[5]));
     filc_async_submit(upgrade, writer, NULL, a, 2);
@@ -302,7 +324,7 @@ int main(void)
     void* many[READERS];
     for (int i = 0; i < READERS; ++i)
         many[i] = read_call(objects[9]);
-    assert(!flag[9]);
+    assert(flag[9] && !filc_async_is_pending(objects[9]));
     for (int i = 0; i < READERS; ++i)
         assert(!done[id_of(many[i])]);
     void* last = write_call(objects[9]);
@@ -310,6 +332,31 @@ int main(void)
         assert(done[id_of(many[i])]);
     finish(last);
     assert(!flag[9]);
+
+    /* A read-only object, which the program cannot store into, gets no flag
+     * for its readers, so reading it never waits. */
+    readonly[10] = 1;
+    void* r10 = read_call(objects[10]);
+    assert(!flag[10]);
+    host_access(objects[10]);
+    assert(!done[id_of(r10)]);
+    /* A write mark still sets it. */
+    void* w10 = write_call(objects[10]);
+    assert(done[id_of(r10)] && flag[10]);
+    finish(w10);
+    assert(!flag[10]);
+
+    /* A runtime reading a call's own input while it submits the call does
+     * not wait for that call, which has not reached the runtime yet. */
+    void* t11 = stub(toucher, NULL, objects[11]);
+    assert(!done[id_of(t11)] && flag[11]);
+    finish(t11);
+    assert(!flag[11]);
+
+    /* Nor does a body reading its own input. */
+    void* t12 = stub(reader, touching_body, objects[12]);
+    assert(!done[id_of(t12)]);
+    finish(t12);
 
     filc_async_stats stats;
     filc_async_get_stats(&stats);

@@ -75,11 +75,12 @@ overrides it:
 | `FILC_BUF(param)` | direction unknown | yes |
 
 **Inputs are ordered too.** A call that only reads a buffer still records
-that it reads it, with a read mark that makes nothing pending. A later
-annotated call that writes the buffer waits for it, so a pread into a buffer
-never overtakes a queued pwrite from it. Your own code is not ordered that
-way: a store into a buffer that a queued call is still reading goes through
-at once. Wait for that call before reusing the buffer.
+that it reads it, with a read mark. A later annotated call that writes the
+buffer waits for it, so a pread into a buffer never overtakes a queued
+pwrite from it. Your own code waits the same way: the first access to a
+buffer a queued call is still reading waits for that call, so a store never
+changes what the call sends. Calls that only read a buffer do not wait for
+each other.
 
 **When the type says the wrong thing.** Use `FILC_BUF` on a pointer to
 `const` that the call does write:

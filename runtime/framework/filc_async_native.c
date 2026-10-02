@@ -23,6 +23,10 @@ _Static_assert(!(FILC_OBJECT_FLAG_ASYNC_PENDING &
 /* The framework's resolver, a Fil-C function taking the object's payload. */
 static filc_ptr filc_async_resolver;
 
+/* pending: 0 clears the flag, 1 sets it, 2 sets it for calls that only read
+ * the object, unless the object is read-only (clearing it then): the program
+ * cannot store into a read-only object, so it has nothing to wait for. A
+ * read-only object's header is never written. */
 PAS_API void filc_native_zasync_set_pending(filc_thread* my_thread,
                                             filc_ptr buf, int pending) {
   PAS_UNUSED_PARAM(my_thread);
@@ -32,8 +36,10 @@ PAS_API void filc_native_zasync_set_pending(filc_thread* my_thread,
   for (;;) {
     uintptr_t aux = object->aux;
     filc_object_flags flags = filc_aux_get_flags(aux);
-    filc_object_flags next = pending ? flags | FILC_OBJECT_FLAG_ASYNC_PENDING
-                                     : flags & ~FILC_OBJECT_FLAG_ASYNC_PENDING;
+    bool set = pending == 1 ||
+               (pending == 2 && !(flags & FILC_OBJECT_FLAG_READONLY));
+    filc_object_flags next = set ? flags | FILC_OBJECT_FLAG_ASYNC_PENDING
+                                 : flags & ~FILC_OBJECT_FLAG_ASYNC_PENDING;
     if (next == flags)
       return;
     if (pas_compare_and_swap_uintptr_weak(

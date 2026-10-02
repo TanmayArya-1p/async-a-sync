@@ -292,6 +292,15 @@ Use it before handing a device or the kernel a buffer to **read**, when an
 earlier call may still be filling it. An output buffer needs no such wait:
 the stub already waited when it marked it.
 
+**Touching a call's buffers from runtime code.** Compiled code that touches
+an object a call owns waits for that call, readers included. A runtime may
+touch a call's buffers inside its `submit` and inside `filc_async_run`: the
+framework knows that call is running on this thread and does not wait for
+it. Anywhere else, such as in `poll` or on a worker thread outside
+`filc_async_run`, touching a buffer of a call still running waits for that
+call, and for its own call never returns. Hand such buffers to native code
+(a syscall) instead, as the rpc runtime's `send` does.
+
 ## Types
 
 ```c

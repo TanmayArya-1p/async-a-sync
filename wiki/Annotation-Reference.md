@@ -60,7 +60,7 @@ The same annotation can be written by hand, around functions, as
 |---|---|---|---|
 | `runtime=<name>` | none | none | **Required.** The runtime that runs the call: `meta->runtime` points to `filc_async_runtime_<name>`, which the program must link. `<name>` is a C identifier. The io_uring runtime is `runtime=io_uring`. |
 | `op=<name>` | none | none | Names the operation. Passed to the runtime in `meta->opts`, and never read by the compiler or the framework. |
-| `bin=<param>` | pointer | `FILC_ASYNC_ARG_BUFFER_IN` | The call reads `<param>`. Not marked pending; given a read mark, so a later call that writes `<param>` waits for this one. |
+| `bin=<param>` | pointer | `FILC_ASYNC_ARG_BUFFER_IN` | The call reads `<param>`. Given a read mark: a later call that writes `<param>`, and the program's own first access to it, wait for this one; calls that only read it do not. |
 | `bout=<param>` | pointer | `FILC_ASYNC_ARG_BUFFER_OUT` | The call writes `<param>`. Marked pending until the call completes. |
 | `buf=<param>` | pointer | `FILC_ASYNC_ARG_PENDING` | Direction unknown; treated as written. Marked pending. |
 | `r_dep=<param>:<namespace>` | pointer, or integer ≤ 64 bits | none (dependency bits) | The call reads the resource `<param>` names in `<namespace>`. The namespace is required. |

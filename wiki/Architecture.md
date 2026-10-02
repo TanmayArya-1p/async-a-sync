@@ -149,20 +149,24 @@ the object's lower bound.
 - **Write and read marks.** A call that produces an object holds a write
   mark on it; a call that only reads it (`bin=`, or a pointer to `const`)
   holds a read mark. One task holds at most one mark per object.
-- **The header flag.** While an object has at least one write mark, the
-  framework sets `FILC_OBJECT_FLAG_ASYNC_PENDING` (flag value 64, the one
-  flag bit Fil-C leaves free) in the object header's `aux` word. It uses the
-  same compare-and-swap loop Fil-C uses for its own flags. Read marks never
-  set it: reading or writing a buffer that calls are only reading does not
-  wait.
-- **Why a flag.** Objects nothing is producing never reach the framework: the
-  inline test fails and the access proceeds.
+- **The header flag.** While an object has at least one mark, the framework
+  sets `FILC_OBJECT_FLAG_ASYNC_PENDING` (flag value 64, the one flag bit
+  Fil-C leaves free) in the object header's `aux` word. It uses the same
+  compare-and-swap loop Fil-C uses for its own flags. A read-only object
+  gets no flag for its read marks: the program cannot store into it.
+- **Why a flag.** Objects no call owns never reach the framework: the inline
+  test fails and the access proceeds.
+- **The program waits for every owner.** The hook's slow path cannot tell a
+  load from a store, so it waits for every call that owns the object,
+  readers included: a store never changes what a queued call is still
+  reading. It skips the calls whose body or submit is running on this
+  thread; waiting for those would wait for the thread itself.
 - **Exclusive marks.** Write marks made by a stub are exclusive. Marking an
   object another call owns first waits for that call, readers included, so
   two calls never write one buffer at once and a write never overtakes a
-  call still reading it. A read mark never waits: a runtime about to hand
-  the buffer to a device waits for its producers instead
-  (`filc_async_wait_buffer`).
+  call still reading it. A read mark never waits, so calls that only read
+  an object run together: a runtime about to hand the buffer to a device
+  waits for its producers instead (`filc_async_wait_buffer`).
 - **Calls made from a body.** A call made by a body running under
   `filc_async_run` does not wait for that body's own read marks; it would
   wait for the thread it runs on.

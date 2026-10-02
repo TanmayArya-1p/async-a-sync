@@ -7,7 +7,7 @@
 - **Dependency lock**: A reader/writer lock on an argument's value (or object), its parameter name and a namespace, taken by the stub for each `r_dep=`/`w_dep=` and released when the call completes.
 - **Deferred submission**: The io_uring runtime's policy: queue requests and send them to the kernel only when something needs a result.
 - **Framework**: The runtime-agnostic layer in `libpizlo.a` (`filc_async.c`). It holds tasks, marks and locks.
-- **Mark**: A record that a task owns an object: a *write mark* while it produces it, a *read mark* while it only reads it. While an object has a write mark, it is *pending*. Stub write marks are exclusive and wait for readers too; read marks and runtime marks made with `filc_async_mark_shared` may overlap.
+- **Mark**: A record that a task owns an object: a *write mark* while it produces it, a *read mark* while it only reads it. While an object has a write mark, it is *pending*; while it has any mark, the program's accesses to it wait. Stub write marks are exclusive and wait for readers too; read marks and runtime marks made with `filc_async_mark_shared` may overlap.
 - **Namespace**: The required `:<namespace>` part of a dependency option, `r_dep=<param>:<namespace>`. With the parameter name, it says which resource a value refers to.
 - **Pending**: A buffer owned by a call that has not completed. The first access waits.
 - **Run thunk**: `__filc_async_run_<name>`, emitted by the pass. It unpacks the staged arguments and calls the function's body. Runtimes call it through `filc_async_run`.

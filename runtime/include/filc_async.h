@@ -34,12 +34,14 @@
  *
  * Pending buffers: the stub marks the producing args (bout=, bare buf=, and
  * unannotated pointers to non-const) pending, with write marks; inputs (bin=,
- * and unannotated pointers to const) get read marks, which are never
- * pending: they set no flag, and accessing the buffer does not wait for
- * them. Marking a buffer for writing waits for every other call that owns
- * it, readers included, so a later call never writes a buffer an earlier
- * call is still reading. A read mark never waits. When a call completes, its
- * marks are released; a runtime can resolve a buffer earlier.
+ * and unannotated pointers to const) get read marks, which are not pending
+ * but which the program's own accesses still wait for, so a store never
+ * changes what a queued call is still reading (read-only objects excepted:
+ * they cannot be stored into). Marking a buffer for writing waits for every
+ * other call that owns it, readers included, so a later call never writes a
+ * buffer an earlier call is still reading. A read mark never waits. When a
+ * call completes, its marks are released; a runtime can resolve a buffer
+ * earlier.
  *
  * Threading: every entry point below may be called from any thread, and a
  * runtime may report completions from any thread. A thread touching a buffer
@@ -126,8 +128,9 @@ void  filc_async_lock_ptr(void* task, const void* ptr, uint32_t space,
  * owner and only mark_resolved clears it. */
 void  filc_async_mark_pending(void* task, void* buf);
 /* Records that `task` reads `buf` until it completes, without waiting and
- * without making `buf` pending: a later mark_pending on it waits for `task`.
- * Does nothing if `task` already marked `buf`. */
+ * without making `buf` pending: a later mark_pending on it, and the
+ * program's own access to it, wait for `task`. Does nothing if `task`
+ * already marked `buf`. */
 void  filc_async_mark_input(void* task, const void* buf);
 
 /* Calls the annotated function's body with the staged arguments and returns

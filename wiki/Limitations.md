@@ -22,14 +22,16 @@ the calls are not ordered. Declare a shared resource with one integer type.
 
 **Uninstrumented code.** Only code built by the patched compiler tests the
 pending flag. Fil-C's libc is not built that way, so `memcmp`, `strlen`,
-`write` and the like read a pending buffer as it stands. Touch the buffer or
-wait first.
+`write` and the like read a pending buffer as it stands, and `memcpy`,
+`memset` and the like store into a buffer a queued call is still reading
+without waiting for it. Touch the buffer or wait first.
 
-**Stores into a buffer a call is reading.** A call that only reads a buffer
-holds a read mark, which orders later annotated calls that write it but sets
-no pending flag. A store by your own code into a buffer that a queued call
-is still reading, such as refilling the source of a pending pwrite, goes
-through at once. Wait for the call first.
+**Reads wait for readers too.** Your code waits for the calls reading a
+buffer before it stores into it, so a refill never changes what a queued
+pwrite sends. The hook cannot tell a load from a store, so a load waits for
+them as well: reading back a buffer you just queued for writing waits for
+the write. Read-only objects, such as string literals, are exempt: they
+cannot be stored into.
 
 **Hidden writes through `const`.** A body that casts `const` away, or a C++
 `mutable` member, writes a buffer the type calls an input. Mark such a

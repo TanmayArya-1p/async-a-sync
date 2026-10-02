@@ -11,7 +11,10 @@
 
 /* The framework's native half (filc_async_native.c): the pending flag in an
  * object's header, which the compiler's access hook tests inline, and the
- * resolver that hook calls when it finds the flag set. */
+ * resolver that hook calls when it finds the flag set. `pending` is
+ * PENDING_CLEAR, PENDING_SET, or PENDING_READERS: set, unless the object is
+ * read-only, which the program cannot store into. */
+enum { PENDING_CLEAR = 0, PENDING_SET = 1, PENDING_READERS = 2 };
 void zasync_set_pending(void* buf, int pending);
 void zasync_set_resolver(void (*resolver)(void*));
 
@@ -70,6 +73,8 @@ static unsigned long g_hook_resolves;
 
 /* The task whose body filc_async_run is running on this thread. */
 static _Thread_local struct filc_async_task* g_running_body;
+/* The task whose runtime submit is running on this thread. */
+static _Thread_local struct filc_async_task* g_submitting;
 
 static pthread_mutex_t g_lock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t g_changed = PTHREAD_COND_INITIALIZER;
@@ -424,13 +429,20 @@ void filc_async_lock_ptr(void* task, const void* ptr, uint32_t space,
  * bound: marks are hashed by it, and every lookup reads one bucket.
  *
  * A mark is a write mark (the call produces the object) or a read mark (the
- * call only reads it). While an object has a write mark, its header carries
- * the pending flag, so the compiler's access hook only calls in for objects
- * still being produced; read marks never set it. An annotated call's write
- * marks are exclusive: marking waits for every other owner, readers
- * included, so a write never overtakes a call still reading the object. Read
- * marks never wait. A runtime may add shared write marks, so several of its
- * requests can own one object; an access then waits for all of them.
+ * call only reads it). While an object has a mark, its header carries the
+ * pending flag, so the compiler's access hook calls in, and the program's
+ * access waits for every call that owns the object: for its producers before
+ * reading it, and for its readers too, so a store never changes what a
+ * queued call is still reading. A read-only object, which the program cannot
+ * store into, gets no flag for its read marks.
+ *
+ * An annotated call's write marks are exclusive: marking waits for every
+ * other owner, readers included, so a write never overtakes a call still
+ * reading the object. Read marks never wait, so calls that only read an
+ * object run together. A runtime may add shared write marks, so several of
+ * its requests can own one object; an access then waits for all of them.
+ * Waiting for a buffer from a runtime (filc_async_wait_buffer), is_pending,
+ * mark_resolved and wait_all consider producers only.
  *
  * Each lookup below walks the bucket, so N marks on one object make N calls
  * cost O(N^2) in all. */
@@ -457,6 +469,15 @@ static void resolve_access(void* object);
 static filc_async_mark** mark_bucket(uintptr_t lower)
 {
     return &g_mark_buckets[hash_bits(lower, MARK_BUCKET_BITS)];
+}
+
+/* Any mark on the object: whether some call still owns it. */
+static filc_async_mark* mark_find(uintptr_t lower, uintptr_t upper)
+{
+    for (filc_async_mark* m = *mark_bucket(lower); m; m = m->bucket_next)
+        if (lower < m->upper && m->lower < upper)
+            return m;
+    return NULL;
 }
 
 /* A write mark on the object: whether it is still being produced. */
@@ -492,13 +513,14 @@ static filc_async_mark* mark_owned(uintptr_t lower,
     return NULL;
 }
 
-/* Makes a read mark a write mark, setting the flag if it is the first. */
+/* Makes a read mark a write mark. The flag is already set unless the object
+ * is read-only and had only read marks. */
 static void mark_make_write(filc_async_mark* m)
 {
     if (m->write)
         return;
     if (!writer_find(m->lower, m->upper))
-        zasync_set_pending(m->buf, 1);
+        zasync_set_pending(m->buf, PENDING_SET);
     m->write = 1;
 }
 
@@ -509,8 +531,10 @@ static void mark_add(void* buf, uintptr_t lower, uintptr_t upper,
         zasync_set_resolver(resolve_access);
         g_resolver_set = true;
     }
-    if (write && !writer_find(lower, upper))
-        zasync_set_pending(buf, 1);
+    /* A read mark needs the flag only if the object has no mark yet; a write
+     * mark also if the object had only read marks and is read-only. */
+    if (write ? !writer_find(lower, upper) : !mark_find(lower, upper))
+        zasync_set_pending(buf, write ? PENDING_SET : PENDING_READERS);
     filc_async_mark* m = g_free_marks;
     if (m)
         g_free_marks = m->owner_next;
@@ -546,8 +570,12 @@ static void mark_remove(filc_async_mark* m)
             own = &(*own)->owner_next;
         *own = m->owner_next;
     }
-    if (m->write && !writer_find(m->lower, m->upper))
-        zasync_set_pending(m->buf, 0);
+    /* The last mark clears the flag. When the last write mark goes and
+     * readers remain, the flag stays only if the object is writable. */
+    if (!mark_find(m->lower, m->upper))
+        zasync_set_pending(m->buf, PENDING_CLEAR);
+    else if (m->write && !writer_find(m->lower, m->upper))
+        zasync_set_pending(m->buf, PENDING_READERS);
     m->buf = NULL;
     m->owner = NULL;
     m->write = 0;
@@ -642,13 +670,29 @@ void filc_async_wait_buffer(void* task, const void* buf)
     unlock();
 }
 
-/* The access hook's slow path: an access reached an object whose pending
- * flag is set. */
+/* The access hook's slow path: the program reached an object whose pending
+ * flag is set. It waits for every call that owns the object, readers too:
+ * the hook cannot tell a load from a store, and a store must not change what
+ * a queued call is still reading. The calls whose body or submit runs on
+ * this thread are skipped; waiting for them would wait for this thread. */
 static void resolve_access(void* object)
 {
+    uintptr_t lower = (uintptr_t)zgetlower(object);
+    uintptr_t upper = (uintptr_t)zgetupper(object);
     lock();
     ++g_hook_resolves;
-    wait_buffer_locked(NULL, object);
+    for (;;) {
+        struct filc_async_task* owner = NULL;
+        for (filc_async_mark* m = *mark_bucket(lower); m; m = m->bucket_next)
+            if (lower < m->upper && m->lower < upper && m->owner &&
+                m->owner != g_running_body && m->owner != g_submitting) {
+                owner = m->owner;
+                break;
+            }
+        if (!owner)
+            break;
+        wait_for(owner);
+    }
     unlock();
 }
 
@@ -872,7 +916,13 @@ void* filc_async_task_new(const filc_async_runtime* rt)
 void filc_async_submit(void* task, const filc_async_meta* meta,
                        filc_async_run_fn run, void* staged_args, size_t nargs)
 {
+    /* While its runtime submits the call, an access to the call's own
+     * buffers, such as io_uring reading an openat path, does not wait for
+     * the call. */
+    struct filc_async_task* outer = g_submitting;
+    g_submitting = (struct filc_async_task*)task;
     meta->runtime->submit(task, meta, run, staged_args, nargs);
+    g_submitting = outer;
 }
 
 void filc_async_complete(void* task, long result)

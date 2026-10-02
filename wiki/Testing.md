@@ -62,7 +62,7 @@ line, run `make demo-pragma`, `make all-demos` and `make disasm` by hand.
 |---|---|
 | `check_wait_all.sh`, `t_wait_all.c` | 30 producers can make progress before a writer is handed off; out-of-order completion, failed tasks, snapshots across pointer reuse, duplicate/interior pointers, shared owners, nested groups, early resolution, ownerless marks, and concurrent waiters |
 | `check_dependencies.sh`, `t_dependency_mock.c` | dependency locks order calls against a deterministic mock runtime |
-| `check_write_after_read.sh`, `t_write_after_read.c` | read marks against a deterministic mock runtime: a writer waits for earlier readers, readers never wait, the flag tracks write marks only, a body's own calls do not wait for it, `wait_all` and `is_pending` see producers only |
+| `check_write_after_read.sh`, `t_write_after_read.c` | read marks against a deterministic mock runtime: a writer waits for earlier readers, readers never wait for each other, the program's access waits for readers and producers, read-only objects get no flag, neither a body nor a runtime's submit waits for its own call, `wait_all` and `is_pending` see producers only |
 | `t_mock_runtime.c` with `support/mock_runtime.c` | annotated calls work with another runtime linked and no io_uring symbol present |
 | `t_two_runtimes.c` with `support/mock_runtime.c` and io_uring | two runtimes in one program: a lock and a pending buffer order calls across them |
 | `t_unlinked_runtime.c` | naming a runtime the program does not link fails at link time |
@@ -81,6 +81,7 @@ line, run `make demo-pragma`, `make all-demos` and `make disasm` by hand.
 | `check_linkage.sh` with `t_linked_async_main.c`/`_def.c` | the archives hold what they should; the framework refers to no runtime; a declaration-only annotation links an implementation in another file |
 | `t_backend_io_uring.c` | hand-built descriptors naming the io_uring runtime reach every supported operation through `filc_async_submit` |
 | `t_write_after_read_uring.c` | a pread into a buffer a queued pwrite is sending waits for the pwrite, and two pwrites from one buffer do not wait for each other |
+| `t_host_access_after_read.c` (patched compiler) | the program's own store into a buffer a queued pwrite is still sending waits for it (the file holds "AB", not "BB"), a read-back waits too, two pwrites from one buffer do not wait for each other, and a read-only literal is never flagged |
 | `t_wait_all_uring.c` | 30 separately marked reads queue before the writer; trailing completion arguments validate, each read sees the original data, and the later write reaches disk; stock builds use explicit stubs, patched builds use annotated calls |
 | `t_pragma_io_uring.c`, `t_pragma_dependencies.c` | annotated calls dispatch end to end and honor dependency order |
 | `t_annotation_macros.c` | calls annotated with `FILC_ASYNC` (one per function, a shared `#define`, an annotated declaration with an unannotated definition) dispatch end to end in dependency order |
