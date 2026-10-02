@@ -2,6 +2,7 @@
 #include <pizlonated_syscalls.h>
 #include <pthread.h>
 #include <stdfil.h>
+#include <string.h>
 #include <time.h>
 
 #include "filc_async.h"
@@ -825,6 +826,15 @@ void filc_async_complete(void* task, long result)
         mark_remove(t->marks);
     locks_release(t);
     running_remove(t);
+    /* A runtime needs the staged arguments only until the call completes.
+     * The arena never frees, and its blocks stay reachable for the life of
+     * the process, so clear the cells: otherwise every buffer an annotated
+     * call was ever given stays reachable, and the collector keeps scanning
+     * them. */
+    if (t->meta && t->staged_args) {
+        memset(t->staged_args, 0, t->meta->nargs * 16);
+        t->staged_args = NULL;
+    }
     pthread_cond_broadcast(&g_changed);
     unlock();
 }
