@@ -19,8 +19,8 @@ typedef union {
 static char token[32];
 static char other_token[32];
 static unsigned issued;
-static int issue_fd[32];
-static unsigned char done[32];
+static int issue_fd[512];
+static unsigned char done[512];
 static int fail_next_fd = -1;
 
 void* zgetlower(void* ptr)
@@ -177,6 +177,43 @@ static void finish(void* task, unsigned id)
     assert(result.state == 0 && result.result == 0);
 }
 
+static unsigned long lock_waits(void)
+{
+    filc_async_stats stats;
+    filc_async_get_stats(&stats);
+    return stats.lock_waits;
+}
+
+/* Twenty readers share the lock on `fd`; they release it in `order`, which
+ * unlinks holders from the tail, the head or the middle of the lock's list.
+ * A writer issued before the last reader finishes still waits for it, and
+ * once the lock is empty a writer takes it at once. */
+static void release_order(const filc_async_meta* read,
+                          const filc_async_meta* write, int fd,
+                          const unsigned* order)
+{
+    enum { READERS = 20 };
+    void* reader[READERS];
+    unsigned first = issued + 1;
+    for (unsigned i = 0; i < READERS; ++i)
+        reader[i] = send_fd(read, fd);
+    assert(issued == first + READERS - 1);
+    for (unsigned i = 0; i + 1 < READERS; ++i)
+        finish(reader[order[i]], first + order[i]);
+
+    unsigned long waits = lock_waits();
+    unsigned last = order[READERS - 1];
+    assert(!done[first + last]);
+    void* writer = send_fd(write, fd);
+    assert(lock_waits() == waits + 1 && done[first + last]);
+    finish(reader[last], first + last);
+    finish(writer, issued);
+
+    void* again = send_fd(write, fd);
+    assert(lock_waits() == waits + 1);
+    finish(again, issued);
+}
+
 int main(void)
 {
     static const char* const sync_opts[] = { "op=fsync", NULL };
@@ -293,10 +330,45 @@ int main(void)
     finish(nrr, 19);
     finish(unnamed, 20);
 
+    /* A hundred readers share one lock without waiting; a writer then waits
+     * once, for all of them, and a reader after it waits for the writer. */
+    enum { MANY = 100 };
+    void* many[MANY];
+    unsigned first = issued + 1;
+    unsigned long waits = lock_waits();
+    for (unsigned i = 0; i < MANY; ++i)
+        many[i] = send_fd(read, 20);
+    assert(issued == first + MANY - 1 && lock_waits() == waits);
+    for (unsigned i = 0; i < MANY; ++i)
+        assert(!done[first + i]);
+    void* many_writer = send_fd(write, 20);
+    unsigned writer_id = issued;
+    for (unsigned i = 0; i < MANY; ++i)
+        assert(done[first + i]);
+    assert(lock_waits() == waits + 1 && !done[writer_id]);
+    void* after_writer = send_fd(read, 20);
+    assert(lock_waits() == waits + 2 && done[writer_id]);
+    for (unsigned i = 0; i < MANY; ++i)
+        finish(many[i], first + i);
+    finish(many_writer, writer_id);
+    finish(after_writer, issued);
+
+    /* Release in issue order (oldest first: the tail of the holder list),
+     * in reverse (the head), and from the middle outwards. */
+    unsigned in_order[20], reverse[20], middle[20];
+    for (unsigned i = 0; i < 20; ++i) {
+        in_order[i] = i;
+        reverse[i] = 19 - i;
+        middle[i] = i % 2 ? 10 - (i + 1) / 2 : 10 + i / 2;
+    }
+    release_order(read, write, 21, in_order);
+    release_order(read, write, 22, reverse);
+    release_order(read, write, 23, middle);
+
     filc_async_stats stats;
     filc_async_get_stats(&stats);
-    assert(stats.tasks_submitted == 21 && stats.tasks_completed == 21 &&
-           stats.tasks_failed == 1 && issued == 20);
+    assert(stats.tasks_submitted == 189 && stats.tasks_completed == 189 &&
+           stats.tasks_failed == 1 && issued == 188);
     puts("CHECK_DEPENDENCIES PASS");
     return 0;
 }

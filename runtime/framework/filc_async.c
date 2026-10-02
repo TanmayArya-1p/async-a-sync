@@ -228,7 +228,12 @@ static void wait_for(struct filc_async_task* t)
  * conflicting mode waits in its stub, by polling that call through the
  * runtime, until it completes and releases the lock. Requests queue on the
  * lock and are granted in the order they arrived, so a stream of readers
- * cannot keep a waiting writer out. */
+ * cannot keep a waiting writer out.
+ *
+ * Many calls can share one lock, such as reads of one file, so taking and
+ * releasing it must not walk its holders: a lock counts its holders and its
+ * writers, which says at once whether a request conflicts, and each holder
+ * links back to its place in the list, so it leaves in constant time. */
 
 struct filc_async_lock {
     struct filc_async_lock* bucket_next; /* same bucket, or free list */
@@ -236,13 +241,16 @@ struct filc_async_lock {
     uint32_t space;
     struct filc_async_hold* holders;
     struct filc_async_hold* waiters; /* requests not yet granted, oldest first */
+    unsigned nholders;
+    unsigned nwriters; /* holders in write mode */
 };
 
 struct filc_async_hold {
     struct filc_async_task* task;
     struct filc_async_lock* lock;
     struct filc_async_hold* task_next;  /* the task's holds */
-    struct filc_async_hold* lock_next;  /* the lock's holders */
+    struct filc_async_hold* lock_next;  /* the lock's waiters, then holders */
+    struct filc_async_hold** lock_pprev; /* what points at it, once a holder */
     unsigned char write;
 };
 
@@ -270,16 +278,22 @@ static struct filc_async_lock* lock_get(uint64_t value, uint32_t space)
     l->space = space;
     l->holders = NULL;
     l->waiters = NULL;
+    l->nholders = 0;
+    l->nwriters = 0;
     l->bucket_next = *bucket;
     *bucket = l;
     return l;
 }
 
-/* A holder of `l` that `t` must wait for before taking it in `write` mode. */
+/* A holder of `l` that `t` must wait for before taking it in `write` mode.
+ * The counts rule out a conflict without a walk; the walk finds the holder
+ * to wait for, and skips t's own holds. */
 static struct filc_async_task* lock_conflict(const struct filc_async_lock* l,
                                              const struct filc_async_task* t,
                                              bool write)
 {
+    if (write ? l->nholders == 0 : l->nwriters == 0)
+        return NULL;
     for (struct filc_async_hold* h = l->holders; h; h = h->lock_next)
         if (h->task != t && (write || h->write))
             return h->task;
@@ -341,7 +355,13 @@ static void lock_take(struct filc_async_task* t, uint64_t value,
         link = &(*link)->lock_next;
     *link = h->lock_next;
     h->lock_next = l->holders;
+    h->lock_pprev = &l->holders;
+    if (l->holders)
+        l->holders->lock_pprev = &h->lock_next;
     l->holders = h;
+    ++l->nholders;
+    if (write)
+        ++l->nwriters;
     h->task_next = t->holds;
     t->holds = h;
     pthread_cond_broadcast(&g_changed);
@@ -353,12 +373,18 @@ static void locks_release(struct filc_async_task* t)
 {
     for (struct filc_async_hold* h = t->holds; h; h = h->task_next) {
         struct filc_async_lock* l = h->lock;
-        struct filc_async_hold** link = &l->holders;
-        while (*link != h)
-            link = &(*link)->lock_next;
-        *link = h->lock_next;
+        *h->lock_pprev = h->lock_next;
+        if (h->lock_next)
+            h->lock_next->lock_pprev = h->lock_pprev;
+        --l->nholders;
+        if (h->write)
+            --l->nwriters;
         if (l->holders || l->waiters)
             continue;
+        /* Counts that drifted would grant a writer beside a reader, or keep
+         * every request on the slow path: stop rather than run on. */
+        if (l->nholders || l->nwriters)
+            filc_async_fatal("dependency lock counts out of step");
         struct filc_async_lock** bucket = lock_bucket(l->value, l->space);
         while (*bucket != l)
             bucket = &(*bucket)->bucket_next;
